@@ -46,6 +46,7 @@ nonisolated struct RemoteHermesLocator: HermesLocator {
     nonisolated var gatewayLog: String { basePath + "/logs/gateway.log" }
     nonisolated var scarfDir: String { basePath + "/scarf" }
     nonisolated var projectsRegistry: String { basePath + "/scarf/projects.json" }
+    nonisolated var mcpTokensDir: String { basePath + "/mcp-tokens" }
 
     // MARK: - Resolution
 

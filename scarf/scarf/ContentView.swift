@@ -72,6 +72,8 @@ private struct ConnectionScopedRoot: View {
             SkillsView()
         case .tools:
             ToolsView()
+        case .mcpServers:
+            MCPServersView()
         case .gateway:
             GatewayView()
         case .cron:

@@ -24,6 +24,7 @@ enum HermesPaths: Sendable {
     nonisolated static let gatewayLog: String = home + "/logs/gateway.log"
     nonisolated static let scarfDir: String = home + "/scarf"
     nonisolated static let projectsRegistry: String = scarfDir + "/projects.json"
+    nonisolated static let mcpTokensDir: String = home + "/mcp-tokens"
 }
 // `hermesBinary` used to live here. It's been removed — binary resolution now lives
 // entirely in `LocalHermesTransport.hermesBinaryPath`, which searches a fallback list

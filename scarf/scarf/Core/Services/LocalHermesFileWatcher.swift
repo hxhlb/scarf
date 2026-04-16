@@ -31,7 +31,8 @@ final class LocalHermesFileWatcher: HermesFileWatching {
             locator.agentLog,
             locator.errorsLog,
             locator.gatewayLog,
-            locator.projectsRegistry
+            locator.projectsRegistry,
+            locator.mcpTokensDir
         ]
 
         for path in paths {

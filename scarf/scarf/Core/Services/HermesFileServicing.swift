@@ -43,5 +43,19 @@ protocol HermesFileServicing: Sendable {
     @discardableResult nonisolated func restartGateway() -> (exitCode: Int32, output: String)
     nonisolated func gatewayStatus() -> String
     nonisolated func hermesBinaryPath() -> String?
-    @discardableResult nonisolated func runHermesCLI(args: [String], timeout: TimeInterval) -> (exitCode: Int32, output: String)
+    @discardableResult nonisolated func runHermesCLI(args: [String], timeout: TimeInterval, stdinInput: String?) -> (exitCode: Int32, output: String)
+
+    // MARK: - MCP Servers
+    func loadMCPServers() -> [HermesMCPServer]
+    @discardableResult func addMCPServerStdio(name: String, command: String, args: [String]) -> (exitCode: Int32, output: String)
+    @discardableResult func addMCPServerHTTP(name: String, url: String, auth: String?) -> (exitCode: Int32, output: String)
+    @discardableResult func setMCPServerArgs(name: String, args: [String]) -> Bool
+    @discardableResult func removeMCPServer(name: String) -> (exitCode: Int32, output: String)
+    nonisolated func testMCPServer(name: String) async -> MCPTestResult
+    @discardableResult func toggleMCPServerEnabled(name: String, enabled: Bool) -> Bool
+    @discardableResult func setMCPServerEnv(name: String, env: [String: String]) -> Bool
+    @discardableResult func setMCPServerHeaders(name: String, headers: [String: String]) -> Bool
+    @discardableResult func updateMCPToolFilters(name: String, include: [String], exclude: [String], resources: Bool, prompts: Bool) -> Bool
+    @discardableResult func setMCPServerTimeouts(name: String, timeout: Int?, connectTimeout: Int?) -> Bool
+    @discardableResult func deleteMCPOAuthToken(name: String) -> Bool
 }

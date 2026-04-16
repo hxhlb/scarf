@@ -71,7 +71,53 @@ struct HermesFileService: Sendable {
     nonisolated func hermesBinaryPath() -> String? { impl.hermesBinaryPath() }
 
     @discardableResult
-    nonisolated func runHermesCLI(args: [String], timeout: TimeInterval = 60) -> (exitCode: Int32, output: String) {
-        impl.runHermesCLI(args: args, timeout: timeout)
+    nonisolated func runHermesCLI(args: [String], timeout: TimeInterval = 60, stdinInput: String? = nil) -> (exitCode: Int32, output: String) {
+        impl.runHermesCLI(args: args, timeout: timeout, stdinInput: stdinInput)
     }
+
+    // MARK: - MCP Servers
+
+    func loadMCPServers() -> [HermesMCPServer] { impl.loadMCPServers() }
+
+    @discardableResult
+    func addMCPServerStdio(name: String, command: String, args: [String]) -> (exitCode: Int32, output: String) {
+        impl.addMCPServerStdio(name: name, command: command, args: args)
+    }
+
+    @discardableResult
+    func addMCPServerHTTP(name: String, url: String, auth: String?) -> (exitCode: Int32, output: String) {
+        impl.addMCPServerHTTP(name: name, url: url, auth: auth)
+    }
+
+    @discardableResult
+    func setMCPServerArgs(name: String, args: [String]) -> Bool { impl.setMCPServerArgs(name: name, args: args) }
+
+    @discardableResult
+    func removeMCPServer(name: String) -> (exitCode: Int32, output: String) { impl.removeMCPServer(name: name) }
+
+    nonisolated func testMCPServer(name: String) async -> MCPTestResult {
+        await impl.testMCPServer(name: name)
+    }
+
+    @discardableResult
+    func toggleMCPServerEnabled(name: String, enabled: Bool) -> Bool { impl.toggleMCPServerEnabled(name: name, enabled: enabled) }
+
+    @discardableResult
+    func setMCPServerEnv(name: String, env: [String: String]) -> Bool { impl.setMCPServerEnv(name: name, env: env) }
+
+    @discardableResult
+    func setMCPServerHeaders(name: String, headers: [String: String]) -> Bool { impl.setMCPServerHeaders(name: name, headers: headers) }
+
+    @discardableResult
+    func updateMCPToolFilters(name: String, include: [String], exclude: [String], resources: Bool, prompts: Bool) -> Bool {
+        impl.updateMCPToolFilters(name: name, include: include, exclude: exclude, resources: resources, prompts: prompts)
+    }
+
+    @discardableResult
+    func setMCPServerTimeouts(name: String, timeout: Int?, connectTimeout: Int?) -> Bool {
+        impl.setMCPServerTimeouts(name: name, timeout: timeout, connectTimeout: connectTimeout)
+    }
+
+    @discardableResult
+    func deleteMCPOAuthToken(name: String) -> Bool { impl.deleteMCPOAuthToken(name: name) }
 }

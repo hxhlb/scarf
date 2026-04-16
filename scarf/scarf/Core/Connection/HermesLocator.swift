@@ -28,6 +28,7 @@ protocol HermesLocator: Sendable {
     nonisolated var gatewayLog: String { get }
     nonisolated var scarfDir: String { get }
     nonisolated var projectsRegistry: String { get }
+    nonisolated var mcpTokensDir: String { get }
 }
 
 /// Default locator that mirrors the layout under `~/.hermes/`.
@@ -51,4 +52,5 @@ struct LocalHermesLocator: HermesLocator {
     nonisolated var gatewayLog: String { HermesPaths.gatewayLog }
     nonisolated var scarfDir: String { HermesPaths.scarfDir }
     nonisolated var projectsRegistry: String { HermesPaths.projectsRegistry }
+    nonisolated var mcpTokensDir: String { HermesPaths.mcpTokensDir }
 }

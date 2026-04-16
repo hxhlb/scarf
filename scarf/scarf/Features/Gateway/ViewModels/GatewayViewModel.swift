@@ -37,6 +37,8 @@ struct PendingPairing: Identifiable {
 
 @Observable
 final class GatewayViewModel {
+    private let fileService = HermesFileService()
+
     var gateway = GatewayInfo(pid: nil, state: "unknown", exitReason: nil, startTime: nil, updatedAt: nil, platforms: [], isLoaded: false, isStale: false)
     var approvedUsers: [PairedUser] = []
     var pendingPairings: [PendingPairing] = []
@@ -51,7 +53,7 @@ final class GatewayViewModel {
     }
 
     func startGateway() {
-        runHermes(["gateway", "start"])
+        fileService.startGateway()
         actionMessage = "Gateway start requested"
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.loadGatewayStatus()
@@ -60,7 +62,7 @@ final class GatewayViewModel {
     }
 
     func stopGateway() {
-        runHermes(["gateway", "stop"])
+        fileService.stopHermes()
         actionMessage = "Gateway stop requested"
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.loadGatewayStatus()
@@ -69,7 +71,7 @@ final class GatewayViewModel {
     }
 
     func restartGateway() {
-        runHermes(["gateway", "restart"])
+        fileService.restartGateway()
         actionMessage = "Gateway restart requested"
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.loadGatewayStatus()
@@ -78,19 +80,19 @@ final class GatewayViewModel {
     }
 
     func approvePairing(platform: String, code: String) {
-        runHermes(["pairing", "approve", platform, code])
+        fileService.runHermesCLI(args: ["pairing", "approve", platform, code])
         loadPairing()
     }
 
     func revokeUser(_ user: PairedUser) {
-        runHermes(["pairing", "revoke", user.platform, user.userId])
+        fileService.runHermesCLI(args: ["pairing", "revoke", user.platform, user.userId])
         approvedUsers.removeAll { $0.id == user.id }
     }
 
     // MARK: - Private
 
     private func loadGatewayStatus() {
-        let stateJSON = FileManager.default.contents(atPath: HermesPaths.gatewayStateJSON)
+        let stateJSON = fileService.loadGatewayStateData()
         var pid: Int?
         var state = "unknown"
         var exitReason: String?
@@ -117,7 +119,7 @@ final class GatewayViewModel {
             }
         }
 
-        let statusOutput = runHermes(["gateway", "status"]).output
+        let statusOutput = fileService.gatewayStatus()
         let isLoaded = statusOutput.contains("service is loaded")
         let isStale = statusOutput.contains("stale")
 
@@ -129,7 +131,7 @@ final class GatewayViewModel {
     }
 
     private func loadPairing() {
-        let output = runHermes(["pairing", "list"]).output
+        let output = fileService.runHermesCLI(args: ["pairing", "list"]).output
         approvedUsers = []
         pendingPairings = []
 
@@ -157,21 +159,4 @@ final class GatewayViewModel {
         }
     }
 
-    @discardableResult
-    private func runHermes(_ arguments: [String]) -> (output: String, exitCode: Int32) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: HermesPaths.hermesBinary)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return (String(data: data, encoding: .utf8) ?? "", process.terminationStatus)
-        } catch {
-            return ("", -1)
-        }
-    }
 }

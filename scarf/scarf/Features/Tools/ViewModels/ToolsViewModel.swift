@@ -4,6 +4,7 @@ import os
 @Observable
 final class ToolsViewModel {
     private let logger = Logger(subsystem: "com.scarf", category: "ToolsViewModel")
+    private let fileService = HermesFileService()
 
     var selectedPlatform: HermesToolPlatform = KnownPlatforms.cli
     var toolsets: [HermesToolset] = []
@@ -44,15 +45,9 @@ final class ToolsViewModel {
 
     @MainActor
     private func loadPlatforms() async {
-        let config: String
-        do {
-            config = try await Task.detached {
-                try String(contentsOfFile: HermesPaths.configYAML, encoding: .utf8)
-            }.value
-        } catch {
-            logger.error("Failed to read config.yaml: \(error.localizedDescription)")
-            config = ""
-        }
+        let config = await Task.detached { [fileService] in
+            fileService.loadRawConfig()
+        }.value
         var platforms: [HermesToolPlatform] = []
         var inSection = false
         for line in config.components(separatedBy: "\n") {
@@ -138,31 +133,9 @@ final class ToolsViewModel {
     }
 
     private nonisolated func runHermes(_ arguments: [String]) async -> (output: String, exitCode: Int32) {
-        await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: HermesPaths.hermesBinary)
-            process.arguments = arguments
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                try? stdoutPipe.fileHandleForReading.close()
-                try? stdoutPipe.fileHandleForWriting.close()
-                try? stderrPipe.fileHandleForReading.close()
-                try? stderrPipe.fileHandleForWriting.close()
-                return (output, process.terminationStatus)
-            } catch {
-                try? stdoutPipe.fileHandleForReading.close()
-                try? stdoutPipe.fileHandleForWriting.close()
-                try? stderrPipe.fileHandleForReading.close()
-                try? stderrPipe.fileHandleForWriting.close()
-                return ("", -1)
-            }
+        await Task.detached { [fileService] in
+            let result = fileService.runHermesCLI(args: arguments)
+            return (result.output, result.exitCode)
         }.value
     }
 }

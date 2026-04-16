@@ -1,13 +1,20 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(AppCoordinator.self) private var coordinator
     @State private var viewModel = SettingsViewModel()
     @State private var showRawConfig = false
+
+    private var isLocal: Bool {
+        if case .local = coordinator.activeConnection { return true }
+        return false
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 headerBar
+                connectionsSection
                 modelSection
                 displaySection
                 terminalSection
@@ -49,8 +56,20 @@ struct SettingsView: View {
             Spacer()
             Button("Open in Editor") { viewModel.openConfigInEditor() }
                 .controlSize(.small)
+                .disabled(!isLocal)
+                .help(isLocal ? "Open config.yaml in your default editor" : "Editing config.yaml in place requires a local connection")
             Button("Reload") { viewModel.load() }
                 .controlSize(.small)
+        }
+    }
+
+    // MARK: - Connections
+
+    private var connectionsSection: some View {
+        SettingsSection(title: "Connections", icon: "network") {
+            ConnectionsView()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
         }
     }
 
@@ -230,16 +249,27 @@ struct SettingsView: View {
 
     // MARK: - Paths
 
+    @ViewBuilder
     private var pathsSection: some View {
-        SettingsSection(title: "Paths", icon: "folder") {
-            PathRow(label: "Hermes Home", path: HermesPaths.home)
-            PathRow(label: "State DB", path: HermesPaths.stateDB)
-            PathRow(label: "Config", path: HermesPaths.configYAML)
-            PathRow(label: "Memory", path: HermesPaths.memoriesDir)
-            PathRow(label: "Sessions", path: HermesPaths.sessionsDir)
-            PathRow(label: "Skills", path: HermesPaths.skillsDir)
-            PathRow(label: "Agent Log", path: HermesPaths.agentLog)
-            PathRow(label: "Error Log", path: HermesPaths.errorsLog)
+        if isLocal {
+            SettingsSection(title: "Paths", icon: "folder") {
+                PathRow(label: "Hermes Home", path: viewModel.locator.home)
+                PathRow(label: "State DB", path: viewModel.locator.stateDB)
+                PathRow(label: "Config", path: viewModel.locator.configYAML)
+                PathRow(label: "Memory", path: viewModel.locator.memoriesDir)
+                PathRow(label: "Sessions", path: viewModel.locator.sessionsDir)
+                PathRow(label: "Skills", path: viewModel.locator.skillsDir)
+                PathRow(label: "Agent Log", path: viewModel.locator.agentLog)
+                PathRow(label: "Error Log", path: viewModel.locator.errorsLog)
+            }
+        } else if case .remote(let r) = coordinator.activeConnection {
+            SettingsSection(title: "Remote", icon: "network") {
+                PathRow(label: "Host", path: r.sshTarget + (r.sshPort == 22 ? "" : ":\(r.sshPort)"))
+                PathRow(label: "Hermes Binary", path: r.remoteBinaryPath)
+                if let home = r.remoteHermesHome, !home.isEmpty {
+                    PathRow(label: "HERMES_HOME", path: home)
+                }
+            }
         }
     }
 

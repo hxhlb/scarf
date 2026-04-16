@@ -50,9 +50,8 @@ final class SkillsViewModel {
 
     private func computeMissingConfig(for skill: HermesSkill) -> [String] {
         guard !skill.requiredConfig.isEmpty else { return [] }
-        guard let yaml = try? String(contentsOfFile: HermesPaths.configYAML, encoding: .utf8) else {
-            return skill.requiredConfig
-        }
+        let yaml = fileService.loadRawConfig()
+        guard !yaml.isEmpty else { return skill.requiredConfig }
         return skill.requiredConfig.filter { key in
             !yaml.contains(key)
         }

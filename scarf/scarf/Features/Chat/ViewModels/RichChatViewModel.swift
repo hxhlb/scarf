@@ -62,7 +62,7 @@ final class RichChatViewModel {
     private var streamingToolCalls: [HermesToolCall] = []
 
     // DB polling state (used in terminal mode fallback)
-    private var lastKnownFingerprint: HermesDataService.MessageFingerprint?
+    private var lastKnownFingerprint: MessageFingerprint?
     private var debounceTask: Task<Void, Never>?
     private var resetTimestamp: Date?
     private var userSendPending = false

@@ -6,6 +6,12 @@ import UniformTypeIdentifiers
 final class SettingsViewModel {
     private let fileService = HermesFileService()
 
+    /// Exposes the active locator so the PathsSection view can render per-connection
+    /// paths without the View importing `HermesPaths` or reaching into services.
+    /// `SettingsView` swaps the Paths section out for a Remote summary when the
+    /// connection isn't `.local`.
+    var locator: any HermesLocator { fileService.locator }
+
     var config = HermesConfig.empty
     var gatewayState: GatewayState?
     var hermesRunning = false
@@ -21,17 +27,12 @@ final class SettingsViewModel {
         config = fileService.loadConfig()
         gatewayState = fileService.loadGatewayState()
         hermesRunning = fileService.isHermesRunning()
-        do {
-            rawConfigYAML = try String(contentsOfFile: HermesPaths.configYAML, encoding: .utf8)
-        } catch {
-            print("[Scarf] Failed to read config.yaml: \(error.localizedDescription)")
-            rawConfigYAML = ""
-        }
+        rawConfigYAML = fileService.loadRawConfig()
         personalities = parsePersonalities()
     }
 
     func setSetting(_ key: String, value: String) {
-        let result = runHermes(["config", "set", key, value])
+        let result = fileService.runHermesCLI(args: ["config", "set", key, value])
         if result.exitCode == 0 {
             saveMessage = "Saved \(key)"
             config = fileService.loadConfig()
@@ -134,7 +135,7 @@ final class SettingsViewModel {
     }
 
     func removeAuth() {
-        let result = runHermes(["auth", "remove"])
+        let result = fileService.runHermesCLI(args: ["auth", "remove"])
         if result.exitCode == 0 {
             saveMessage = "Credentials removed"
         } else {
@@ -145,8 +146,11 @@ final class SettingsViewModel {
         }
     }
 
+    /// Open `config.yaml` in the user's default editor. Only meaningful when the
+    /// active connection is local — for remote there's no local file to open.
+    /// `SettingsView` disables the "Open in Editor" button on remote.
     func openConfigInEditor() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: HermesPaths.configYAML))
+        NSWorkspace.shared.open(URL(fileURLWithPath: fileService.locator.configYAML))
     }
 
     private func parsePersonalities() -> [String] {
@@ -174,21 +178,4 @@ final class SettingsViewModel {
         return names
     }
 
-    @discardableResult
-    private func runHermes(_ arguments: [String]) -> (output: String, exitCode: Int32) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: HermesPaths.hermesBinary)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return (String(data: data, encoding: .utf8) ?? "", process.terminationStatus)
-        } catch {
-            return ("", -1)
-        }
-    }
 }

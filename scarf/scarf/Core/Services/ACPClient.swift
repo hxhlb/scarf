@@ -3,7 +3,11 @@ import os
 
 /// Manages a `hermes acp` subprocess and communicates via JSON-RPC over stdio.
 /// Provides an async event stream for real-time session updates.
-actor ACPClient {
+///
+/// Transport-polymorphic: when constructed with a `RemoteHermesTransport`, the
+/// same actor runs the ACP subprocess as `ssh user@host hermes acp` with stdio
+/// forwarded over SSH — no Remote-specific subclass is needed.
+actor ACPClient: ACPClienting {
     private let logger = Logger(subsystem: "com.scarf", category: "ACPClient")
 
     private var process: Process?
@@ -20,9 +24,27 @@ actor ACPClient {
     private var eventContinuation: AsyncStream<ACPEvent>.Continuation?
     private var _eventStream: AsyncStream<ACPEvent>?
 
+    nonisolated let transport: any HermesTransport
+
     private(set) var isConnected = false
     private(set) var currentSessionId: String?
     private(set) var statusMessage = ""
+
+    init(transport: any HermesTransport = ACPClient.defaultTransport()) {
+        self.transport = transport
+    }
+
+    /// Resolve the transport for the currently active connection. Called as the
+    /// default argument for `init()` so callers writing `ACPClient()` get a
+    /// transport pointing at whichever Hermes is active right now.
+    nonisolated static func defaultTransport() -> any HermesTransport {
+        switch ConnectionProvider.current {
+        case .local:
+            return LocalHermesTransport()
+        case .remote(let r):
+            return RemoteHermesTransport(remote: r)
+        }
+    }
 
     /// Check if the underlying process is still alive and connected.
     var isHealthy: Bool {
@@ -54,9 +76,11 @@ actor ACPClient {
         self._eventStream = stream
         self.eventContinuation = continuation
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: HermesPaths.hermesBinary)
-        proc.arguments = ["acp"]
+        guard let proc = transport.makeHermesProcess(args: ["acp"]) else {
+            statusMessage = "hermes binary not found"
+            logger.error("hermes binary not found via transport")
+            throw ACPClientError.notConnected
+        }
 
         let stdin = Pipe()
         let stdout = Pipe()

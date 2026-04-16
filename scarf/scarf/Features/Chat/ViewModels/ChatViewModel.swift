@@ -16,6 +16,10 @@ final class ChatViewModel {
     var voiceEnabled = false
     var ttsEnabled = false
     var isRecording = false
+    /// Rich chat rides ACP over stdio (or SSH stdio for remote) and works on
+    /// any connection. Terminal mode spawns a local `SwiftTerm` subprocess against
+    /// the local `hermes` binary and only makes sense when `ConnectionProvider.current`
+    /// is `.local` — `ChatView` hides the picker on remote so the user can't pick it.
     var displayMode: ChatDisplayMode = .richChat
     let richChatViewModel = RichChatViewModel()
     private var coordinator: Coordinator?
@@ -35,8 +39,29 @@ final class ChatViewModel {
     private static let reconnectBaseDelay: UInt64 = 1_000_000_000 // 1 second
     private static let maxReconnectDelay: UInt64 = 16_000_000_000 // 16 seconds
 
+    /// Resolved `hermes` binary path for the active transport. Nil when no binary
+    /// is reachable (local: no install found at any search path; remote: configured
+    /// path empty — remote reachability should be confirmed via the API probe).
+    var hermesBinaryPath: String? {
+        fileService.transport.hermesBinaryPath
+    }
+
     var hermesBinaryExists: Bool {
-        FileManager.default.fileExists(atPath: HermesPaths.hermesBinary)
+        hermesBinaryPath != nil
+    }
+
+    /// Working directory passed to ACP when creating or resuming a session.
+    /// Resolves to the user's home dir on whichever host the active connection
+    /// targets — the Mac's home for local, the remote user's home for remote.
+    /// Using the Mac home on remote would send an invalid path to the remote
+    /// Hermes and break ACP session setup.
+    nonisolated func sessionCwd() -> String {
+        switch ConnectionProvider.current {
+        case .local:
+            return LocalHermesLocator().userHome
+        case .remote(let r):
+            return RemoteHermesLocator.forRemote(r).userHome
+        }
     }
 
     // MARK: - Session Lifecycle
@@ -132,7 +157,7 @@ final class ChatViewModel {
                 startACPEventLoop(client: client)
                 startHealthMonitor(client: client)
 
-                let cwd = NSHomeDirectory()
+                let cwd = self.sessionCwd()
 
                 hasActiveProcess = true
 
@@ -225,7 +250,7 @@ final class ChatViewModel {
                 startACPEventLoop(client: client)
                 startHealthMonitor(client: client)
 
-                let cwd = NSHomeDirectory()
+                let cwd = self.sessionCwd()
 
                 // Mark active BEFORE setting session ID so .task(id:) sees isACPMode=true
                 // and doesn't wipe messages with a DB refresh
@@ -358,7 +383,7 @@ final class ChatViewModel {
                 do {
                     try await client.start()
 
-                    let cwd = NSHomeDirectory()
+                    let cwd = self.sessionCwd()
                     let resolvedSessionId: String
 
                     // Try resumeSession first (designed for reconnection), then loadSession.
@@ -422,6 +447,16 @@ final class ChatViewModel {
         acpClient = nil
         hasActiveProcess = false
         isHandlingDisconnect = false
+    }
+
+    deinit {
+        // Important: when the user swaps the active connection, `ContentView`'s
+        // `.id(activeConnection)` destroys the old ChatViewModel. Without this
+        // deinit the ACP subprocess (local `hermes acp` or `ssh host hermes acp`)
+        // would outlive us with its pipes still open. `stopACP` fires async cleanup
+        // tasks that continue running after deinit completes — Swift keeps them
+        // alive via their own Task references.
+        stopACP()
     }
 
     /// Respond to a permission request from the ACP agent.
@@ -512,8 +547,12 @@ final class ChatViewModel {
         env["COLORTERM"] = "truecolor"
         let envArray = env.map { "\($0.key)=\($0.value)" }
 
+        guard let executable = fileService.transport.hermesBinaryPath else {
+            logger.error("No hermes binary available on active transport — cannot launch terminal")
+            return
+        }
         terminal.startProcess(
-            executable: HermesPaths.hermesBinary,
+            executable: executable,
             args: arguments,
             environment: envArray,
             execName: nil

@@ -3,24 +3,21 @@ import SwiftUI
 @main
 struct ScarfApp: App {
     @State private var coordinator = AppCoordinator()
-    @State private var fileWatcher = HermesFileWatcher()
     @State private var menuBarStatus = MenuBarStatus()
-    @State private var chatViewModel = ChatViewModel()
+
+    init() {
+        // Make sure `~/.scarf/ssh/` exists at 0700 before anything tries to open
+        // a multiplexed SSH connection. Runs once per launch; no-op if the dir
+        // already has the right perms.
+        SSHSessionConfig.ensureControlPathDirectory()
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(coordinator)
-                .environment(fileWatcher)
-                .environment(chatViewModel)
-                .onAppear {
-                    fileWatcher.startWatching()
-                    menuBarStatus.startPolling()
-                }
-                .onDisappear {
-                    fileWatcher.stopWatching()
-                    menuBarStatus.stopPolling()
-                }
+                .onAppear { menuBarStatus.startPolling() }
+                .onDisappear { menuBarStatus.stopPolling() }
         }
         .defaultSize(width: 1100, height: 700)
 
@@ -55,13 +52,7 @@ final class MenuBarStatus {
     }
 
     func startHermes() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: HermesPaths.hermesBinary)
-        process.arguments = ["gateway", "start"]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try? process.run()
-        process.waitUntilExit()
+        _ = fileService.runHermesCLI(args: ["gateway", "start"])
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.refresh()
         }

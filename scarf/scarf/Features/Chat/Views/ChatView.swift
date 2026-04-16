@@ -3,6 +3,12 @@ import SwiftUI
 struct ChatView: View {
     @Environment(ChatViewModel.self) private var viewModel
     @Environment(HermesFileWatcher.self) private var fileWatcher
+    @Environment(AppCoordinator.self) private var coordinator
+
+    private var isLocal: Bool {
+        if case .local = coordinator.activeConnection { return true }
+        return false
+    }
 
     var body: some View {
         @Bindable var vm = viewModel
@@ -71,16 +77,25 @@ struct ChatView: View {
                 voiceControls
             }
 
-            Picker("View", selection: Bindable(viewModel).displayMode) {
-                Image(systemName: "terminal")
-                    .help("Terminal")
-                    .tag(ChatDisplayMode.terminal)
+            if isLocal {
+                Picker("View", selection: Bindable(viewModel).displayMode) {
+                    Image(systemName: "terminal")
+                        .help("Terminal")
+                        .tag(ChatDisplayMode.terminal)
+                    Image(systemName: "bubble.left.and.text.bubble.right")
+                        .help("Rich Chat")
+                        .tag(ChatDisplayMode.richChat)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            } else {
+                // Terminal mode spawns a local SwiftTerm subprocess — no stdio-over-SSH
+                // equivalent. Rich chat (ACP stdio over SSH) is the only working path
+                // on remote connections.
                 Image(systemName: "bubble.left.and.text.bubble.right")
-                    .help("Rich Chat")
-                    .tag(ChatDisplayMode.richChat)
+                    .foregroundStyle(.secondary)
+                    .help("Rich Chat (Terminal mode not available on remote connections)")
             }
-            .pickerStyle(.segmented)
-            .fixedSize()
 
             if !viewModel.hermesBinaryExists {
                 Label("Hermes binary not found", systemImage: "exclamationmark.triangle")
@@ -209,7 +224,7 @@ struct ChatView: View {
             ContentUnavailableView(
                 "Hermes Not Found",
                 systemImage: "terminal",
-                description: Text("Expected at \(HermesPaths.hermesBinary)")
+                description: Text(viewModel.hermesBinaryPath.map { "Expected at \($0)" } ?? "No hermes binary found on the active connection")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -236,7 +251,7 @@ struct ChatView: View {
                 ContentUnavailableView(
                     "Hermes Not Found",
                     systemImage: "terminal",
-                    description: Text("Expected at \(HermesPaths.hermesBinary)")
+                    description: Text(viewModel.hermesBinaryPath.map { "Expected at \($0)" } ?? "No hermes binary found on the active connection")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

@@ -5,7 +5,7 @@ final class DashboardViewModel {
     private let dataService = HermesDataService()
     private let fileService = HermesFileService()
 
-    var stats = HermesDataService.SessionStats.empty
+    var stats = SessionStats.empty
     var recentSessions: [HermesSession] = []
     var sessionPreviews: [String: String] = [:]
     var config = HermesConfig.empty

@@ -1,63 +1,27 @@
 import Foundation
 
+/// Public facade for project-dashboard persistence. Dispatches to a local or
+/// remote `ProjectDashboardServicing` conformer based on the connection.
 struct ProjectDashboardService: Sendable {
+    let impl: any ProjectDashboardServicing
 
-    // MARK: - Registry
-
-    func loadRegistry() -> ProjectRegistry {
-        guard let data = FileManager.default.contents(atPath: HermesPaths.projectsRegistry) else {
-            return ProjectRegistry(projects: [])
-        }
-        do {
-            return try JSONDecoder().decode(ProjectRegistry.self, from: data)
-        } catch {
-            print("[Scarf] Failed to decode project registry: \(error.localizedDescription)")
-            return ProjectRegistry(projects: [])
-        }
-    }
-
-    func saveRegistry(_ registry: ProjectRegistry) {
-        let dir = HermesPaths.scarfDir
-        if !FileManager.default.fileExists(atPath: dir) {
-            do {
-                try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            } catch {
-                print("[Scarf] Failed to create scarf directory: \(error.localizedDescription)")
-                return
-            }
-        }
-        guard let data = try? JSONEncoder().encode(registry) else { return }
-        // Pretty-print for readability (agents may read this file)
-        if let pretty = try? JSONSerialization.jsonObject(with: data),
-           let formatted = try? JSONSerialization.data(withJSONObject: pretty, options: [.prettyPrinted, .sortedKeys]) {
-            FileManager.default.createFile(atPath: HermesPaths.projectsRegistry, contents: formatted)
-        } else {
-            FileManager.default.createFile(atPath: HermesPaths.projectsRegistry, contents: data)
+    init(connection: HermesConnection = ConnectionProvider.current) {
+        switch connection {
+        case .local:
+            self.impl = LocalProjectDashboardService()
+        case .remote(let r):
+            self.impl = RemoteProjectDashboardService(
+                remote: r,
+                locator: RemoteHermesLocator.forRemote(r)
+            )
         }
     }
 
-    // MARK: - Dashboard
+    nonisolated var locator: any HermesLocator { impl.locator }
 
-    func loadDashboard(for project: ProjectEntry) -> ProjectDashboard? {
-        guard let data = FileManager.default.contents(atPath: project.dashboardPath) else {
-            return nil
-        }
-        do {
-            return try JSONDecoder().decode(ProjectDashboard.self, from: data)
-        } catch {
-            print("[Scarf] Failed to decode dashboard for \(project.name): \(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    func dashboardExists(for project: ProjectEntry) -> Bool {
-        FileManager.default.fileExists(atPath: project.dashboardPath)
-    }
-
-    func dashboardModificationDate(for project: ProjectEntry) -> Date? {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: project.dashboardPath) else {
-            return nil
-        }
-        return attrs[.modificationDate] as? Date
-    }
+    func loadRegistry() -> ProjectRegistry { impl.loadRegistry() }
+    func saveRegistry(_ registry: ProjectRegistry) { impl.saveRegistry(registry) }
+    func loadDashboard(for project: ProjectEntry) -> ProjectDashboard? { impl.loadDashboard(for: project) }
+    func dashboardExists(for project: ProjectEntry) -> Bool { impl.dashboardExists(for: project) }
+    func dashboardModificationDate(for project: ProjectEntry) -> Date? { impl.dashboardModificationDate(for: project) }
 }

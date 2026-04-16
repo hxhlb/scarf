@@ -41,9 +41,9 @@ final class HealthViewModel {
         isLoading = true
         refreshProcessStatus()
         loadVersion()
-        let statusOutput = runHermes(["status"]).output
+        let statusOutput = fileService.runHermesCLI(args: ["status"]).output
         statusSections = parseOutput(statusOutput)
-        let doctorOutput = runHermes(["doctor"]).output
+        let doctorOutput = fileService.runHermesCLI(args: ["doctor"]).output
         doctorSections = parseOutput(doctorOutput)
         computeCounts()
         isLoading = false
@@ -64,7 +64,7 @@ final class HealthViewModel {
     }
 
     func startHermes() {
-        runHermes(["gateway", "start"])
+        fileService.startGateway()
         actionMessage = "Start requested"
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.refreshProcessStatus()
@@ -76,7 +76,7 @@ final class HealthViewModel {
         fileService.stopHermes()
         actionMessage = "Restarting..."
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.runHermes(["gateway", "start"])
+            self?.fileService.startGateway()
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 self?.refreshProcessStatus()
                 self?.actionMessage = nil
@@ -85,7 +85,7 @@ final class HealthViewModel {
     }
 
     private func loadVersion() {
-        let output = runHermes(["version"]).output
+        let output = fileService.runHermesCLI(args: ["version"]).output
         let lines = output.components(separatedBy: "\n")
         version = lines.first ?? ""
         if let updateLine = lines.first(where: { $0.contains("commits behind") }) {
@@ -201,20 +201,4 @@ final class HealthViewModel {
         }
     }
 
-    private func runHermes(_ arguments: [String]) -> (output: String, exitCode: Int32) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: HermesPaths.hermesBinary)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return (String(data: data, encoding: .utf8) ?? "", process.terminationStatus)
-        } catch {
-            return ("", -1)
-        }
-    }
 }

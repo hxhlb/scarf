@@ -1,345 +1,77 @@
 import Foundation
 
+/// Public facade for file/CLI operations. Dispatches to `LocalHermesFileService`
+/// (`FileManager` + local `hermes` subprocess) or `RemoteHermesFileService` (SSH
+/// `cat` / `tee` / `find` + `ssh user@host hermes ...`) based on the connection.
+///
+/// Default init reads from `ConnectionProvider.current`, so `HermesFileService()`
+/// automatically targets whichever Hermes the user has selected.
 struct HermesFileService: Sendable {
+    nonisolated let impl: any HermesFileServicing
+
+    init(connection: HermesConnection = ConnectionProvider.current) {
+        switch connection {
+        case .local:
+            self.impl = LocalHermesFileService()
+        case .remote(let r):
+            self.impl = RemoteHermesFileService(
+                remote: r,
+                locator: RemoteHermesLocator.forRemote(r)
+            )
+        }
+    }
+
+    nonisolated var locator: any HermesLocator { impl.locator }
+    nonisolated var transport: any HermesTransport { impl.transport }
 
     // MARK: - Config
 
-    func loadConfig() -> HermesConfig {
-        guard let content = readFile(HermesPaths.configYAML) else { return .empty }
-        return parseConfig(content)
-    }
+    func loadConfig() -> HermesConfig { impl.loadConfig() }
+    nonisolated func loadRawConfig() -> String { impl.loadRawConfig() }
 
-    private func parseConfig(_ yaml: String) -> HermesConfig {
-        var values: [String: String] = [:]
-        var currentSection = ""
-        var dockerEnv: [String: String] = [:]
-        var commandAllowlist: [String] = []
-        var inDockerEnv = false
-        var inAllowlist = false
+    // MARK: - Gateway state
 
-        for line in yaml.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
-
-            let indent = line.prefix(while: { $0 == " " }).count
-
-            // Detect end of nested blocks when indent returns to section level
-            if indent <= 2 && (inDockerEnv || inAllowlist) {
-                inDockerEnv = false
-                inAllowlist = false
-            }
-
-            // Collect docker_env nested key-value pairs
-            if inDockerEnv, indent >= 4, let colonIdx = trimmed.firstIndex(of: ":") {
-                let key = String(trimmed[trimmed.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
-                let val = String(trimmed[trimmed.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
-                dockerEnv[key] = val
-                continue
-            }
-
-            // Collect allowlist items
-            if inAllowlist, indent >= 4, trimmed.hasPrefix("- ") {
-                commandAllowlist.append(String(trimmed.dropFirst(2)))
-                continue
-            }
-
-            if indent == 0 && trimmed.hasSuffix(":") {
-                currentSection = String(trimmed.dropLast())
-                continue
-            }
-
-            if let colonIdx = trimmed.firstIndex(of: ":") {
-                let key = String(trimmed[trimmed.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
-                let val = String(trimmed[trimmed.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
-
-                if key == "docker_env" && val.isEmpty {
-                    inDockerEnv = true
-                    continue
-                }
-                if key == "permanent_allowlist" && val.isEmpty {
-                    inAllowlist = true
-                    continue
-                }
-
-                values[currentSection + "." + key] = val
-            }
-        }
-
-        return HermesConfig(
-            model: values["model.default"] ?? "unknown",
-            provider: values["model.provider"] ?? "unknown",
-            maxTurns: Int(values["agent.max_turns"] ?? "") ?? 0,
-            personality: values["display.personality"] ?? "default",
-            terminalBackend: values["terminal.backend"] ?? "local",
-            memoryEnabled: values["memory.memory_enabled"] == "true",
-            memoryCharLimit: Int(values["memory.memory_char_limit"] ?? "") ?? 0,
-            userCharLimit: Int(values["memory.user_char_limit"] ?? "") ?? 0,
-            nudgeInterval: Int(values["memory.nudge_interval"] ?? "") ?? 0,
-            streaming: values["display.streaming"] != "false",
-            showReasoning: values["display.show_reasoning"] == "true",
-            verbose: values["agent.verbose"] == "true",
-            autoTTS: values["voice.auto_tts"] != "false",
-            silenceThreshold: Int(values["voice.silence_threshold"] ?? "") ?? QueryDefaults.defaultSilenceThreshold,
-            reasoningEffort: values["agent.reasoning_effort"] ?? "medium",
-            showCost: values["display.show_cost"] == "true",
-            approvalMode: values["approvals.mode"] ?? "manual",
-            browserBackend: values["browser.backend"] ?? "",
-            memoryProvider: values["memory.provider"] ?? "",
-            dockerEnv: dockerEnv,
-            commandAllowlist: commandAllowlist,
-            memoryProfile: values["memory.profile"] ?? "",
-            serviceTier: values["agent.service_tier"] ?? "normal",
-            gatewayNotifyInterval: Int(values["agent.gateway_notify_interval"] ?? "") ?? 600,
-            forceIPv4: values["network.force_ipv4"] == "true",
-            contextEngine: values["context.engine"] ?? "compressor",
-            interimAssistantMessages: values["display.interim_assistant_messages"] != "false",
-            honchoInitOnSessionStart: values["honcho.initOnSessionStart"] == "true"
-        )
-    }
-
-    // MARK: - Gateway State
-
-    func loadGatewayState() -> GatewayState? {
-        guard let data = readFileData(HermesPaths.gatewayStateJSON) else { return nil }
-        do {
-            return try JSONDecoder().decode(GatewayState.self, from: data)
-        } catch {
-            print("[Scarf] Failed to decode gateway state: \(error.localizedDescription)")
-            return nil
-        }
-    }
+    func loadGatewayState() -> GatewayState? { impl.loadGatewayState() }
+    nonisolated func loadGatewayStateData() -> Data? { impl.loadGatewayStateData() }
 
     // MARK: - Memory
 
-    func loadMemoryProfiles() -> [String] {
-        let fm = FileManager.default
-        guard let entries = try? fm.contentsOfDirectory(atPath: HermesPaths.memoriesDir) else { return [] }
-        return entries.filter { name in
-            var isDir: ObjCBool = false
-            let path = HermesPaths.memoriesDir + "/" + name
-            return fm.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
-        }.sorted()
-    }
-
-    func loadMemory(profile: String = "") -> String {
-        let path = memoryPath(profile: profile, file: "MEMORY.md")
-        return readFile(path) ?? ""
-    }
-
-    func loadUserProfile(profile: String = "") -> String {
-        let path = memoryPath(profile: profile, file: "USER.md")
-        return readFile(path) ?? ""
-    }
-
-    func saveMemory(_ content: String, profile: String = "") {
-        let path = memoryPath(profile: profile, file: "MEMORY.md")
-        writeFile(path, content: content)
-    }
-
-    func saveUserProfile(_ content: String, profile: String = "") {
-        let path = memoryPath(profile: profile, file: "USER.md")
-        writeFile(path, content: content)
-    }
-
-    private func memoryPath(profile: String, file: String) -> String {
-        if profile.isEmpty {
-            return HermesPaths.memoriesDir + "/" + file
-        }
-        return HermesPaths.memoriesDir + "/" + profile + "/" + file
-    }
+    func loadMemoryProfiles() -> [String] { impl.loadMemoryProfiles() }
+    func loadMemory(profile: String = "") -> String { impl.loadMemory(profile: profile) }
+    func loadUserProfile(profile: String = "") -> String { impl.loadUserProfile(profile: profile) }
+    func saveMemory(_ content: String, profile: String = "") { impl.saveMemory(content, profile: profile) }
+    func saveUserProfile(_ content: String, profile: String = "") { impl.saveUserProfile(content, profile: profile) }
 
     // MARK: - Cron
 
-    func loadCronJobs() -> [HermesCronJob] {
-        guard let data = readFileData(HermesPaths.cronJobsJSON) else { return [] }
-        do {
-            let file = try JSONDecoder().decode(CronJobsFile.self, from: data)
-            return file.jobs
-        } catch {
-            print("[Scarf] Failed to decode cron jobs: \(error.localizedDescription)")
-            return []
-        }
-    }
-
-    func loadCronOutput(jobId: String) -> String? {
-        let dir = HermesPaths.cronOutputDir
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(atPath: dir) else { return nil }
-        let matching = files.filter { $0.contains(jobId) }.sorted().last
-        guard let filename = matching else { return nil }
-        return readFile(dir + "/" + filename)
-    }
+    func loadCronJobs() -> [HermesCronJob] { impl.loadCronJobs() }
+    func loadCronOutput(jobId: String) -> String? { impl.loadCronOutput(jobId: jobId) }
 
     // MARK: - Skills
 
-    func loadSkills() -> [HermesSkillCategory] {
-        let dir = HermesPaths.skillsDir
-        let fm = FileManager.default
-        guard let categories = try? fm.contentsOfDirectory(atPath: dir) else { return [] }
-
-        return categories.sorted().compactMap { categoryName in
-            let categoryPath = dir + "/" + categoryName
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: categoryPath, isDirectory: &isDir), isDir.boolValue else { return nil }
-            guard let skillNames = try? fm.contentsOfDirectory(atPath: categoryPath) else { return nil }
-
-            let skills = skillNames.sorted().compactMap { skillName -> HermesSkill? in
-                let skillPath = categoryPath + "/" + skillName
-                var isSkillDir: ObjCBool = false
-                guard fm.fileExists(atPath: skillPath, isDirectory: &isSkillDir), isSkillDir.boolValue else { return nil }
-                let files = (try? fm.contentsOfDirectory(atPath: skillPath)) ?? []
-                let requiredConfig = parseSkillRequiredConfig(skillPath + "/skill.yaml")
-                return HermesSkill(
-                    id: categoryName + "/" + skillName,
-                    name: skillName,
-                    category: categoryName,
-                    path: skillPath,
-                    files: files.sorted(),
-                    requiredConfig: requiredConfig
-                )
-            }
-
-            guard !skills.isEmpty else { return nil }
-            return HermesSkillCategory(id: categoryName, name: categoryName, skills: skills)
-        }
-    }
-
-    func loadSkillContent(path: String) -> String {
-        guard isValidSkillPath(path) else { return "" }
-        return readFile(path) ?? ""
-    }
-
-    func saveSkillContent(path: String, content: String) {
-        guard isValidSkillPath(path) else { return }
-        writeFile(path, content: content)
-    }
-
-    private func isValidSkillPath(_ path: String) -> Bool {
-        guard !path.contains(".."), path.hasPrefix(HermesPaths.skillsDir) else {
-            print("[Scarf] Rejected skill path outside skills directory: \(path)")
-            return false
-        }
-        return true
-    }
-
-    private func parseSkillRequiredConfig(_ path: String) -> [String] {
-        guard let content = readFile(path) else { return [] }
-        var result: [String] = []
-        var inRequiredConfig = false
-        for line in content.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
-            let indent = line.prefix(while: { $0 == " " }).count
-            if trimmed == "required_config:" || trimmed.hasPrefix("required_config:") {
-                inRequiredConfig = true
-                continue
-            }
-            if inRequiredConfig {
-                if indent < 2 && !trimmed.isEmpty {
-                    break
-                }
-                if trimmed.hasPrefix("- ") {
-                    result.append(String(trimmed.dropFirst(2)))
-                }
-            }
-        }
-        return result
-    }
+    func loadSkills() -> [HermesSkillCategory] { impl.loadSkills() }
+    func loadSkillContent(path: String) -> String { impl.loadSkillContent(path: path) }
+    func saveSkillContent(path: String, content: String) { impl.saveSkillContent(path: path, content: content) }
 
     // MARK: - Hermes Process
 
-    func isHermesRunning() -> Bool {
-        hermesPID() != nil
-    }
-
-    func hermesPID() -> pid_t? {
-        let pipe = Pipe()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        process.arguments = ["-f", "hermes"]
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            guard let firstLine = output.components(separatedBy: "\n").first(where: { !$0.isEmpty }),
-                  let pid = pid_t(firstLine.trimmingCharacters(in: .whitespaces)) else { return nil }
-            return pid
-        } catch {
-            return nil
-        }
-    }
+    nonisolated func isHermesRunning() -> Bool { impl.isHermesRunning() }
+    nonisolated func hermesPID() -> pid_t? { impl.hermesPID() }
 
     @discardableResult
-    func stopHermes() -> Bool {
-        // v0.9.0 fixed `hermes gateway stop` so it issues `launchctl bootout` and
-        // waits for exit. Use the CLI to avoid racing launchd's KeepAlive respawn.
-        if runHermesCLI(args: ["gateway", "stop"]).exitCode == 0 {
-            return true
-        }
-        guard let pid = hermesPID() else { return false }
-        return kill(pid, SIGTERM) == 0
-    }
+    nonisolated func stopHermes() -> Bool { impl.stopHermes() }
 
-    nonisolated func hermesBinaryPath() -> String? {
-        let candidates = [
-            ("\(NSHomeDirectory())/.local/bin/hermes"),
-            "/opt/homebrew/bin/hermes",
-            "/usr/local/bin/hermes"
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
+    @discardableResult
+    nonisolated func startGateway() -> (exitCode: Int32, output: String) { impl.startGateway() }
+
+    @discardableResult
+    nonisolated func restartGateway() -> (exitCode: Int32, output: String) { impl.restartGateway() }
+
+    nonisolated func gatewayStatus() -> String { impl.gatewayStatus() }
+    nonisolated func hermesBinaryPath() -> String? { impl.hermesBinaryPath() }
 
     @discardableResult
     nonisolated func runHermesCLI(args: [String], timeout: TimeInterval = 60) -> (exitCode: Int32, output: String) {
-        guard let binary = hermesBinaryPath() else { return (-1, "") }
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = args
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        defer {
-            try? stdoutPipe.fileHandleForReading.close()
-            try? stdoutPipe.fileHandleForWriting.close()
-            try? stderrPipe.fileHandleForReading.close()
-            try? stderrPipe.fileHandleForWriting.close()
-        }
-        do {
-            try process.run()
-            let deadline = Date().addingTimeInterval(timeout)
-            while process.isRunning && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-            if process.isRunning { process.terminate() }
-            process.waitUntilExit()
-            let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let combined = (String(data: outData, encoding: .utf8) ?? "") + (String(data: errData, encoding: .utf8) ?? "")
-            return (process.terminationStatus, combined)
-        } catch {
-            return (-1, error.localizedDescription)
-        }
-    }
-
-    // MARK: - File I/O
-
-    private func readFile(_ path: String) -> String? {
-        try? String(contentsOfFile: path, encoding: .utf8)
-    }
-
-    private func readFileData(_ path: String) -> Data? {
-        FileManager.default.contents(atPath: path)
-    }
-
-    private func writeFile(_ path: String, content: String) {
-        do {
-            try content.write(toFile: path, atomically: true, encoding: .utf8)
-        } catch {
-            print("[Scarf] Failed to write \(path): \(error.localizedDescription)")
-        }
+        impl.runHermesCLI(args: args, timeout: timeout)
     }
 }

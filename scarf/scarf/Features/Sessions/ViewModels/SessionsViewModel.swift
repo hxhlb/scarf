@@ -12,6 +12,7 @@ struct SessionStoreStats {
 @Observable
 final class SessionsViewModel {
     private let dataService = HermesDataService()
+    private let fileService = HermesFileService()
 
     var sessions: [HermesSession] = []
     var sessionPreviews: [String: String] = [:]
@@ -82,7 +83,7 @@ final class SessionsViewModel {
         guard let sessionId = renameSessionId else { return }
         let title = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
-        let result = runHermes(["sessions", "rename", sessionId, title])
+        let result = fileService.runHermesCLI(args: ["sessions", "rename", sessionId, title])
         if result.exitCode == 0 {
             if let idx = sessions.firstIndex(where: { $0.id == sessionId }) {
                 let updated = sessions[idx].withTitle(title)
@@ -104,7 +105,7 @@ final class SessionsViewModel {
 
     func confirmDelete() {
         guard let sessionId = deleteSessionId else { return }
-        let result = runHermes(["sessions", "delete", "--yes", sessionId])
+        let result = fileService.runHermesCLI(args: ["sessions", "delete", "--yes", sessionId])
         if result.exitCode == 0 {
             sessions.removeAll { $0.id == sessionId }
             if selectedSession?.id == sessionId {
@@ -123,7 +124,7 @@ final class SessionsViewModel {
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        runHermes(["sessions", "export", url.path, "--session-id", session.id])
+        fileService.runHermesCLI(args: ["sessions", "export", url.path, "--session-id", session.id])
     }
 
     func exportAll() {
@@ -132,7 +133,7 @@ final class SessionsViewModel {
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        runHermes(["sessions", "export", url.path])
+        fileService.runHermesCLI(args: ["sessions", "export", url.path])
     }
 
     // MARK: - Stats
@@ -146,10 +147,8 @@ final class SessionsViewModel {
         }
         let sorted = platformCounts.sorted { $0.value > $1.value }.map { (platform: $0.key, count: $0.value) }
 
-        let dbPath = HermesPaths.stateDB
         let fileSize: String
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: dbPath),
-           let size = attrs[.size] as? Int {
+        if let size = dataService.stateDBSize() {
             if Double(size) >= FileSizeUnit.megabyte {
                 fileSize = String(format: "%.1f MB", Double(size) / FileSizeUnit.megabyte)
             } else {
@@ -165,26 +164,5 @@ final class SessionsViewModel {
             databaseSize: fileSize,
             platformCounts: sorted
         )
-    }
-
-    // MARK: - Hermes CLI
-
-    @discardableResult
-    private func runHermes(_ arguments: [String]) -> (output: String, exitCode: Int32) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: HermesPaths.hermesBinary)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            return (output, process.terminationStatus)
-        } catch {
-            return ("", -1)
-        }
     }
 }

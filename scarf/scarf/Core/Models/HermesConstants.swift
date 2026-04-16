@@ -2,10 +2,13 @@ import Foundation
 import SQLite3
 
 enum HermesPaths: Sendable {
-    private nonisolated static let userHome: String = ProcessInfo.processInfo.environment["HOME"]
+    /// The Mac user's home directory. Exposed so `LocalHermesLocator` can publish
+    /// it via `HermesLocator.userHome` — callers that need a default `cwd`
+    /// (e.g. ACP session creation) resolve through the locator, not this enum.
+    nonisolated static let userHomeDirectory: String = ProcessInfo.processInfo.environment["HOME"]
         ?? NSHomeDirectory()
 
-    nonisolated static let home: String = userHome + "/.hermes"
+    nonisolated static let home: String = userHomeDirectory + "/.hermes"
     nonisolated static let stateDB: String = home + "/state.db"
     nonisolated static let configYAML: String = home + "/config.yaml"
     nonisolated static let memoriesDir: String = home + "/memories"
@@ -19,10 +22,12 @@ enum HermesPaths: Sendable {
     nonisolated static let errorsLog: String = home + "/logs/errors.log"
     nonisolated static let agentLog: String = home + "/logs/agent.log"
     nonisolated static let gatewayLog: String = home + "/logs/gateway.log"
-    nonisolated static let hermesBinary: String = userHome + "/.local/bin/hermes"
     nonisolated static let scarfDir: String = home + "/scarf"
     nonisolated static let projectsRegistry: String = scarfDir + "/projects.json"
 }
+// `hermesBinary` used to live here. It's been removed — binary resolution now lives
+// entirely in `LocalHermesTransport.hermesBinaryPath`, which searches a fallback list
+// (`~/.local/bin/hermes` → Homebrew paths). Callers go through `transport.hermesBinaryPath`.
 
 // MARK: - SQLite Constants
 

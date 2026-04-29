@@ -357,6 +357,11 @@ private struct AddCredentialSheet: View {
     @State private var apiKey: String = ""
     @State private var label: String = ""
     @State private var providers: [HermesProviderInfo] = []
+    /// True while the initial models.dev catalog read is in flight.
+    /// Drives the loading-overlay placeholder. Pre-fix this work ran
+    /// synchronously inside `.onAppear` and froze the sheet for 1–2
+    /// minutes on remote contexts (issue #59).
+    @State private var isLoadingProviders: Bool = true
     @State private var oauthStarted: Bool = false
     @State private var authCode: String = ""
     /// Drives presentation of the dedicated Nous sign-in sheet from inside
@@ -385,8 +390,23 @@ private struct AddCredentialSheet: View {
         }
         .padding()
         .frame(minWidth: 600, minHeight: 460)
-        .onAppear {
-            providers = catalog.loadProviders()
+        .overlay {
+            if isLoadingProviders {
+                ProgressView("Loading providers…")
+                    .progressViewStyle(.circular)
+                    .padding()
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .task {
+            // Off-MainActor read of the multi-megabyte models.dev cache
+            // (via SSHTransport on remote contexts). Pre-fix this ran
+            // sync inside `.onAppear` and froze the Add Credential sheet
+            // for 1–2 minutes on remote contexts (issue #59).
+            isLoadingProviders = true
+            providers = await catalog.loadProvidersAsync()
+            isLoadingProviders = false
         }
         // Auto-close the sheet once a credential is actually saved. We key
         // off `succeeded` which the controller sets only when hermes exited

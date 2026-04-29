@@ -169,6 +169,19 @@ public struct ModelCatalogService: Sendable {
         Self.overlayOnlyProviders[providerID]
     }
 
+    /// Async wrapper around `loadProviders()` for use from MainActor view
+    /// code. The sync method does a transport-backed file read that on a
+    /// remote SSH context can take 1–2 minutes (ControlMaster setup +
+    /// pulling the multi-megabyte models.dev JSON), and on local contexts
+    /// still parses ~1500 models — both unsuitable for the main thread.
+    /// Issue #59. Existing call sites (tests, any non-View consumers)
+    /// can keep using the sync method.
+    public nonisolated func loadProvidersAsync() async -> [HermesProviderInfo] {
+        await Task.detached { [self] in
+            self.loadProviders()
+        }.value
+    }
+
     /// Models for one provider, sorted by release date (newest first), then name.
     public func loadModels(for providerID: String) -> [HermesModelInfo] {
         guard let catalog = loadCatalog(), let provider = catalog[providerID] else { return [] }
@@ -196,6 +209,17 @@ public struct ModelCatalogService: Sendable {
             }
             return lhs.modelName.localizedCaseInsensitiveCompare(rhs.modelName) == .orderedAscending
         }
+    }
+
+    /// Async wrapper around `loadModels(for:)`. Same rationale as
+    /// `loadProvidersAsync()` — the View call site that fires on every
+    /// provider-switch click in the picker sheet was reading the catalog
+    /// synchronously on the MainActor, freezing the UI on remote contexts.
+    /// Issue #59.
+    public nonisolated func loadModelsAsync(for providerID: String) async -> [HermesModelInfo] {
+        await Task.detached { [self] in
+            self.loadModels(for: providerID)
+        }.value
     }
 
     /// Find the provider that ships a given model ID. Useful for auto-syncing

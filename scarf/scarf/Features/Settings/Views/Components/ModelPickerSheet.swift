@@ -22,6 +22,12 @@ struct ModelPickerSheet: View {
     @State private var models: [HermesModelInfo] = []
     @State private var selectedModelID: String = ""
     @State private var searchText: String = ""
+    /// True while the initial catalog load (or a per-provider model
+    /// reload) is in flight. Drives the loading-overlay placeholder.
+    /// Pre-fix this work ran synchronously inside `.onAppear` — issue
+    /// #59. The catalog file is multi-MB on remote contexts; sync I/O
+    /// on the MainActor froze the picker for 1–2 minutes.
+    @State private var isLoadingCatalog: Bool = true
 
     // Custom model entry — used when the catalog doesn't have the exact model
     // the user needs (e.g., provider-prefixed IDs like "openrouter/some/model").
@@ -67,13 +73,33 @@ struct ModelPickerSheet: View {
             footer
         }
         .frame(minWidth: 720, minHeight: 520)
-        .onAppear {
-            providers = catalog.loadProviders()
+        .overlay {
+            if isLoadingCatalog {
+                ProgressView("Loading providers…")
+                    .progressViewStyle(.circular)
+                    .padding()
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .task {
+            // Off-MainActor read of the multi-megabyte models.dev cache
+            // (via SSHTransport on remote contexts). Pre-fix this ran
+            // sync inside `.onAppear` and froze the picker for 1–2
+            // minutes on remote contexts (issue #59).
+            isLoadingCatalog = true
+            providers = await catalog.loadProvidersAsync()
             selectedProviderID = initialProvider.isEmpty ? (providers.first?.providerID ?? "") : initialProvider
             selectedModelID = initialModel
             overlayModelID = initialModel
-            subscription = subscriptionService.loadState()
-            loadModelsForSelection()
+            // subscriptionService.loadState() reads auth.json — tiny
+            // on local but still SSH-backed on remote, so route it
+            // through a detached task too. The result is a small
+            // value type; safe to assign back onto MainActor.
+            let svc = subscriptionService
+            subscription = await Task.detached { svc.loadState() }.value
+            await loadModelsForSelectionAsync()
+            isLoadingCatalog = false
         }
         .sheet(isPresented: $showNousSignIn) {
             NousSignInSheet {
@@ -134,7 +160,7 @@ struct ModelPickerSheet: View {
             get: { selectedProviderID },
             set: { newValue in
                 selectedProviderID = newValue
-                loadModelsForSelection()
+                Task { await loadModelsForSelectionAsync() }
             }
         )) {
             ForEach(filteredProviders) { provider in
@@ -424,12 +450,18 @@ struct ModelPickerSheet: View {
         return resolved.isEmpty ? "Provider will not be changed" : "Provider → \(resolved)"
     }
 
-    private func loadModelsForSelection() {
+    /// Async variant of the per-provider catalog read. Pre-fix this
+    /// was synchronous on the MainActor and froze the picker every
+    /// time the user clicked a different provider — same root cause
+    /// as the open-sheet freeze (issue #59). Routes through
+    /// `loadModelsAsync(for:)` which dispatches the SSHTransport
+    /// file read off the main thread.
+    private func loadModelsForSelectionAsync() async {
         guard !selectedProviderID.isEmpty else {
             models = []
             return
         }
-        models = catalog.loadModels(for: selectedProviderID)
+        models = await catalog.loadModelsAsync(for: selectedProviderID)
         // If the current selection is not in the new list, don't try to keep
         // stale highlight state — clear unless the user originally had this model.
         if !models.contains(where: { $0.modelID == selectedModelID }) {

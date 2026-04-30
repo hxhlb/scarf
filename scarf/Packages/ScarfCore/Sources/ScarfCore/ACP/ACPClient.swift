@@ -468,35 +468,48 @@ public actor ACPClient {
     // MARK: - Disconnect Cleanup
 
     /// Single idempotent cleanup path for all disconnect scenarios.
-    private func performDisconnectCleanup(reason: String) {
+    /// Captures the channel's exit code + recent stderr BEFORE we drop
+    /// the reference, so the `processTerminated` error rides with
+    /// diagnostics — the user banner shows "exit 255 — ssh: connect to
+    /// host …: Connection refused" instead of a bare opaque timeout.
+    private func performDisconnectCleanup(reason: String) async {
         guard isConnected else { return }
         #if canImport(os)
         logger.warning("ACP disconnecting: \(reason)")
         #endif
+        let exitCode = await channel?.lastExitCode
+        let tail = recentStderr
         isConnected = false
         statusMessage = "Connection lost"
         for (_, continuation) in pendingRequests {
-            continuation.resume(throwing: ACPClientError.processTerminated)
+            continuation.resume(throwing: ACPClientError.processTerminated(
+                exitCode: exitCode,
+                stderrTail: tail
+            ))
         }
         pendingRequests.removeAll()
         eventContinuation?.finish()
         eventContinuation = nil
     }
 
-    private func handleReadLoopEnded(cleanly: Bool, error: Error? = nil) {
+    private func handleReadLoopEnded(cleanly: Bool, error: Error? = nil) async {
         let reason = cleanly ? "read loop ended (EOF)" : "read loop failed: \(error?.localizedDescription ?? "unknown")"
-        performDisconnectCleanup(reason: reason)
+        await performDisconnectCleanup(reason: reason)
     }
 
-    private func handleWriteFailed() {
-        performDisconnectCleanup(reason: "write failed (broken pipe)")
+    private func handleWriteFailed() async {
+        await performDisconnectCleanup(reason: "write failed (broken pipe)")
     }
 
-    private func handleWriteFailedForRequest(id: Int) {
+    private func handleWriteFailedForRequest(id: Int) async {
         if let continuation = pendingRequests.removeValue(forKey: id) {
-            continuation.resume(throwing: ACPClientError.processTerminated)
+            let exitCode = await channel?.lastExitCode
+            continuation.resume(throwing: ACPClientError.processTerminated(
+                exitCode: exitCode,
+                stderrTail: recentStderr
+            ))
         }
-        performDisconnectCleanup(reason: "write failed (broken pipe)")
+        await performDisconnectCleanup(reason: "write failed (broken pipe)")
     }
 }
 
@@ -507,7 +520,7 @@ public enum ACPClientError: Error, LocalizedError {
     case encodingFailed
     case invalidResponse(String)
     case rpcError(code: Int, message: String)
-    case processTerminated
+    case processTerminated(exitCode: Int32?, stderrTail: String)
     case requestTimeout(method: String)
 
     public var errorDescription: String? {
@@ -516,9 +529,23 @@ public enum ACPClientError: Error, LocalizedError {
         case .encodingFailed: return "Failed to encode JSON-RPC request"
         case .invalidResponse(let msg): return "Invalid ACP response: \(msg)"
         case .rpcError(let code, let msg): return "ACP error \(code): \(msg)"
-        case .processTerminated: return "ACP process terminated unexpectedly"
+        case .processTerminated(let exit, let tail):
+            let exitPart = exit.map { "exit \($0)" } ?? "no exit code"
+            let tailPart = Self.firstNonEmptyLine(in: tail).map { " — \($0)" } ?? ""
+            return "ACP process terminated unexpectedly (\(exitPart))\(tailPart)"
         case .requestTimeout(let method): return "ACP request '\(method)' timed out"
         }
+    }
+
+    /// Pluck the first non-empty stderr line for the user-facing
+    /// summary. Full tail still rides through on `acpErrorDetails`,
+    /// but the description itself stays single-line.
+    private static func firstNonEmptyLine(in s: String) -> String? {
+        for raw in s.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if !line.isEmpty { return line }
+        }
+        return nil
     }
 }
 
@@ -528,6 +555,40 @@ public enum ACPClientError: Error, LocalizedError {
 public enum ACPErrorHint {
     public static func classify(errorMessage: String, stderrTail: String) -> String? {
         let haystack = errorMessage + "\n" + stderrTail
+
+        // SSH-level failures come first — they apply only to remote
+        // contexts and the patterns are unambiguous (system ssh prints
+        // them verbatim to stderr). Without these classifications a
+        // vanished droplet, a wrong key, or a missing remote `hermes`
+        // all surface as opaque "ACP process terminated" / "request
+        // timed out", and the user has no idea where to look.
+        if haystack.contains("Connection refused") {
+            return "Couldn't reach the remote host — the SSH port is closed or the droplet is down. Check the host is running and reachable."
+        }
+        if haystack.localizedCaseInsensitiveContains("Operation timed out")
+            || haystack.localizedCaseInsensitiveContains("Connection timed out")
+            || haystack.contains("Network is unreachable")
+            || haystack.contains("No route to host") {
+            return "Couldn't reach the remote host — the network connection timed out. Check the host is running and your network is up."
+        }
+        if haystack.contains("Permission denied (publickey")
+            || haystack.contains("Permission denied, please try again") {
+            return "SSH rejected the key. Make sure the right identity file is selected and that ssh-agent has the key loaded — open Terminal and run `ssh-add -l`."
+        }
+        if haystack.contains("Host key verification failed")
+            || haystack.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") {
+            return "The remote host's SSH key changed. If you just rebuilt the droplet, remove the old entry with `ssh-keygen -R <host>`, then try again."
+        }
+        if haystack.contains("Could not resolve hostname")
+            || haystack.contains("Name or service not known") {
+            return "Couldn't resolve the host name. Check the host in this server's settings."
+        }
+        if haystack.localizedCaseInsensitiveContains("command not found")
+            || haystack.contains("hermes: not found")
+            || haystack.contains("exit 127") {
+            return "The remote shell couldn't find `hermes`. Either install Hermes on the remote (`pipx install hermes-agent`) or set an absolute binary path in this server's settings."
+        }
+
         if haystack.range(of: #"No\s+(Anthropic|OpenAI|OpenRouter|Gemini|Google|Groq|Mistral|XAI)?\s*credentials\s+found"#,
                           options: .regularExpression) != nil
             || haystack.contains("ANTHROPIC_API_KEY")

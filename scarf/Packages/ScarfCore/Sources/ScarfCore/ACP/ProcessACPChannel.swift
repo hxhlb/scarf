@@ -36,6 +36,17 @@ public actor ProcessACPChannel: ACPChannel {
     private var readerTask: Task<Void, Never>?
     private var stderrTask: Task<Void, Never>?
 
+    /// Read by `ACPClient` to fill in `processTerminated(exitCode:…)`
+    /// so the error names the actual exit code rather than reporting a
+    /// bare timeout. Sourced directly from `Process` — `Process` is
+    /// thread-safe for this read and reflects the actual reap state,
+    /// so we sidestep the race between the OS-side `terminationHandler`
+    /// callback and the EOF-driven disconnect cleanup that would
+    /// otherwise need an atomic to coordinate.
+    public var lastExitCode: Int32? {
+        process.isRunning ? nil : process.terminationStatus
+    }
+
     /// The subprocess's PID as a human-readable string.
     public var diagnosticID: String? {
         "pid=\(process.processIdentifier)"
@@ -58,7 +69,7 @@ public actor ProcessACPChannel: ACPChannel {
         proc.executableURL = URL(fileURLWithPath: executable)
         proc.arguments = args
         proc.environment = env
-        try await Self.launch(process: proc, self_: nil)
+        try await Self.launch(process: proc)
         try Self.ignoreSIGPIPE_once()
 
         self.process = proc
@@ -76,13 +87,14 @@ public actor ProcessACPChannel: ACPChannel {
         self.stderrContinuation = errContinuation
 
         await startReaders()
+        installTerminationHandler()
     }
 
     /// Secondary entry point for callers that have a pre-configured
     /// `Process` (typically from `SSHTransport.makeProcess`). The process
     /// must NOT already be running — this initializer calls `run()`.
     public init(process: Process) async throws {
-        try await Self.launch(process: process, self_: nil)
+        try await Self.launch(process: process)
         try Self.ignoreSIGPIPE_once()
 
         self.process = process
@@ -100,14 +112,12 @@ public actor ProcessACPChannel: ACPChannel {
         self.stderrContinuation = errContinuation
 
         await startReaders()
+        installTerminationHandler()
     }
 
     /// Wire fresh stdin/stdout/stderr pipes (overwriting any the caller
-    /// set) and start the subprocess. `self_` is unused today — the
-    /// placeholder keeps the signature ready for a future hook that
-    /// captures termination in `proc.terminationHandler` and routes it
-    /// into the channel's actor state.
-    private static func launch(process: Process, self_: Any?) async throws {
+    /// set) and start the subprocess.
+    private static func launch(process: Process) async throws {
         process.standardInput  = Pipe()
         process.standardOutput = Pipe()
         process.standardError  = Pipe()
@@ -115,6 +125,22 @@ public actor ProcessACPChannel: ACPChannel {
             try process.run()
         } catch {
             throw ACPChannelError.launchFailed(error.localizedDescription)
+        }
+    }
+
+    /// Install a `terminationHandler` that closes the stdout read end
+    /// the moment the OS reaps the child. Without this, the reader
+    /// loop's `availableData` keeps blocking until the kernel tears
+    /// the pipe down on its own schedule — visible to the user as a
+    /// 30s ACP `initialize` timeout where a fast SSH-side failure
+    /// (Connection refused, exit 127) should surface in under a
+    /// second. The exit code itself is read on demand from
+    /// `Process.terminationStatus` (see `lastExitCode`), so this
+    /// callback doesn't need to touch actor state.
+    private func installTerminationHandler() {
+        let stdoutFh = stdoutPipe.fileHandleForReading
+        process.terminationHandler = { _ in
+            try? stdoutFh.close()
         }
     }
 

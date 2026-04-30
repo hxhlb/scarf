@@ -1,6 +1,8 @@
 import SwiftUI
 import ScarfCore
 import ScarfDesign
+import UniformTypeIdentifiers
+import AppKit
 
 /// List of registered remote servers with add/remove actions. Rendered as a
 /// popover from the toolbar switcher.
@@ -9,6 +11,16 @@ struct ManageServersView: View {
     @State private var showAddSheet = false
     @State private var pendingRemoveID: ServerID?
     @State private var diagnosticsContext: ServerContext?
+    @State private var importAlert: ImportAlertState?
+
+    /// Lightweight wrapper around the after-import message so we can
+    /// present a single SwiftUI `.alert` for both success summaries
+    /// ("Imported 3 servers") and refusals ("Schema v2 not recognized").
+    private struct ImportAlertState: Identifiable {
+        var id = UUID()
+        var title: String
+        var message: String
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -49,6 +61,9 @@ struct ManageServersView: View {
                 Text("The server's SSH configuration is removed from Scarf. Your remote files are untouched.")
             }
         )
+        .alert(item: $importAlert) { state in
+            Alert(title: Text(state.title), message: Text(state.message), dismissButton: .default(Text("OK")))
+        }
     }
 
     /// Wrapper because `ServerContext` isn't `Identifiable` against the sheet
@@ -62,6 +77,17 @@ struct ManageServersView: View {
         HStack {
             Text("Servers").scarfStyle(.headline)
             Spacer()
+            Menu {
+                Button("Export Servers…") { exportServers() }
+                    .disabled(registry.entries.isEmpty)
+                Button("Import Servers…") { importServers() }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Export or import the list of remote servers. SSH keys aren't included — you copy those separately.")
             Button {
                 showAddSheet = true
             } label: {
@@ -70,6 +96,83 @@ struct ManageServersView: View {
             .buttonStyle(.borderless)
         }
         .padding(12)
+    }
+
+    /// `.scarfservers` is a plain JSON file (`ServerRegistry.exportFile()`).
+    /// Declared inline so callers don't need a shared UTType module just to
+    /// open one save panel. The conformance is dual: also `.json` so users
+    /// renaming the file don't break the import handler.
+    private static let scarfServersType: UTType = {
+        if let t = UTType("com.scarf.servers") { return t }
+        return UTType.json
+    }()
+
+    private func exportServers() {
+        let panel = NSSavePanel()
+        panel.title = "Export Servers"
+        panel.prompt = "Export"
+        panel.allowedContentTypes = [Self.scarfServersType, .json]
+        panel.nameFieldStringValue = "scarf-servers-\(Self.todayStamp()).scarfservers"
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try registry.exportFile()
+            try data.write(to: url, options: .atomic)
+        } catch {
+            importAlert = ImportAlertState(
+                title: "Couldn't export servers",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func importServers() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Servers"
+        panel.prompt = "Import"
+        panel.allowedContentTypes = [Self.scarfServersType, .json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let summary = try registry.importEntries(from: data)
+            let count = summary.imported
+            let skipped = summary.skippedDuplicates
+            let title = count == 0 && skipped > 0
+                ? "Nothing to import"
+                : (count == 1 ? "Imported 1 server" : "Imported \(count) servers")
+            var lines: [String] = []
+            if count == 0 && skipped > 0 {
+                lines.append("Every entry was already in your registry. Nothing changed.")
+            } else if skipped > 0 {
+                lines.append("\(skipped) duplicate \(skipped == 1 ? "entry was" : "entries were") skipped — your existing copy is preserved.")
+            }
+            lines.append("SSH keys aren't included in the export — make sure your `~/.ssh/` keys are in place on this Mac, or edit each server to point at the right identity file.")
+            importAlert = ImportAlertState(title: title, message: lines.joined(separator: "\n\n"))
+        } catch let err as ServerRegistry.ImportError {
+            importAlert = ImportAlertState(
+                title: "Couldn't import servers",
+                message: err.localizedDescription
+            )
+        } catch {
+            importAlert = ImportAlertState(
+                title: "Couldn't import servers",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    /// `yyyy-MM-dd` so the exported filename sorts naturally in Finder
+    /// when a user accumulates rotating exports.
+    private static func todayStamp() -> String {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .iso8601)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
     }
 
     private var empty: some View {

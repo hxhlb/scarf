@@ -165,6 +165,119 @@ final class ServerRegistry {
         SSHTransport.sweepStaleControlSockets()
     }
 
+    // MARK: - Export / Import
+
+    /// Result summary returned from `importEntries(from:)`. The UI renders
+    /// it as a one-line confirmation so the user knows whether anything
+    /// changed (e.g. picking a stale export file imports zero entries
+    /// because every ID is already present).
+    struct ImportSummary: Equatable {
+        var imported: Int
+        var skippedDuplicates: Int
+    }
+
+    /// Errors raised by `importEntries(from:)` for the user-facing alert.
+    /// Validation is conservative — we'd rather refuse a malformed file
+    /// than half-import garbage and leave the registry in a weird state.
+    enum ImportError: Error, LocalizedError {
+        case unreadable(String)
+        case malformed(String)
+        case unsupportedSchema(Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .unreadable(let m): return "Couldn't read the file: \(m)"
+            case .malformed(let m): return "The file isn't a valid Scarf servers export: \(m)"
+            case .unsupportedSchema(let v): return "This export uses schema v\(v), which this version of Scarf doesn't recognize."
+            }
+        }
+    }
+
+    /// Encode the current registry as a portable export. `displayName`,
+    /// `host`, `user`, `port`, `identityFile` (path string only),
+    /// `remoteHome`, `projectsRoot`, `hermesBinaryHint`, `openOnLaunch`,
+    /// and the entry's stable UUID travel. **No secrets** ride along —
+    /// SSH private keys live at the path referenced by `identityFile`,
+    /// not in `servers.json`. Importing on a different Mac requires the
+    /// user to copy their `~/.ssh/` keys separately (or re-point each
+    /// entry's identityFile in Edit Server).
+    func exportFile() throws -> Data {
+        let payload = ExportFile(
+            schemaVersion: Self.currentSchemaVersion,
+            exportedAt: ISO8601DateFormatter().string(from: Date()),
+            entries: entries
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(payload)
+    }
+
+    /// Merge entries from a `.scarfservers` file. Dedupe is by UUID
+    /// — entries whose ID already exists are skipped (the existing
+    /// entry wins, since it may carry edits the user made post-export).
+    /// `openOnLaunch` is normalized after import: at most one entry
+    /// can be the default, and conflicts resolve in favor of the
+    /// pre-existing default.
+    @discardableResult
+    func importEntries(from data: Data) throws -> ImportSummary {
+        let payload: ExportFile
+        do {
+            payload = try JSONDecoder().decode(ExportFile.self, from: data)
+        } catch {
+            throw ImportError.malformed(error.localizedDescription)
+        }
+        guard payload.schemaVersion == Self.currentSchemaVersion else {
+            throw ImportError.unsupportedSchema(payload.schemaVersion)
+        }
+
+        let existingIDs = Set(entries.map(\.id))
+        var imported = 0
+        var skipped = 0
+        for incoming in payload.entries {
+            if existingIDs.contains(incoming.id) {
+                skipped += 1
+                continue
+            }
+            var copy = incoming
+            // Don't let an imported entry seize the default slot if the
+            // user already has one assigned. Normalization below also
+            // drops `openOnLaunch` if more than one survives.
+            if entries.contains(where: { $0.openOnLaunch }) {
+                copy.openOnLaunch = false
+            }
+            entries.append(copy)
+            imported += 1
+        }
+
+        // Belt-and-suspenders: if multiple entries somehow ended up
+        // flagged as default (e.g. user imported an export that itself
+        // had the flag on a different entry than the local default),
+        // keep only the first one.
+        var sawDefault = false
+        for idx in entries.indices {
+            if entries[idx].openOnLaunch {
+                if sawDefault { entries[idx].openOnLaunch = false }
+                else { sawDefault = true }
+            }
+        }
+
+        save()
+        if imported > 0 { onEntriesChanged?() }
+        return ImportSummary(imported: imported, skippedDuplicates: skipped)
+    }
+
+    /// Disk envelope distinct from `RegistryFile`. Adds the export
+    /// timestamp; structurally compatible so a hand-edited export
+    /// could in theory be dropped at `~/Library/Application
+    /// Support/scarf/servers.json` and load — we don't rely on that,
+    /// but keeping the shape close means one less migration surface
+    /// when we eventually add fields here.
+    private struct ExportFile: Codable {
+        var schemaVersion: Int
+        var exportedAt: String
+        var entries: [ServerEntry]
+    }
+
     // MARK: - Persistence
 
     private func load() {

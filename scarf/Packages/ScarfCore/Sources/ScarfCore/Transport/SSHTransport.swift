@@ -425,14 +425,18 @@ public struct SSHTransport: ServerTransport {
     public func makeProcess(executable: String, args: [String]) -> Process {
         ensureControlDir()
         // `-T` disables pty allocation — critical for binary-clean stdin/stdout
-        // (ACP JSON-RPC, log tail bytes). Same sh -c wrapping as runProcess
-        // so home-relative paths in `executable`/`args` actually expand.
+        // (ACP JSON-RPC, log tail bytes). `bash -lc` (login shell) sources the
+        // user's profile so PATH picks up pipx's `~/.local/bin`, Homebrew on
+        // Linux, asdf shims, and conda envs. Plain `sh -c` is non-login, so
+        // pipx-installed `hermes` isn't on PATH unless `hermesBinaryHint` was
+        // set explicitly — exactly the failure that surfaces as a
+        // "command not found" / opaque init timeout against fresh droplets.
         let cmd = ([executable] + args).map { Self.remotePathArg($0) }.joined(separator: " ")
         var sshArgv = sshArgs()
         sshArgv.insert("-T", at: 0)
         sshArgv.append(hostSpec)
-        sshArgv.append("sh")
-        sshArgv.append("-c")
+        sshArgv.append("bash")
+        sshArgv.append("-lc")
         sshArgv.append(Self.shellQuote(cmd))
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: sshBinary)
@@ -453,12 +457,17 @@ public struct SSHTransport: ServerTransport {
         return AsyncThrowingStream { continuation in
             Task.detached { [self] in
                 ensureControlDir()
+                // `bash -lc` (login shell) so PATH picks up profile-only
+                // entries like pipx's `~/.local/bin` — same rationale as
+                // `makeProcess` above. Streaming consumers (log tails)
+                // don't tolerate a missing-binary failure any better than
+                // ACP does.
                 let cmd = ([executable] + args).map { Self.remotePathArg($0) }.joined(separator: " ")
                 var sshArgv = sshArgs()
                 sshArgv.insert("-T", at: 0)
                 sshArgv.append(hostSpec)
-                sshArgv.append("sh")
-                sshArgv.append("-c")
+                sshArgv.append("bash")
+                sshArgv.append("-lc")
                 sshArgv.append(Self.shellQuote(cmd))
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: sshBinary)

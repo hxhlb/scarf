@@ -47,6 +47,23 @@ public protocol ACPChannel: Sendable {
     /// SSH exec channels return the SSH channel id or `nil` when not
     /// applicable.
     var diagnosticID: String? { get async }
+
+    /// Exit status of the underlying transport once it has terminated.
+    /// `nil` while the channel is still alive, or for transports that
+    /// don't have a meaningful integer exit code (Citadel SSH-exec).
+    /// Read by `ACPClient` when populating `processTerminated` so the
+    /// user-facing error can name the actual exit code (e.g. `exit
+    /// 255` for SSH connect failures, `exit 127` for missing remote
+    /// binary).
+    var lastExitCode: Int32? { get async }
+}
+
+public extension ACPChannel {
+    /// Default: channels that don't track an exit code report `nil`.
+    /// Concrete `ProcessACPChannel` overrides this.
+    var lastExitCode: Int32? {
+        get async { nil }
+    }
 }
 
 /// Errors raised by `ACPChannel` implementations when the underlying

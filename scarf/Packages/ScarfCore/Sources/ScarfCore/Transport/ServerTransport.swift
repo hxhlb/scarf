@@ -81,6 +81,21 @@ public protocol ServerTransport: Sendable {
         args: [String]
     ) -> AsyncThrowingStream<String, Error>
 
+    /// Binary-safe streaming exec. Same shape as `streamLines` but yields
+    /// arbitrary `Data` chunks of stdout instead of newline-delimited
+    /// strings. Required by the backup feature: `tar -czf -` produces
+    /// gzipped tar bytes that must NOT be decoded as UTF-8 / split on
+    /// `\n` — `streamLines` would silently corrupt the archive.
+    ///
+    /// Stream finishes on EOF / clean exit; errors with
+    /// `TransportError.commandFailed` on non-zero exit (carrying the
+    /// captured stderr tail). Chunk sizes are whatever the underlying
+    /// pipe returns from `availableData`, typically 4–64 KB on macOS.
+    nonisolated func streamRawBytes(
+        executable: String,
+        args: [String]
+    ) -> AsyncThrowingStream<Data, Error>
+
     // MARK: - SQLite
 
     /// Return a local filesystem URL pointing at a fresh, consistent copy of
@@ -108,6 +123,25 @@ public protocol ServerTransport: Sendable {
     /// Observe changes to a set of paths and yield events when any of them
     /// change. Local: FSEvents. Remote: polls `stat` mtime every 3s.
     nonisolated func watchPaths(_ paths: [String]) -> AsyncStream<WatchEvent>
+}
+
+public extension ServerTransport {
+    /// Default: backup-class binary streaming isn't implemented for
+    /// every transport (notably the iOS `CitadelServerTransport`,
+    /// which doesn't expose a raw stdout pipe). Concrete Mac
+    /// transports override this. The fallback yields a stream that
+    /// throws on first iteration so callers fail fast rather than
+    /// hanging silently.
+    nonisolated func streamRawBytes(
+        executable: String,
+        args: [String]
+    ) -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish(throwing: TransportError.other(
+                message: "streamRawBytes is not supported on this transport"
+            ))
+        }
+    }
 }
 
 /// Stat-style file metadata. `nil` (return value) means the file does not

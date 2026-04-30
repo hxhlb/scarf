@@ -176,6 +176,55 @@ public struct LocalTransport: ServerTransport {
     }
     #endif
 
+    public func streamRawBytes(executable: String, args: [String]) -> AsyncThrowingStream<Data, Error> {
+        #if os(iOS)
+        return AsyncThrowingStream { $0.finish() }
+        #else
+        return AsyncThrowingStream { continuation in
+            Task.detached {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: executable)
+                proc.arguments = args
+                let outPipe = Pipe()
+                let errPipe = Pipe()
+                proc.standardOutput = outPipe
+                proc.standardError = errPipe
+                do {
+                    try proc.run()
+                } catch {
+                    continuation.finish(throwing: error)
+                    return
+                }
+                try? outPipe.fileHandleForWriting.close()
+                try? errPipe.fileHandleForWriting.close()
+                let handle = outPipe.fileHandleForReading
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }
+                    continuation.yield(chunk)
+                }
+                proc.waitUntilExit()
+                let stderrTail: String
+                if proc.terminationStatus != 0 {
+                    stderrTail = (try? errPipe.fileHandleForReading.readToEnd())
+                        .flatMap { String(data: $0 ?? Data(), encoding: .utf8) } ?? ""
+                } else {
+                    stderrTail = ""
+                }
+                try? outPipe.fileHandleForReading.close()
+                try? errPipe.fileHandleForReading.close()
+                if proc.terminationStatus != 0 {
+                    continuation.finish(throwing: TransportError.commandFailed(
+                        exitCode: proc.terminationStatus, stderr: stderrTail
+                    ))
+                } else {
+                    continuation.finish()
+                }
+            }
+        }
+        #endif
+    }
+
     public func streamLines(executable: String, args: [String]) -> AsyncThrowingStream<String, Error> {
         #if os(iOS)
         // LocalTransport doesn't run on iOS at runtime — the iOS app

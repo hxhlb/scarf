@@ -523,6 +523,69 @@ public struct SSHTransport: ServerTransport {
         #endif
     }
 
+    public func streamRawBytes(executable: String, args: [String]) -> AsyncThrowingStream<Data, Error> {
+        #if os(iOS)
+        return AsyncThrowingStream { $0.finish() }
+        #else
+        return AsyncThrowingStream { continuation in
+            Task.detached { [self] in
+                ensureControlDir()
+                // Same `bash -lc` wrapping as `streamLines` so PATH picks
+                // up profile-only entries (pipx, asdf, conda). The
+                // difference here is we yield raw `Data` chunks — no
+                // newline framing, no UTF-8 decoding. Required for
+                // backup tarballs.
+                let cmd = ([executable] + args).map { Self.remotePathArg($0) }.joined(separator: " ")
+                var sshArgv = sshArgs()
+                sshArgv.insert("-T", at: 0)
+                sshArgv.append(hostSpec)
+                sshArgv.append("bash")
+                sshArgv.append("-lc")
+                sshArgv.append(Self.shellQuote(cmd))
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: sshBinary)
+                proc.arguments = sshArgv
+                proc.environment = Self.sshSubprocessEnvironment()
+                let outPipe = Pipe()
+                let errPipe = Pipe()
+                proc.standardOutput = outPipe
+                proc.standardError = errPipe
+                do {
+                    try proc.run()
+                } catch {
+                    continuation.finish(throwing: error)
+                    return
+                }
+                try? outPipe.fileHandleForWriting.close()
+                try? errPipe.fileHandleForWriting.close()
+                let handle = outPipe.fileHandleForReading
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }
+                    continuation.yield(chunk)
+                }
+                proc.waitUntilExit()
+                let stderrTail: String
+                if proc.terminationStatus != 0 {
+                    stderrTail = (try? errPipe.fileHandleForReading.readToEnd())
+                        .flatMap { String(data: $0 ?? Data(), encoding: .utf8) } ?? ""
+                } else {
+                    stderrTail = ""
+                }
+                try? outPipe.fileHandleForReading.close()
+                try? errPipe.fileHandleForReading.close()
+                if proc.terminationStatus != 0 {
+                    continuation.finish(throwing: TransportError.classifySSHFailure(
+                        host: config.host, exitCode: proc.terminationStatus, stderr: stderrTail
+                    ))
+                } else {
+                    continuation.finish()
+                }
+            }
+        }
+        #endif
+    }
+
     /// Injection point for ssh/scp subprocess environment enrichment.
     ///
     /// On the Mac app, this is wired at startup to

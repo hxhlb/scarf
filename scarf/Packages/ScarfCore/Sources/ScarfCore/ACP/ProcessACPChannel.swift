@@ -86,7 +86,7 @@ public actor ProcessACPChannel: ACPChannel {
         self.stderr = errStream
         self.stderrContinuation = errContinuation
 
-        await startReaders()
+        startReaders()
         installTerminationHandler()
     }
 
@@ -111,7 +111,7 @@ public actor ProcessACPChannel: ACPChannel {
         self.stderr = errStream
         self.stderrContinuation = errContinuation
 
-        await startReaders()
+        startReaders()
         installTerminationHandler()
     }
 

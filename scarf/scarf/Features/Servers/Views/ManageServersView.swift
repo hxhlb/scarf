@@ -12,6 +12,8 @@ struct ManageServersView: View {
     @State private var pendingRemoveID: ServerID?
     @State private var diagnosticsContext: ServerContext?
     @State private var importAlert: ImportAlertState?
+    @State private var backupContext: ServerContext?
+    @State private var restoreContext: ServerContext?
 
     /// Lightweight wrapper around the after-import message so we can
     /// present a single SwiftUI `.alert` for both success summaries
@@ -43,6 +45,18 @@ struct ManageServersView: View {
             set: { diagnosticsContext = $0?.context }
         )) { wrapper in
             RemoteDiagnosticsView(context: wrapper.context)
+        }
+        .sheet(item: Binding(
+            get: { backupContext.map { IdentifiableContext(context: $0) } },
+            set: { backupContext = $0?.context }
+        )) { wrapper in
+            BackupServerSheet(context: wrapper.context)
+        }
+        .sheet(item: Binding(
+            get: { restoreContext.map { IdentifiableContext(context: $0) } },
+            set: { restoreContext = $0?.context }
+        )) { wrapper in
+            RestoreServerSheet(context: wrapper.context)
         }
         .confirmationDialog(
             "Remove this server?",
@@ -208,6 +222,7 @@ struct ManageServersView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                actionsMenu(for: ServerContext.local, removable: false)
             }
             .padding(.vertical, 4)
 
@@ -225,26 +240,56 @@ struct ManageServersView: View {
                         }
                     }
                     Spacer()
-                    Button {
-                        diagnosticsContext = entry.context
-                    } label: {
-                        Image(systemName: "stethoscope")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Run remote diagnostics — check exactly which files are readable on this server.")
-                    Button {
-                        pendingRemoveID = entry.id
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.red)
-                    .help("Remove this server from Scarf.")
+                    actionsMenu(for: entry.context, removable: true)
                 }
                 .padding(.vertical, 4)
             }
         }
         .listStyle(.inset)
+    }
+
+    /// Per-row actions menu. Consolidates Backup / Restore /
+    /// Diagnostics / Remove behind a single ellipsis so the row stays
+    /// readable as the count of available actions grows. Local
+    /// servers can be backed up + restored just like remotes
+    /// (running `tar` against `~/.hermes`) but can't be removed —
+    /// the local entry is synthesized, not registry-backed.
+    @ViewBuilder
+    private func actionsMenu(for context: ServerContext, removable: Bool) -> some View {
+        Menu {
+            Button {
+                backupContext = context
+            } label: {
+                Label("Back Up…", systemImage: "arrow.down.doc")
+            }
+            Button {
+                restoreContext = context
+            } label: {
+                Label("Restore from Backup…", systemImage: "arrow.up.doc")
+            }
+            if context.isRemote {
+                Divider()
+                Button {
+                    diagnosticsContext = context
+                } label: {
+                    Label("Diagnostics…", systemImage: "stethoscope")
+                }
+            }
+            if removable {
+                Divider()
+                Button(role: .destructive) {
+                    pendingRemoveID = context.id
+                } label: {
+                    Label("Remove Server…", systemImage: "trash")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Backup, restore, or remove this server.")
     }
 
     /// A star button that marks the open-on-launch default. Filled + yellow

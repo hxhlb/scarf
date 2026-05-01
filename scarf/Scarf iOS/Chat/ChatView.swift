@@ -1041,10 +1041,21 @@ final class ChatController {
     /// the start intent so the preflight sheet can replay it after the
     /// user picks a model. Reads via `context.readText` (transport-
     /// aware) and parses with the ScarfCore YAML parser — same path
-    /// `IOSSettingsViewModel.load` uses, just synchronous because the
-    /// preflight runs before any `state = .connecting` UI transition.
-    private func passModelPreflight(intent: PendingStart) -> Bool {
-        let raw = context.readText(context.paths.configYAML) ?? ""
+    /// `IOSSettingsViewModel.load` uses.
+    ///
+    /// **Off MainActor.** `context.readText` synchronously calls
+    /// `transport.fileExists` + `transport.readFile`; on a remote
+    /// ScarfGo context that's a blocking SSH round-trip that, before
+    /// this fix, ran on the controller's `@MainActor` and stalled the
+    /// UI for seconds during connect — long enough for iOS's
+    /// non-responsive-app watchdog to kill the process if the user
+    /// kept tapping (the typing TestFlight crash report). Reading
+    /// detached pushes the I/O off MainActor; the result and the
+    /// `pendingStartIntent` / `modelPreflightReason` writes hop back.
+    private func passModelPreflight(intent: PendingStart) async -> Bool {
+        let path = context.paths.configYAML
+        let ctx = context
+        let raw = await Task.detached { ctx.readText(path) ?? "" }.value
         let config = HermesConfig(yaml: raw)
         let result = ModelPreflight.check(config)
         if result.isConfigured { return true }
@@ -1138,7 +1149,7 @@ final class ChatController {
     /// can type and hit send immediately.
     func start() async {
         if state == .connecting || state == .ready { return }
-        guard passModelPreflight(intent: .fresh) else { return }
+        guard await passModelPreflight(intent: .fresh) else { return }
         state = .connecting
         vm.reset()
         let client = ACPClient.forIOSApp(
@@ -1651,7 +1662,7 @@ final class ChatController {
         } else {
             intent = .fresh
         }
-        guard passModelPreflight(intent: intent) else { return }
+        guard await passModelPreflight(intent: intent) else { return }
         state = .connecting
         let client = ACPClient.forIOSApp(
             context: context,
@@ -1735,7 +1746,7 @@ final class ChatController {
     /// to `session/load` if the remote doesn't support `session/resume`
     /// (Hermes < 0.9.x).
     func startResuming(sessionID: String) async {
-        guard passModelPreflight(intent: .resume(sessionID: sessionID)) else { return }
+        guard await passModelPreflight(intent: .resume(sessionID: sessionID)) else { return }
         await stop()
         vm.reset()
         // Clear eagerly so a lingering project name from a prior

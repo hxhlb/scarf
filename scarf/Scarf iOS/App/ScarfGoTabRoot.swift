@@ -36,6 +36,29 @@ struct ScarfGoTabRoot: View {
     /// through here.
     @State private var coordinator = ScarfGoCoordinator()
 
+    /// Hermes version + capability flags for this remote. Drives the
+    /// iOS version banner (v0.11 hosts get a yellow "update for new
+    /// features" banner) and capability-gated affordances like ACP
+    /// image attachments. Constructed once per server connection so
+    /// the detection runs over the active SSH transport.
+    @State private var capabilities: HermesCapabilitiesStore
+
+    init(
+        serverID: ServerID,
+        config: IOSServerConfig,
+        key: SSHKeyBundle,
+        onSoftDisconnect: @escaping @MainActor () async -> Void,
+        onForget: @escaping @MainActor () async -> Void
+    ) {
+        self.serverID = serverID
+        self.config = config
+        self.key = key
+        self.onSoftDisconnect = onSoftDisconnect
+        self.onForget = onForget
+        let ctx = config.toServerContext(id: serverID)
+        _capabilities = State(initialValue: HermesCapabilitiesStore(context: ctx))
+    }
+
     /// SwiftUI's `.onChange(of: ScenePhase)` modifier on a non-active
     /// tab doesn't fire while the tab is unmounted — the coordinator
     /// is the single source of truth for scene-phase transitions
@@ -118,6 +141,8 @@ struct ScarfGoTabRoot: View {
         .tabViewStyle(.sidebarAdaptable)
         .environment(\.serverContext, ctx)
         .environment(\.scarfGoCoordinator, coordinator)
+        .environment(capabilities)
+        .hermesCapabilities(capabilities)
         .onAppear {
             // Give the notification router a handle to this session's
             // coordinator so notification-taps can route across tabs.

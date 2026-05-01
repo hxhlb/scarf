@@ -113,9 +113,27 @@ Public documentation lives in the GitHub wiki at https://github.com/awizemann/sc
 
 ## Hermes Version
 
-Targets Hermes v2026.4.23 (v0.11.0). Log lines may carry an optional `[session_id]` tag between the level and logger name — `HermesLogService.parseLine` treats the session tag as an optional capture group, so older untagged lines still parse.
+Targets Hermes v2026.4.30 (v0.12.0). Log lines may carry an optional `[session_id]` tag between the level and logger name — `HermesLogService.parseLine` treats the session tag as an optional capture group, so older untagged lines still parse.
 
-**v2026.4.23 (v0.11.0)** added (Scarf-relevant subset):
+**Capability gating.** Scarf detects the target's Hermes version once per server connection via [HermesCapabilities](scarf/Packages/ScarfCore/Sources/ScarfCore/Services/HermesCapabilities.swift) (`hermes --version` → semver + `YYYY.M.D` parse). The resulting `HermesCapabilitiesStore` is injected on `ContextBoundRoot` (Mac) and `ScarfGoTabRoot` (iOS) via `.environment(_:)` and `.hermesCapabilities(_:)`; UI that depends on a v0.12+ surface (Curator, Kanban, ACP image input, `auxiliary.curator`, `prompt_caching.cache_ttl`, Piper TTS, Vercel terminal) reads it through the typed environment key. Pre-v0.12 hosts gracefully hide the new affordances rather than throwing on unknown CLI subcommands. Add a new flag at the top of `HermesCapabilities` whenever Scarf gains a release-gated UI surface.
+
+**v2026.4.30 (v0.12.0)** added (Scarf-relevant subset):
+
+- **Autonomous Curator** — `hermes curator` self-prunes / -consolidates the skill library on a 7-day cycle. Reports land at `~/.hermes/logs/curator/run.json` + `REPORT.md` (paths exposed via `HermesPathSet.curatorReportJSON` / `curatorReportMD`). Surfaced in Scarf as a dedicated "Curator" sidebar item under Interact (between Memory and Skills) on Mac, plus a read-only iOS panel; both gated on `HermesCapabilities.hasCurator`.
+- **5 new inference providers** — GMI Cloud, Azure AI Foundry, LM Studio (upgraded to first-class), MiniMax OAuth, Tencent Tokenhub. Mirrored in `ModelCatalogService.overlayOnlyProviders`; the model picker reaches all of them automatically.
+- **`flush_memories` aux task removed** — `auxiliary.flush_memories` is gone from Hermes config. Scarf's `AuxiliarySettings.flushMemories` field is dropped; `HermesCapabilities.hasFlushMemoriesAux` returns `true` only on pre-v0.12 hosts so the row stays visible there.
+- **`auxiliary.curator` aux task added** — Curator's review model is configurable independently of the main model. Surfaced in `Settings → Auxiliary` next to the other aux rows.
+- **Multimodal ACP `session/prompt`** — ACP advertises and forwards image content blocks. Scarf chat composers (Mac drag/drop + paste; iOS PhotosPicker + camera) attach images that flow through `ACPClient.sendPrompt` as `[{type: "text"...}, {type: "image", source: {type: "base64", ...}}]`. Gated on `HermesCapabilities.hasACPImagePrompts`.
+- **CLI additions:** `hermes -z <prompt>` (non-interactive one-shot), `hermes update --check` (preflight), `hermes fallback` (manage fallback providers), `hermes curator` (status / run / pause / resume / pin / unpin / restore), `hermes kanban` (full task-board CLI; multi-profile collab was reverted upstream so Scarf ships a read-only Kanban view only). All capability-gated.
+- **Skills surface:** `hermes skills install <https-url>` direct-URL install (SkillsView "Install from URL…" toolbar button), `/reload-skills` slash command (Skills view "Reload" button), `hermes skills list` enabled/disabled status (per-row toggle), Curator pin badge (driven from `hermes curator status`).
+- **Two new gateway platforms:** Microsoft Teams (19th, plugin-shipped) + Tencent 元宝 / Yuanbao (18th, native). Surfaced in the Mac Platforms tab.
+- **Cron upgrades:** per-job `--workdir` (project-aware cwd) and `--context-from` (chain outputs from another job). Editor sheet adds Project picker + dependency dropdown.
+- **Settings deltas:** `prompt_caching.cache_ttl` (5m/1h picker), `redaction.enabled` toggle (off-by-default in v0.12 — toggle restores it), `agent.runtime_metadata_footer` toggle, Piper added to TTS provider list, `vercel` added to terminal backend list.
+- **Bundled plugins:** Spotify, Google Meet, Langfuse observability, hermes-achievements (visible in Plugins tab).
+- **`hermes memory` providers:** honcho, openviking, mem0, hindsight, holographic, retaindb, byterover. `Settings → Memory` per-provider "Setup…" button shells out to `hermes memory setup <provider>`.
+- **Schema is unchanged from v0.11** — same state.db columns (`messages.reasoning_content`, `sessions.api_call_count` introduced in v0.11 remain). No migration needed.
+
+**v2026.4.23 (v0.11.0)** added (historical context, still consumed by Scarf when running against a pre-v0.12 host):
 
 - `/steer <prompt>` — non-interruptive mid-run guidance slash command. Surfaced in Scarf chat menus via `RichChatViewModel.nonInterruptiveCommands`; `ChatViewModel.sendViaACP` (Mac) and `ChatController.send` (iOS) skip the "Agent working…" status flip and show a transient toast instead.
 - New CLI subcommands: `hermes plugins` / `profile` / `webhook` / `insights` / `logs` / `memory reset` / `completion` / `dashboard`. Scarf v2.5 adopts **`hermes memory reset`** (toolbar button on MemoryView with destructive confirmation). The other CLIs are documented here for v2.6 — Scarf still reads `~/.hermes/plugins/`, `~/.hermes/profiles/` etc directly today; switching those paths to the canonical CLI is a forward-compatible change to make when bandwidth permits.

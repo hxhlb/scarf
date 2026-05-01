@@ -75,6 +75,12 @@ public struct HermesPathSet: Sendable, Hashable {
     public nonisolated var errorsLog: String { home + "/logs/errors.log" }
     public nonisolated var agentLog: String { home + "/logs/agent.log" }
     public nonisolated var gatewayLog: String { home + "/logs/gateway.log" }
+    /// Curator run report, JSON (v0.12+). Written by `hermes curator` on
+    /// each cycle; consumed by `CuratorViewModel` for structured stats.
+    public nonisolated var curatorReportJSON: String { home + "/logs/curator/run.json" }
+    /// Curator human-readable run report (v0.12+). Renders as the
+    /// "Last run" text in CuratorView.
+    public nonisolated var curatorReportMD: String { home + "/logs/curator/REPORT.md" }
     public nonisolated var scarfDir: String { home + "/scarf" }
     public nonisolated var projectsRegistry: String { scarfDir + "/projects.json" }
 

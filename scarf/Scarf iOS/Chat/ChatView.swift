@@ -3,6 +3,9 @@ import ScarfCore
 import ScarfIOS
 import ScarfDesign
 import os
+#if canImport(PhotosUI)
+import PhotosUI
+#endif
 
 // The Chat feature on iOS is gated on `canImport(SQLite3)` because
 // `RichChatViewModel` reads session history from `HermesDataService`
@@ -24,9 +27,23 @@ struct ChatView: View {
 
     @Environment(\.scarfGoCoordinator) private var coordinator
     @Environment(\.serverContext) private var envContext
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
     @State private var controller: ChatController
     @State private var showProjectPicker = false
     @State private var showSlashCommandsSheet = false
+    /// PhotosPicker selection. Bridge between SwiftUI's selection
+    /// binding and our `ChatImageAttachment` payload — `loadTransferable`
+    /// produces raw `Data` we then hand to `ImageEncoder`. v0.12+ only.
+    @State private var pickerSelection: [PhotosPickerItem] = []
+    @State private var showPhotoPicker = false
+    @State private var isEncodingAttachment = false
+    @State private var attachmentError: String?
+
+    private static let maxAttachments = 5
+
+    private var supportsImagePrompts: Bool {
+        capabilitiesStore?.capabilities.hasACPImagePrompts ?? false
+    }
     /// Drives the composer's keyboard. Bound to the TextField via
     /// `.focused(...)`; cleared by the scroll-to-dismiss gesture on
     /// the message list AND by an explicit keyboard-toolbar button.
@@ -431,7 +448,108 @@ struct ChatView: View {
     }
 
     private var composer: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !controller.attachments.isEmpty || isEncodingAttachment || attachmentError != nil {
+                attachmentStrip
+            }
+            composerRow
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        #if canImport(PhotosUI)
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $pickerSelection,
+            maxSelectionCount: max(0, Self.maxAttachments - controller.attachments.count),
+            matching: .images
+        )
+        .onChange(of: pickerSelection) { _, items in
+            ingestPickerItems(items)
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private var attachmentStrip: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if isEncodingAttachment {
+                ProgressView().controlSize(.small)
+                Text("Encoding…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(controller.attachments) { attachment in
+                attachmentChip(attachment)
+            }
+            if let err = attachmentError {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(ScarfColor.danger)
+            }
+            Spacer(minLength: 0)
+            if !controller.attachments.isEmpty {
+                Text("\(controller.attachments.count)/\(Self.maxAttachments)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentChip(_ attachment: ChatImageAttachment) -> some View {
+        HStack(spacing: 4) {
+            attachmentChipThumbnail(attachment)
+                .frame(width: 32, height: 32)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            Button {
+                controller.attachments.removeAll { $0.id == attachment.id }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove attached image")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ScarfColor.backgroundSecondary)
+        )
+    }
+
+    @ViewBuilder
+    private func attachmentChipThumbnail(_ attachment: ChatImageAttachment) -> some View {
+        if let thumb = attachment.thumbnailBase64,
+           let data = Data(base64Encoded: thumb),
+           let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else {
+            Image(systemName: "photo")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(ScarfColor.backgroundSecondary)
+        }
+    }
+
+    private var composerRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
+            if supportsImagePrompts {
+                Button {
+                    showPhotoPicker = true
+                } label: {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 22))
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+                }
+                .buttonStyle(.plain)
+                .disabled(controller.state != .ready || controller.attachments.count >= Self.maxAttachments)
+                .accessibilityLabel("Attach image")
+            }
             TextField(
                 "Message…",
                 text: $controller.draft,
@@ -480,12 +598,57 @@ struct ChatView: View {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 28))
             }
-            .disabled(controller.state != .ready || controller.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(!canSendComposer)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.regularMaterial)
     }
+
+    /// Send is enabled when ready AND we have either text or at least
+    /// one attachment. Image-only sends are valid for vision models.
+    private var canSendComposer: Bool {
+        guard controller.state == .ready else { return false }
+        if !controller.attachments.isEmpty { return true }
+        return !controller.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Pull JPEG/PNG bytes out of each PhotosPickerItem and feed them
+    /// through ImageEncoder. Detached so the heavyweight resize +
+    /// JPEG-encode work doesn't block MainActor; the resulting
+    /// attachment hops back to MainActor for state mutation.
+    ///
+    /// PhotosPickerItem can deliver `Data` directly via the
+    /// `Transferable` API. After ingestion the binding is reset so a
+    /// follow-up pick triggers `onChange` again.
+    #if canImport(PhotosUI)
+    private func ingestPickerItems(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        // Capture the items, immediately clear the binding so a future
+        // pick triggers onChange even when the user re-selects the
+        // same image set. PhotosPicker behavior: identical selection
+        // doesn't re-fire onChange unless the binding flips through nil.
+        let snapshot = items
+        pickerSelection = []
+        isEncodingAttachment = true
+        Task { @MainActor in
+            for item in snapshot {
+                guard controller.attachments.count < Self.maxAttachments else { break }
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { continue }
+                    let attachment = try await Task.detached(priority: .userInitiated) {
+                        try ImageEncoder().encode(rawBytes: data, sourceFilename: nil)
+                    }.value
+                    controller.attachments.append(attachment)
+                } catch {
+                    attachmentError = (error as? LocalizedError)?.errorDescription ?? "Couldn't encode image"
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 4_000_000_000)
+                        attachmentError = nil
+                    }
+                }
+            }
+            isEncodingAttachment = false
+        }
+    }
+    #endif
 
     @State private var showErrorDetails: Bool = false
 
@@ -695,6 +858,12 @@ final class ChatController {
     private(set) var state: State = .idle
     var vm: RichChatViewModel
     var draft: String = ""
+
+    /// v0.12+ image attachments queued to send with the next prompt.
+    /// Capped at 5 by the composer UI; the cap matches the Mac behavior
+    /// and keeps total ACP prompt payload under ~2 MB even on a slow
+    /// cellular link. Cleared after each successful `send()`.
+    var attachments: [ChatImageAttachment] = []
 
     /// Set when chat-start is blocked because the active server's
     /// `config.yaml` has no `model.default` / `model.provider`. ChatView
@@ -1003,12 +1172,22 @@ final class ChatController {
     func send() async {
         guard state == .ready, let client else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        // v0.12+ allows image-only sends — vision models accept "describe
+        // this" with no text. Bail only when both fields are empty.
+        guard !text.isEmpty || !attachments.isEmpty else { return }
         let sessionId = vm.sessionId ?? ""
         guard !sessionId.isEmpty else { return }
+        let images = attachments
+        attachments = []
         draft = ""
         clearStoredDraft()
-        vm.addUserMessage(text: text)
+        if !text.isEmpty {
+            vm.addUserMessage(text: text)
+        } else {
+            // Surface an image-only message so the user sees their bubble
+            // even when they didn't type any caption.
+            vm.addUserMessage(text: "[image attached]")
+        }
         // /steer is non-interruptive — the agent is still on its
         // current turn; the guidance applies after the next tool call.
         // Surface a transient toast confirming the guidance was
@@ -1029,7 +1208,7 @@ final class ChatController {
         // literally. v2.5.
         let wireText = expandIfProjectScoped(text)
         do {
-            _ = try await client.sendPrompt(sessionId: sessionId, text: wireText)
+            _ = try await client.sendPrompt(sessionId: sessionId, text: wireText, images: images)
         } catch {
             // The event task may already have surfaced a
             // .connectionLost; show the send-time error only if the

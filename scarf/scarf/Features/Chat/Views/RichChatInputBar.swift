@@ -108,16 +108,33 @@ struct RichChatInputBar: View {
                             )
                     )
                     .overlay(alignment: .topLeading) {
-                        if text.isEmpty {
-                            Text(supportsImagePrompts
-                                 ? "Message Hermes…  /  for commands · drag images to attach"
-                                 : "Message Hermes…  /  for commands")
-                                .scarfStyle(.body)
-                                .foregroundStyle(ScarfColor.foregroundFaint)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .allowsHitTesting(false)
-                        }
+                        // Placeholder ghosting (#65): TextEditor's
+                        // NSTextView updates the visible glyphs a frame
+                        // before the SwiftUI binding propagates, so a
+                        // bare `if text.isEmpty` overlay renders the
+                        // translucent placeholder text on top of the
+                        // just-typed character — visible as a "behind
+                        // or around" ghost. Two mitigations:
+                        //
+                        //   1. Pin an opaque rectangle behind the
+                        //      placeholder text. During any single-
+                        //      frame lag the user sees a clean
+                        //      placeholder, never layered glyphs.
+                        //   2. Use `.opacity(...)` instead of an `if`.
+                        //      Keeps the view tree stable per
+                        //      keystroke (removes the per-keystroke
+                        //      view-mutation churn the composer was
+                        //      already paying for).
+                        Text(supportsImagePrompts
+                             ? "Message Hermes…  /  for commands · drag images to attach"
+                             : "Message Hermes…  /  for commands")
+                            .scarfStyle(.body)
+                            .foregroundStyle(ScarfColor.foregroundFaint)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(ScarfColor.backgroundSecondary)
+                            .opacity(text.isEmpty ? 1 : 0)
+                            .allowsHitTesting(false)
                     }
                     // Drag-drop image attachments. Receives both file URLs
                     // (from Finder) and raw image bitmap data (from

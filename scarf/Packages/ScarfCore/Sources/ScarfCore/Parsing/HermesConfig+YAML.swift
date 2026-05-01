@@ -280,7 +280,10 @@ public extension HermesConfig {
             matrix: matrix,
             mattermost: mattermost,
             whatsapp: whatsapp,
-            homeAssistant: homeAssistant
+            homeAssistant: homeAssistant,
+            cacheTTL: str("prompt_caching.cache_ttl", default: "5m"),
+            redactionEnabled: bool("redaction.enabled", default: false),
+            runtimeMetadataFooter: bool("agent.runtime_metadata_footer", default: false)
         )
     }
 }

@@ -641,6 +641,24 @@ public struct HermesConfig: Sendable {
     /// platform. Scarf reads for display; edits go through Hermes CLI.
     public var platformToolsets: [String: [String]]
 
+    // -- Hermes v0.12 additions ----------------------------------------
+    // Defaults match the Hermes v0.12 defaults so that an absent key in
+    // config.yaml looks identical to a freshly-installed v0.12 host.
+
+    /// `prompt_caching.cache_ttl` — `"5m"` (default) or `"1h"`. Hermes
+    /// v0.12 added the 1-hour ceiling for users with prompt-cache-heavy
+    /// workloads (long agent loops with stable system prompts).
+    public var cacheTTL: String
+    /// `redaction.enabled` — flipped from `true` to `false` as the
+    /// upstream default in v0.12 because the substitution corrupted
+    /// patches and API payloads. Surface a toggle so users with hard
+    /// redaction requirements can opt back in.
+    public var redactionEnabled: Bool
+    /// `agent.runtime_metadata_footer` — opt-in compact footer on each
+    /// final reply (provider/model/cost/turn count). Off by default;
+    /// useful for cost auditing and screen-recording demos.
+    public var runtimeMetadataFooter: Bool
+
     // Grouped blocks
     public var display: DisplaySettings
     public var terminal: TerminalSettings
@@ -718,8 +736,14 @@ public struct HermesConfig: Sendable {
         matrix: MatrixSettings,
         mattermost: MattermostSettings,
         whatsapp: WhatsAppSettings,
-        homeAssistant: HomeAssistantSettings
+        homeAssistant: HomeAssistantSettings,
+        cacheTTL: String = "5m",
+        redactionEnabled: Bool = false,
+        runtimeMetadataFooter: Bool = false
     ) {
+        self.cacheTTL = cacheTTL
+        self.redactionEnabled = redactionEnabled
+        self.runtimeMetadataFooter = runtimeMetadataFooter
         self.model = model
         self.provider = provider
         self.maxTurns = maxTurns

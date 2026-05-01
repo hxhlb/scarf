@@ -106,4 +106,74 @@ enum ChatFontScale {
         let pct = Int((scale * 100).rounded())
         return "\(pct)%"
     }
+
+    // MARK: - Scaled font helpers
+    //
+    // ScarfFont's tokens are fixed-point (`Font.system(size: 14, …)`),
+    // so `.environment(\.dynamicTypeSize, …)` doesn't reach them — the
+    // Mac chat slider had no visible effect on bubbles, reasoning,
+    // tool chips, or code blocks (issue #68). These helpers mirror the
+    // ScarfFont base sizes, multiplied by the user's chat scale, and
+    // are used by `RichMessageBubble`, `MarkdownContentView`, and
+    // `CodeBlockView` in place of the static tokens. At scale = 1.0
+    // they're byte-for-byte identical to ScarfFont so the default UI
+    // is unchanged.
+
+    static func body(_ scale: Double) -> Font {
+        .system(size: 14 * scale, weight: .regular)
+    }
+
+    static func bodyEmph(_ scale: Double) -> Font {
+        .system(size: 14 * scale, weight: .medium)
+    }
+
+    static func callout(_ scale: Double) -> Font {
+        .system(size: 15 * scale, weight: .regular)
+    }
+
+    static func caption(_ scale: Double) -> Font {
+        .system(size: 12 * scale, weight: .regular)
+    }
+
+    static func captionStrong(_ scale: Double) -> Font {
+        .system(size: 12 * scale, weight: .semibold)
+    }
+
+    static func caption2(_ scale: Double) -> Font {
+        .system(size: 10 * scale, weight: .medium)
+    }
+
+    static func mono(_ scale: Double) -> Font {
+        .system(size: 13 * scale, weight: .regular, design: .monospaced)
+    }
+
+    static func monoSmall(_ scale: Double) -> Font {
+        .system(size: 12 * scale, weight: .regular, design: .monospaced)
+    }
+
+    /// Code-block body — matches `CodeBlockView`'s 12pt mono.
+    static func codeBlock(_ scale: Double) -> Font {
+        .system(size: 12 * scale, weight: .regular, design: .monospaced)
+    }
+
+    /// Inline code in markdown paragraphs — `.callout` (15pt) mono.
+    static func codeInline(_ scale: Double) -> Font {
+        .system(size: 15 * scale, weight: .regular, design: .monospaced)
+    }
+}
+
+// MARK: - Environment plumbing
+
+private struct ChatFontScaleKey: EnvironmentKey {
+    static let defaultValue: Double = ChatFontScale.default
+}
+
+extension EnvironmentValues {
+    /// Multiplier applied to chat content fonts. Set once on
+    /// `RichChatView`'s root so message bubbles, markdown paragraphs,
+    /// and code blocks scale together. Default 1.0 = today's UI.
+    var chatFontScale: Double {
+        get { self[ChatFontScaleKey.self] }
+        set { self[ChatFontScaleKey.self] = newValue }
+    }
 }

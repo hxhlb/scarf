@@ -7,12 +7,16 @@ struct CodeBlockView: View {
 
     @State private var copied = false
 
+    /// Chat font scale plumbed from `RichChatView` (issue #68). Defaults
+    /// to 1.0 outside the chat surface.
+    @Environment(\.chatFontScale) private var chatFontScale: Double
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let language, !language.isEmpty {
                 HStack {
                     Text(language)
-                        .font(.caption2.bold())
+                        .font(ChatFontScale.caption2(chatFontScale).bold())
                         .foregroundStyle(.secondary)
                     Spacer()
                     copyButton
@@ -31,7 +35,7 @@ struct CodeBlockView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(ChatFontScale.codeBlock(chatFontScale))
                     .foregroundStyle(Color(nsColor: NSColor(red: 0.85, green: 0.87, blue: 0.91, alpha: 1.0)))
                     .textSelection(.enabled)
                     .padding(.horizontal, 10)

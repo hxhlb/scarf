@@ -64,6 +64,11 @@ struct RichChatView: View {
         }
         .frame(minHeight: 0, idealHeight: 500, maxHeight: .infinity)
         .environment(\.dynamicTypeSize, ChatFontScale.dynamicTypeSize(for: fontScale))
+        // ScarfFont tokens are fixed-point so dynamicTypeSize alone
+        // doesn't move bubble / markdown / code-block text. Plumb the
+        // raw scale via `\.chatFontScale` so chat content views can
+        // read it and scale their explicit sizes too (issue #68).
+        .environment(\.chatFontScale, fontScale)
         // Animate side-pane shows/hides so the transcript reflows
         // smoothly rather than snapping. ~180ms feels responsive
         // without being jarring.

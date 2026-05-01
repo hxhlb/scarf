@@ -14,6 +14,11 @@ struct RichMessageBubble: View, Equatable {
 
     @Environment(ChatViewModel.self) private var chatViewModel
 
+    /// Chat-only font scale set on `RichChatView`. Chat content uses
+    /// these multiplied sizes (issue #68); other surfaces still see
+    /// the static ScarfFont tokens at scale = 1.0.
+    @Environment(\.chatFontScale) private var chatFontScale: Double
+
     /// Scarf-local chat density preferences (issues #47 / #48). All
     /// three default to today's UI. Read here so the reasoning + tool-
     /// call switches don't have to thread the values through every
@@ -68,7 +73,7 @@ struct RichMessageBubble: View, Equatable {
             HStack {
                 Spacer(minLength: 80)
                 Text(message.content)
-                    .scarfStyle(.body)
+                    .font(ChatFontScale.body(chatFontScale))
                     .foregroundStyle(ScarfColor.onAccent)
                     .textSelection(.enabled)
                     .padding(.horizontal, 14)
@@ -91,7 +96,7 @@ struct RichMessageBubble: View, Equatable {
                         .font(.system(size: 9))
                         .foregroundStyle(ScarfColor.success)
                     Text(time, style: .time)
-                        .font(ScarfFont.caption2)
+                        .font(ChatFontScale.caption2(chatFontScale))
                         .foregroundStyle(ScarfColor.foregroundFaint)
                 }
                 .padding(.trailing, 4)
@@ -183,7 +188,7 @@ struct RichMessageBubble: View, Equatable {
     private var reasoningDisclosure: some View {
         DisclosureGroup {
             Text(message.preferredReasoning ?? "")
-                .font(ScarfFont.monoSmall)
+                .font(ChatFontScale.monoSmall(chatFontScale))
                 .foregroundStyle(ScarfColor.foregroundMuted)
                 .italic()
                 .textSelection(.enabled)
@@ -194,11 +199,11 @@ struct RichMessageBubble: View, Equatable {
                 Image(systemName: "brain")
                     .font(.system(size: 11))
                 Text("REASONING")
-                    .scarfStyle(.captionStrong)
+                    .font(ChatFontScale.captionStrong(chatFontScale))
                     .tracking(0.5)
                 if let tokens = message.tokenCount, tokens > 0 {
                     Text("· \(tokens) tok")
-                        .font(ScarfFont.monoSmall)
+                        .font(ChatFontScale.monoSmall(chatFontScale))
                         .foregroundStyle(ScarfColor.foregroundFaint)
                 }
             }
@@ -222,7 +227,7 @@ struct RichMessageBubble: View, Equatable {
                 .font(.system(size: 9))
                 .foregroundStyle(ScarfColor.warning)
             Text(message.preferredReasoning ?? "")
-                .font(ScarfFont.caption)
+                .font(ChatFontScale.caption(chatFontScale))
                 .italic()
                 .foregroundStyle(ScarfColor.foregroundFaint)
                 .textSelection(.enabled)
@@ -281,7 +286,7 @@ struct RichMessageBubble: View, Equatable {
                             .font(.system(size: 10))
                             .foregroundStyle(color)
                         Text(call.functionName)
-                            .font(ScarfFont.monoSmall)
+                            .font(ChatFontScale.monoSmall(chatFontScale))
                             .fontWeight(.medium)
                             .foregroundStyle(ScarfColor.foregroundPrimary)
                             .lineLimit(1)
@@ -341,25 +346,26 @@ struct RichMessageBubble: View, Equatable {
         HStack(spacing: 8) {
             if let tokens = message.tokenCount, tokens > 0 {
                 Text("\(tokens) tok")
-                    .font(ScarfFont.monoSmall)
+                    .font(ChatFontScale.monoSmall(chatFontScale))
             }
             if let reason = message.finishReason, !reason.isEmpty {
                 Text("·")
                 Text(reason)
-                    .scarfStyle(.caption)
+                    .font(ChatFontScale.caption(chatFontScale))
             }
             if let time = message.timestamp {
                 Text("·")
                 Text(time, style: .time)
-                    .scarfStyle(.caption)
+                    .font(ChatFontScale.caption(chatFontScale))
             }
             if let seconds = turnDuration {
                 Text("·")
                 Text(RichChatViewModel.formatTurnDuration(seconds))
-                    .font(ScarfFont.monoSmall)
+                    .font(ChatFontScale.monoSmall(chatFontScale))
                     .help("Wall-clock duration of this turn")
             }
         }
+        .font(ChatFontScale.caption(chatFontScale))
         .foregroundStyle(ScarfColor.foregroundFaint)
         .padding(.leading, 4)
     }

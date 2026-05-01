@@ -3,12 +3,22 @@ import SwiftUI
 struct MarkdownContentView: View {
     let content: String
 
+    /// Chat font scale plumbed from `RichChatView` (issue #68). Defaults
+    /// to 1.0 when this view is used outside the chat surface so other
+    /// callers see the un-scaled rendering.
+    @Environment(\.chatFontScale) private var chatFontScale: Double
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(parseBlocks().enumerated()), id: \.offset) { _, block in
                 blockView(block)
             }
         }
+        // Paragraphs are rendered as plain `Text(AttributedString)` and
+        // inherit whatever font is set on the enclosing scope. Pin the
+        // scope to the scaled body font so the chat slider actually
+        // moves the visible text.
+        .font(ChatFontScale.body(chatFontScale))
     }
 
     @ViewBuilder
@@ -37,15 +47,19 @@ struct MarkdownContentView: View {
     // MARK: - Block Views
 
     private func headingView(level: Int, text: String) -> some View {
-        let font: Font = switch level {
-        case 1: .title.bold()
-        case 2: .title2.bold()
-        case 3: .title3.bold()
-        case 4: .headline
-        default: .subheadline.bold()
+        // Heading sizes scale with `chatFontScale` (issue #68). Bases
+        // mirror the SwiftUI semantic tokens we used previously
+        // (`.title` ≈ 28, `.title2` ≈ 22, `.title3` ≈ 20, `.headline`
+        // ≈ 17, `.subheadline` ≈ 15) so 100% matches today's UI.
+        let baseSize: CGFloat = switch level {
+        case 1: 28
+        case 2: 22
+        case 3: 20
+        case 4: 17
+        default: 15
         }
         return Text(MarkdownRenderer.inlineAttributedString(text))
-            .font(font)
+            .font(.system(size: baseSize * chatFontScale, weight: .semibold))
             .textSelection(.enabled)
             .padding(.top, level <= 2 ? 8 : 4)
     }
@@ -54,11 +68,11 @@ struct MarkdownContentView: View {
         VStack(alignment: .leading, spacing: 4) {
             if let lang = language, !lang.isEmpty {
                 Text(lang)
-                    .font(.caption2.bold())
+                    .font(ChatFontScale.caption2(chatFontScale).bold())
                     .foregroundStyle(.secondary)
             }
             Text(code)
-                .font(.system(.callout, design: .monospaced))
+                .font(ChatFontScale.codeInline(chatFontScale))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

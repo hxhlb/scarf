@@ -242,7 +242,7 @@ struct SkillsView: View {
             }
             if !skill.enabled {
                 Text("OFF")
-                    .font(.system(size: 9, weight: .semibold))
+                    .scarfStyle(.captionUppercase)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
                     .background(ScarfColor.backgroundTertiary)

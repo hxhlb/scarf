@@ -91,8 +91,11 @@ struct WebhooksView: View {
         self.notEnabled = false
         let parsed = Self.parse(result)
         self.webhooks = parsed
-        self.lastError = parsed.isEmpty && !result.isEmpty
-            ? nil
+        // When the CLI returned text but the parser produced nothing, the
+        // user otherwise sees a silent empty list. Surface a parse-failure
+        // message so they know to dig deeper.
+        self.lastError = (parsed.isEmpty && !result.isEmpty)
+            ? "Couldn't parse webhook list output"
             : nil
     }
 

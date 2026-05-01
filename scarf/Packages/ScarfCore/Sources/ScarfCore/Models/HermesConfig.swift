@@ -258,7 +258,13 @@ public struct VoiceSettings: Sendable, Equatable {
     )
 }
 
-/// Eight sub-models that share the same provider/model/base_url/api_key/timeout shape.
+/// Per-task auxiliary model overrides.
+///
+/// `flush_memories` was removed entirely in Hermes v0.12 (the underlying
+/// task no longer exists), so the corresponding field was dropped here.
+/// `curator` was added in v0.12 — Curator's review fork uses its own
+/// model so users can keep main-model spend separate from background
+/// maintenance.
 public struct AuxiliarySettings: Sendable, Equatable {
     public var vision: AuxiliaryModel
     public var webExtract: AuxiliaryModel
@@ -267,7 +273,8 @@ public struct AuxiliarySettings: Sendable, Equatable {
     public var skillsHub: AuxiliaryModel
     public var approval: AuxiliaryModel
     public var mcp: AuxiliaryModel
-    public var flushMemories: AuxiliaryModel
+    /// v0.12+; pre-v0.12 Hermes installs ignore this slot.
+    public var curator: AuxiliaryModel
 
 
     public init(
@@ -278,7 +285,7 @@ public struct AuxiliarySettings: Sendable, Equatable {
         skillsHub: AuxiliaryModel,
         approval: AuxiliaryModel,
         mcp: AuxiliaryModel,
-        flushMemories: AuxiliaryModel
+        curator: AuxiliaryModel
     ) {
         self.vision = vision
         self.webExtract = webExtract
@@ -287,7 +294,7 @@ public struct AuxiliarySettings: Sendable, Equatable {
         self.skillsHub = skillsHub
         self.approval = approval
         self.mcp = mcp
-        self.flushMemories = flushMemories
+        self.curator = curator
     }
     public nonisolated static let empty = AuxiliarySettings(
         vision: .empty,
@@ -297,7 +304,7 @@ public struct AuxiliarySettings: Sendable, Equatable {
         skillsHub: .empty,
         approval: .empty,
         mcp: .empty,
-        flushMemories: .empty
+        curator: .empty
     )
 }
 

@@ -198,9 +198,9 @@ private struct ContextBoundRoot: View {
     @State private var chatViewModel: ChatViewModel
     /// Per-window snapshot of the target Hermes installation's capability
     /// flags. Drives sidebar visibility (Curator, Kanban only on v0.12+),
-    /// settings rows (flush_memories aux dropped on v0.12), and version
-    /// banners. Refreshes once on init; explicit `refresh()` call rerun
-    /// after a `hermes update`.
+    /// settings rows (curator aux added on v0.12), and version banners.
+    /// Refreshes once on init; explicit `refresh()` call rerun after a
+    /// `hermes update`.
     @State private var capabilities: HermesCapabilitiesStore
 
     init(context: ServerContext) {

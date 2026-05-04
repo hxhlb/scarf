@@ -348,10 +348,13 @@ struct RichMessageBubble: View, Equatable {
                 Text("\(tokens) tok")
                     .font(ChatFontScale.monoSmall(chatFontScale))
             }
-            if let reason = message.finishReason, !reason.isEmpty {
+            if let reason = message.finishReason,
+               Self.shouldShowFinishReason(reason)
+            {
                 Text("·")
                 Text(reason)
                     .font(ChatFontScale.caption(chatFontScale))
+                    .foregroundStyle(Self.finishReasonTone(reason))
             }
             if let time = message.timestamp {
                 Text("·")
@@ -375,6 +378,36 @@ struct RichMessageBubble: View, Equatable {
         .font(ChatFontScale.caption(chatFontScale))
         .foregroundStyle(ScarfColor.foregroundFaint)
         .padding(.leading, 4)
+    }
+
+    /// Whether `finishReason` should render as a visible badge in the
+    /// message footer. `stop` and `end_turn` are normal end-of-turn
+    /// signals — `RichChatViewModel.finalizeStreamingMessage` stamps
+    /// `"stop"` on every text-bearing turn-final assistant message —
+    /// so showing them creates the impression that something stopped
+    /// the agent prematurely. We suppress them and reserve the badge
+    /// for abnormal terminations (max_tokens, error, refusal,
+    /// content_filter, …) the user actually wants to see. Matches
+    /// the conventions in ChatGPT, Claude.ai, Cursor, etc.
+    private static func shouldShowFinishReason(_ reason: String) -> Bool {
+        let normalized = reason.trimmingCharacters(in: .whitespaces).lowercased()
+        return !["stop", "end_turn", "end-turn", ""].contains(normalized)
+    }
+
+    /// Visual tone for an abnormal finish-reason badge. Severity
+    /// scales: warning (yellow) for "the response was cut short" cases
+    /// the user can usually retry, danger (red) for outright failures
+    /// or refusals, muted otherwise so unrecognized reasons stay
+    /// readable but un-alarming.
+    private static func finishReasonTone(_ reason: String) -> Color {
+        switch reason.lowercased() {
+        case "max_tokens", "length", "content_filter":
+            return ScarfColor.warning
+        case "error", "refusal":
+            return ScarfColor.danger
+        default:
+            return ScarfColor.foregroundMuted
+        }
     }
 
     /// Speaker glyph that toggles `AVSpeechSynthesizer` playback for

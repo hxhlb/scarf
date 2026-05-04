@@ -625,6 +625,44 @@ public struct SSHTransport: ServerTransport {
     public func snapshotSQLite(remotePath: String) throws -> URL {
         try? FileManager.default.createDirectory(atPath: snapshotDir, withIntermediateDirectories: true)
         let localPath = snapshotDir + "/state.db"
+
+        // Probe remote size up front. Drives both the timeout budget
+        // (a multi-GB state.db over a slow link can take many minutes —
+        // the historical hardcoded 120s scp timeout was wildly
+        // insufficient for users with 5GB+ DBs, issue #74) and a local-
+        // disk-space pre-flight so we don't fill the user's Mac
+        // mid-transfer. Falls back to base timeouts if stat fails.
+        let remoteSize = stat(remotePath)?.size ?? 0
+
+        // Pre-flight: refuse to start if local Caches volume can't hold
+        // the snapshot plus a 500MB safety margin. Better to fail
+        // up-front with a clear "out of disk" message than to 90%-fill
+        // the volume and crash mid-transfer.
+        if remoteSize > 0,
+           let attrs = try? FileManager.default.attributesOfFileSystem(forPath: snapshotDir),
+           let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value,
+           free < remoteSize + 500_000_000 {
+            throw TransportError.fileIO(
+                path: localPath,
+                underlying: "Insufficient local disk space: state.db is \(Self.formatBytes(remoteSize)), only \(Self.formatBytes(free)) free in \(snapshotDir)."
+            )
+        }
+
+        // Adaptive timeouts. `.backup` is sequential page copy at ~100MB/s
+        // on a typical SSD, but the resulting file can be huge — give it
+        // 60s base + 1s per 100MB, capped at 10 minutes. SCP is the real
+        // bottleneck: 300s base + 0.5s per MB (≈2 MB/s minimum throughput,
+        // which covers users on slow international links), capped at 1
+        // hour. A user with a state.db so big it doesn't fit in 1h needs
+        // a different approach than Scarf can offer (rsync delta, mounted
+        // FS, etc.).
+        let backupTimeout: TimeInterval = remoteSize > 0
+            ? min(600, 60 + Double(remoteSize) / 100_000_000)
+            : 60
+        let scpTimeout: TimeInterval = remoteSize > 0
+            ? min(3600, 300 + Double(remoteSize) / 2_000_000)
+            : 300
+
         // `.backup` is WAL-safe: sqlite takes a consistent snapshot without
         // blocking writers. A plain `cp` of a WAL-mode DB could corrupt.
         let remoteTmp = "/tmp/scarf-snapshot-\(UUID().uuidString).db"
@@ -646,15 +684,19 @@ public struct SSHTransport: ServerTransport {
         //   sqlite3 "$HOME/.hermes/state.db" ".backup '/tmp/scarf-snapshot-XYZ.db'" \
         //     && sqlite3 '/tmp/scarf-snapshot-XYZ.db' "PRAGMA journal_mode=DELETE;"
         let backupScript = #"sqlite3 \#(Self.remotePathArg(remotePath)) ".backup '\#(remoteTmp)'" && sqlite3 '\#(remoteTmp)' "PRAGMA journal_mode=DELETE;" > /dev/null"#
-        let backup = try runRemoteShell(backupScript)
+        let backup = try runRemoteShell(backupScript, timeout: backupTimeout)
         if backup.exitCode != 0 {
             throw TransportError.classifySSHFailure(host: config.host, exitCode: backup.exitCode, stderr: backup.stderrString)
         }
         // scp the backup down. scp/sftp expands `~` natively (it goes
         // through the SSH file-transfer protocol, not a remote shell), so
         // remoteTmp's `/tmp/...` absolute path round-trips as-is.
+        // `-C` enables gzip compression in transit; SQLite DBs typically
+        // have lots of empty pages and zero padding so the wire savings
+        // are 30-50% in practice.
         ensureControlDir()
         var scpArgs: [String] = [
+            "-C",
             "-o", "ControlMaster=auto",
             "-o", "ControlPath=\(controlDir)/%C",
             "-o", "ControlPersist=600",
@@ -666,13 +708,50 @@ public struct SSHTransport: ServerTransport {
         if let id = config.identityFile, !id.isEmpty { scpArgs += ["-i", id] }
         scpArgs.append("\(hostSpec):\(remoteTmp)")
         scpArgs.append(localPath)
-        let pull = try runLocal(executable: scpBinary, args: scpArgs, stdin: nil, timeout: 120)
-        // Regardless of pull outcome, try to clean up the remote tmp.
-        _ = try? runRemoteShell("rm -f \(Self.remotePathArg(remoteTmp))")
-        if pull.exitCode != 0 {
-            throw TransportError.classifySSHFailure(host: config.host, exitCode: pull.exitCode, stderr: pull.stderrString)
+
+        do {
+            let pull = try runLocal(executable: scpBinary, args: scpArgs, stdin: nil, timeout: scpTimeout)
+            // Best-effort cleanup of remote tmp regardless of outcome.
+            _ = try? runRemoteShell("rm -f \(Self.remotePathArg(remoteTmp))")
+            if pull.exitCode != 0 {
+                // Wipe the partial local file so a subsequent attempt
+                // doesn't try to open a corrupted SQLite database.
+                // Otherwise scp's truncate-on-write semantics leave a
+                // smaller-than-expected `.db` that sqlite_open succeeds
+                // on but every read returns garbage from.
+                try? FileManager.default.removeItem(atPath: localPath)
+                throw TransportError.classifySSHFailure(host: config.host, exitCode: pull.exitCode, stderr: pull.stderrString)
+            }
+        } catch let error as TransportError {
+            _ = try? runRemoteShell("rm -f \(Self.remotePathArg(remoteTmp))")
+            try? FileManager.default.removeItem(atPath: localPath)
+            // Rewrite "Command timed out after Ns" into something useful
+            // when it was the snapshot pull that hit the wall — generic
+            // timeout message gives the user no clue that the cause was
+            // a 5GB DB on a slow link.
+            if case .timeout(let secs, _) = error, remoteSize > 0 {
+                throw TransportError.other(
+                    message: "Snapshot transfer timed out after \(Int(secs))s pulling \(Self.formatBytes(remoteSize)) state.db from \(config.host). Try again on a faster network connection, or reduce the size of the remote state.db."
+                )
+            }
+            throw error
+        } catch {
+            _ = try? runRemoteShell("rm -f \(Self.remotePathArg(remoteTmp))")
+            try? FileManager.default.removeItem(atPath: localPath)
+            throw error
         }
+
         return URL(fileURLWithPath: localPath)
+    }
+
+    /// Human-readable byte count for snapshot-pipeline error messages.
+    /// Wraps `ByteCountFormatter` for callers that just want
+    /// `"4.87 GB"` — used in the size-aware timeout / disk-space
+    /// errors emitted by `snapshotSQLite`.
+    nonisolated private static func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 
     /// Path where the most recent successful snapshot was written —

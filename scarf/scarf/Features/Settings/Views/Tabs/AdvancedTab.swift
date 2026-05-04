@@ -108,6 +108,7 @@ struct AdvancedTab: View {
 
         backupSection
         pathsSection
+        ScarfMonDiagnosticsSection()
         rawConfigSection
     }
 

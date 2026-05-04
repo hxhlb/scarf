@@ -45,6 +45,7 @@ struct SettingsView: View {
                 compressionSection
                 loggingSection
                 platformsSection
+                diagnosticsSection
                 rawYAMLToggleSection
             }
         }
@@ -254,6 +255,27 @@ struct SettingsView: View {
             yesNoRow("Telegram: require mention", vm.config.telegram.requireMention)
             LabeledContent("Slack: reply mode", value: vm.config.slack.replyToMode)
             yesNoRow("Matrix: require mention", vm.config.matrix.requireMention)
+        }
+    }
+
+    /// Diagnostics → Performance entry point. Hidden from the
+    /// `quickEditsSection` flow because it doesn't touch config.yaml
+    /// — it controls the in-process ScarfMon backend set instead. Off
+    /// by default users still get Instruments-visible signposts; flip
+    /// to Full when investigating a specific perf complaint.
+    @ViewBuilder
+    private var diagnosticsSection: some View {
+        Section {
+            NavigationLink {
+                ScarfMonDiagnosticsView()
+            } label: {
+                Label("Performance", systemImage: "speedometer")
+            }
+        } header: {
+            Text("Diagnostics")
+        } footer: {
+            Text("Performance instrumentation. Default mode emits Instruments signposts only; Full mode also keeps a 4096-entry in-memory ring you can copy as JSON.")
+                .font(.caption)
         }
     }
 

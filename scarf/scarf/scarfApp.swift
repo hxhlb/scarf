@@ -13,6 +13,14 @@ struct ScarfApp: App {
     @State private var updater = UpdaterService()
 
     init() {
+        // ScarfMon — open-source perf instrumentation. Reads the
+        // user-toggled mode from UserDefaults and installs the
+        // matching backend set. Default `.signpostOnly` keeps
+        // Instruments-attached profiling working without users
+        // having to opt in. Settings → Diagnostics → Performance
+        // flips this between off / signpost-only / full.
+        ScarfMonBoot.configure(mode: ScarfMonBoot.currentMode())
+
         let registry = ServerRegistry()
         let live = ServerLiveStatusRegistry(registry: registry)
         // Re-fan-out statuses whenever the user adds/removes/renames a

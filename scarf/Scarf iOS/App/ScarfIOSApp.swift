@@ -14,6 +14,14 @@ struct ScarfIOSApp: App {
     )
 
     init() {
+        // ScarfMon — open-source perf instrumentation. Reads the
+        // user-toggled mode from UserDefaults and installs the
+        // matching backend set. Default is `.signpostOnly` so
+        // Instruments-attached profiling works without users having
+        // to opt in. The Diagnostics → Performance row in Settings
+        // flips this between off / signpost-only / full.
+        ScarfMonBoot.configure(mode: ScarfMonBoot.currentMode())
+
         // Wire ScarfCore's transport factory to produce Citadel-backed
         // `ServerTransport`s for every `.ssh` context. Without this,
         // `ServerContext.makeTransport()` would fall back to the

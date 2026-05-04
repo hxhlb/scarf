@@ -53,8 +53,14 @@ struct ChatView: View {
             // coordinator was already populated. Consume the request
             // here. The onChange below handles the live case.
             if let pending = coordinator.pendingProjectChat {
+                let prompt = coordinator.pendingInitialPrompt
                 coordinator.pendingProjectChat = nil
-                viewModel.startNewSession(projectPath: pending)
+                coordinator.pendingInitialPrompt = nil
+                if let prompt {
+                    viewModel.startNewSessionAndSend(projectPath: pending, text: prompt)
+                } else {
+                    viewModel.startNewSession(projectPath: pending)
+                }
             }
             // Same story for resume-session handoff: the user clicked
             // a session in the Projects Sessions tab (routes to `.chat`
@@ -89,10 +95,22 @@ struct ChatView: View {
         // `.chat`; this view consumes the path and starts a fresh
         // session with cwd=projectPath. Attribution happens inside
         // ChatViewModel on successful session creation.
+        //
+        // The "New Project from Scratch" wizard (v2.8) sets the
+        // sister slot `pendingInitialPrompt` alongside the project
+        // path so the agent receives a kickoff prompt without the
+        // user having to type one. We drain both atomically and
+        // route to `startNewSessionAndSend` when present.
         .onChange(of: coord.pendingProjectChat) { _, new in
             if let projectPath = new {
+                let prompt = coordinator.pendingInitialPrompt
                 coordinator.pendingProjectChat = nil
-                viewModel.startNewSession(projectPath: projectPath)
+                coordinator.pendingInitialPrompt = nil
+                if let prompt {
+                    viewModel.startNewSessionAndSend(projectPath: projectPath, text: prompt)
+                } else {
+                    viewModel.startNewSession(projectPath: projectPath)
+                }
             }
         }
         // Live handoff for resume: user clicked an existing session in
@@ -109,6 +127,18 @@ struct ChatView: View {
     }
 
     /// Banner rendered between the toolbar and the chat area when either
+    /// Status string surfaced in the toolbar pill. When the agent's
+    /// thought stream is in flight without any visible message bytes
+    /// (Hermes reasoning models routinely take 3–8 s here), promote
+    /// the generic "Agent working..." to "Thinking…" so the user
+    /// sees the model is reasoning rather than stalled. v2.7.
+    private var displayedStatus: String {
+        if viewModel.richChatViewModel.isStreamingThoughtsOnly {
+            return "Thinking…"
+        }
+        return viewModel.acpStatus.isEmpty ? "Active" : viewModel.acpStatus
+    }
+
     /// (a) a preflight credential check failed, or (b) the ACP subprocess
     /// returned an error we captured. Shows a short hint + expandable raw
     /// details (stderr tail) that the user can copy to the clipboard.
@@ -215,7 +245,14 @@ struct ChatView: View {
                 Circle()
                     .fill(.green)
                     .frame(width: 6, height: 6)
-                (viewModel.acpStatus.isEmpty ? Text("Active") : Text(viewModel.acpStatus))
+                // Promote the generic "Agent working..." status to
+                // "Thinking…" the moment the thought stream starts
+                // arriving without visible message bytes — the user
+                // gets a more honest signal that the model is
+                // reasoning, not stalled. Falls back to whatever
+                // status string the VM has when no thought stream
+                // is in flight.
+                Text(displayedStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

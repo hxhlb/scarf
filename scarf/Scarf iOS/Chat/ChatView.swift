@@ -400,7 +400,21 @@ struct ChatView: View {
                 showSpinner: false
             )
         default:
-            EmptyView()
+            // v2.7: surface "Thinking…" while the agent's thought
+            // stream is in flight without any visible message bytes.
+            // Hermes reasoning models commonly take 3–8 s here and
+            // the streaming bubble has nothing to render — the user
+            // would otherwise see a stalled transcript. Disappears
+            // the moment the first message chunk arrives.
+            if controller.vm.isStreamingThoughtsOnly {
+                connectionBannerStrip(
+                    text: "Thinking…",
+                    tint: ScarfColor.info,
+                    showSpinner: true
+                )
+            } else {
+                EmptyView()
+            }
         }
     }
 

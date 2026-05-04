@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import SwiftUI
 
 public enum ChatDisplayMode: String, CaseIterable {
     case terminal
@@ -378,6 +379,19 @@ public final class RichChatViewModel {
     private var streamingAssistantText = ""
     private var streamingThinkingText = ""
     private var streamingToolCalls: [HermesToolCall] = []
+
+    /// True while a turn is in flight, has emitted thought-stream
+    /// bytes, but has NOT yet produced any visible assistant text.
+    /// Surfaces the user-facing "Thinking…" status promotion (the
+    /// model is reasoning before answering — Hermes reasoning models
+    /// commonly take 3–8 s here, which the ScarfMon `firstThoughtByte`
+    /// vs `firstByte` split makes visible). Becomes false the moment
+    /// the first message chunk arrives or the turn ends.
+    public var isStreamingThoughtsOnly: Bool {
+        currentTurnStart != nil
+            && !streamingThinkingText.isEmpty
+            && streamingAssistantText.isEmpty
+    }
 
     // DB polling state (used in terminal mode fallback)
     private var lastKnownFingerprint: HermesDataService.MessageFingerprint?
@@ -886,19 +900,31 @@ public final class RichChatViewModel {
         if hasContent {
             let id = nextLocalId
             nextLocalId -= 1
-            messages[idx] = HermesMessage(
-                id: id,
-                sessionId: sessionId ?? "",
-                role: "assistant",
-                content: streamingAssistantText,
-                toolCallId: nil,
-                toolCalls: streamingToolCalls,
-                toolName: nil,
-                timestamp: Date(),
-                tokenCount: nil,
-                finishReason: streamingToolCalls.isEmpty ? "stop" : nil,
-                reasoning: streamingThinkingText.isEmpty ? nil : streamingThinkingText
-            )
+            // Wrap the streaming-id rewrite in a no-animation
+            // transaction. Without this SwiftUI sees an identity
+            // change for the streaming ForEach element (id 0 → new
+            // permanent id) and runs an animated diff against
+            // adjacent elements, which costs ~5–8 RichMessageBubble
+            // body re-evaluations per turn-end (visible in the
+            // ScarfMon ring as a 1–2 ms burst right after every
+            // `finalizeStreamingMessage` interval). The new message
+            // is content-equal to the streaming one — there is no
+            // animation worth running.
+            withTransaction(Transaction(animation: nil)) {
+                messages[idx] = HermesMessage(
+                    id: id,
+                    sessionId: sessionId ?? "",
+                    role: "assistant",
+                    content: streamingAssistantText,
+                    toolCallId: nil,
+                    toolCalls: streamingToolCalls,
+                    toolName: nil,
+                    timestamp: Date(),
+                    tokenCount: nil,
+                    finishReason: streamingToolCalls.isEmpty ? "stop" : nil,
+                    reasoning: streamingThinkingText.isEmpty ? nil : streamingThinkingText
+                )
+            }
             // Capture per-turn duration so the chat UI can render the
             // stopwatch pill (v2.5). Skips assistants we don't have a
             // start time for — e.g., the .promptComplete fired but the
@@ -909,8 +935,12 @@ public final class RichChatViewModel {
                 currentTurnStart = nil
             }
         } else {
-            // Remove empty streaming placeholder
-            messages.remove(at: idx)
+            // Remove empty streaming placeholder. Same no-animation
+            // transaction pattern — empty-finalize used to ripple the
+            // ForEach diff to every following bubble.
+            withTransaction(Transaction(animation: nil)) {
+                messages.remove(at: idx)
+            }
         }
 
         // Reset streaming state for next chunk

@@ -17,18 +17,25 @@ struct HermesFileService: Sendable {
     // MARK: - Config
 
     nonisolated func loadConfig() -> HermesConfig {
-        ScarfMon.measure(.diskIO, "loadConfig") {
-            // ScarfMon — when Full mode is on, log the first stack
-            // frame above this call to the perf Logger channel so
-            // mystery callers (e.g. config reads with no user action)
-            // can be identified by tailing
-            //   `log stream --predicate 'subsystem == "com.scarf.mon"'`.
-            // Symbol-only — no addresses, no PII. Backtrace alloc is
-            // gated on isActive so it's free outside Full mode.
-            if ScarfMon.isActive {
-                let caller = Thread.callStackSymbols.dropFirst(2).first ?? "<unknown>"
-                Self.perfLogger.debug("loadConfig caller: \(caller, privacy: .public)")
-            }
+        // ScarfMon — when Full mode is on, log a window of stack
+        // frames above this call so mystery callers (e.g. config
+        // reads with no user action) can be identified by tailing
+        //   `log stream --predicate 'subsystem == "com.scarf.mon"'`.
+        // The window spans frames 1..8: SwiftUI / ObservableObject
+        // body re-eval chains burn 4–6 frames before reaching the
+        // user code, so dropping fewer than that hides the real
+        // caller. Each frame is on its own line, prefixed with "#N",
+        // so a single `log stream` line carries the full breadcrumb.
+        // Symbol-only — no addresses, no PII. Backtrace alloc is
+        // gated on isActive so it's free outside Full mode.
+        if ScarfMon.isActive {
+            let frames = Thread.callStackSymbols.prefix(10)
+                .enumerated()
+                .map { "#\($0.offset) \($0.element)" }
+                .joined(separator: " | ")
+            Self.perfLogger.debug("loadConfig stack: \(frames, privacy: .public)")
+        }
+        return ScarfMon.measure(.diskIO, "loadConfig") {
             guard let content = readFile(context.paths.configYAML) else { return .empty }
             return parseConfig(content)
         }

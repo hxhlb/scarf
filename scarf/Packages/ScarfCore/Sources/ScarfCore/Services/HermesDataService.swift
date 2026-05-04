@@ -1,195 +1,100 @@
 // MARK: - Platform gate
 //
-// `SQLite3` is a system module on macOS/iOS but not on Linux
-// swift-corelibs-foundation. Everything below depends on it heavily, so the
-// whole file is gated on `canImport(SQLite3)`. On Linux the types
-// (`HermesDataService`, `SnapshotCoordinator`, and helpers) simply don't
-// exist — nothing in ScarfCore compiled for Linux references them, so
-// there's no downstream breakage. Apple platforms — the only real runtime
-// targets — get the full implementation unchanged.
+// This file's row-parsing helpers used to lean on libsqlite3 directly
+// (`sqlite3_column_*`); after the v2.7 backend split they go through
+// the typed `Row` API and don't actually need the SQLite3 module.
+// The gate stays for symmetry with the backend files (LocalSQLiteBackend
+// imports SQLite3) and to keep ScarfCore's compile target narrow.
 #if canImport(SQLite3)
 
 import Foundation
-import SQLite3
 #if canImport(os)
 import os
 #endif
 
-/// Dedupes concurrent `snapshotSQLite` calls for the same server. When the
-/// file watcher ticks, Dashboard + Sessions + Activity (+ Chat's loadHistory)
-/// can all ask for a fresh snapshot within the same millisecond — without
-/// coordination they each spawn their own `ssh host sqlite3 .backup; scp`
-/// round-trip, three parallel backups of the same DB. Callers in flight for
-/// the same `ServerID` await the first caller's Task and share its result.
-public actor SnapshotCoordinator {
-    public static let shared = SnapshotCoordinator()
-    private var inFlight: [ServerID: Task<URL, Error>] = [:]
-
-    public func snapshot(
-        remotePath: String,
-        contextID: ServerID,
-        transport: any ServerTransport
-    ) async throws -> URL {
-        if let existing = inFlight[contextID] {
-            return try await existing.value
-        }
-        let task = Task<URL, Error> {
-            try transport.snapshotSQLite(remotePath: remotePath)
-        }
-        inFlight[contextID] = task
-        defer { inFlight[contextID] = nil }
-        return try await task.value
-    }
-}
-
+/// Read-only data service over Hermes's `state.db`. Routes every query
+/// through a `HermesQueryBackend`:
+///
+/// * `LocalSQLiteBackend` for `ServerContext.local` — opens the live
+///   `~/.hermes/state.db` via libsqlite3. Microseconds per query.
+/// * `RemoteSQLiteBackend` for `.ssh` contexts — runs `sqlite3 -json`
+///   over an SSH session per query (ControlMaster keeps the channel
+///   warm). 50–100 ms per query, but no full-DB transfers and always-
+///   fresh data, even for multi-GB DBs (issue #74).
+///
+/// The split happened in v2.7 to fix the "5 GB state.db means 7-minute
+/// snapshots every refresh" issue. Local performance is unchanged;
+/// remote bandwidth scales with query result size, not DB size.
 public actor HermesDataService {
     private static let logger = Logger(subsystem: "com.scarf", category: "HermesDataService")
 
-    private var db: OpaquePointer?
-    private var hasV07Schema = false
-    /// True when the connected DB carries the Hermes v2026.4.23+
-    /// columns (`sessions.api_call_count`, `messages.reasoning_content`).
-    /// Detected via PRAGMA table_info in `detectSchema`. Drives
-    /// optional-column SELECT shape so older DBs keep working.
-    private var hasV011Schema = false
-    /// Local filesystem path we last opened. For remote contexts this is
-    /// the cached snapshot under `~/Library/Caches/scarf/snapshots/<id>/`.
-    private var openedAtPath: String?
-    /// Last error from `open()` / `refresh()`, user-presentable. `nil` means
-    /// the last attempt succeeded. Views surface this when their own load
-    /// path fails, so the user sees "Permission denied reading state.db"
-    /// instead of an empty Dashboard with no explanation.
-    public private(set) var lastOpenError: String?
-
-    /// Modification date of the underlying state.db that backs the
-    /// currently-open connection. For local contexts this tracks the
-    /// live DB's mtime; for remote contexts it's the cached snapshot's
-    /// mtime — which equals "when did we last get fresh data."
-    public private(set) var lastSnapshotMtime: Date?
-
-    /// True when a `snapshotSQLite` pull failed and the open succeeded
-    /// against a previously-cached snapshot instead of a fresh one.
-    /// Views render a "Last updated X ago" affordance when this is set
-    /// alongside `lastOpenError`. Always `false` for local contexts.
-    public private(set) var isUsingStaleSnapshot: Bool = false
-
-    /// Convenience: how long ago the cached snapshot was written, when
-    /// we're using a stale snapshot. `nil` when the snapshot is fresh
-    /// or no mtime could be read.
-    public var staleAge: TimeInterval? {
-        guard isUsingStaleSnapshot, let m = lastSnapshotMtime else { return nil }
-        return Date().timeIntervalSince(m)
-    }
-
+    private let backend: any HermesQueryBackend
     public let context: ServerContext
     private let transport: any ServerTransport
+
+    /// Cached schema fingerprint, populated on `open()`. Keeps the
+    /// SELECT-shape builders (`sessionColumns`, `messageColumns`)
+    /// synchronous — without this they'd `await backend.hasV07Schema`
+    /// on every call.
+    private var hasV07Schema = false
+    private var hasV011Schema = false
+
+    /// Last error from `open()` / `refresh()`, user-presentable. `nil`
+    /// means the last attempt succeeded. Views surface this when their
+    /// own load path fails, so the user sees "Permission denied
+    /// reading state.db" instead of an empty Dashboard with no
+    /// explanation.
+    public private(set) var lastOpenError: String?
 
     public init(context: ServerContext = .local) {
         self.context = context
         self.transport = context.makeTransport()
+        if context.isRemote {
+            self.backend = RemoteSQLiteBackend(context: context, transport: self.transport)
+        } else {
+            self.backend = LocalSQLiteBackend(context: context)
+        }
     }
+
+    /// Test seam — inject any `HermesQueryBackend`. Production code
+    /// should use the `init(context:)` overload.
+    internal init(context: ServerContext, backend: any HermesQueryBackend) {
+        self.context = context
+        self.transport = context.makeTransport()
+        self.backend = backend
+    }
+
+    // MARK: - Lifecycle
 
     public func open() async -> Bool {
-        await openInternal(forceFresh: false)
+        let ok = await backend.open()
+        // Cache schema flags — sessionColumns / messageColumns are
+        // hot paths (called on every fetch* method) and going async
+        // for them would force every fetch into a multi-await pattern.
+        hasV07Schema = await backend.hasV07Schema
+        hasV011Schema = await backend.hasV011Schema
+        lastOpenError = await backend.lastOpenError
+        return ok
     }
 
-    /// Variant that refuses the stale-snapshot fallback. Used by call
-    /// sites that genuinely need post-write consistency — most notably
-    /// the chat session-history reload, where a stale snapshot would
-    /// hide messages the agent just streamed.
-    private func openStrict() async -> Bool {
-        await openInternal(forceFresh: true)
+    @discardableResult
+    public func refresh(forceFresh: Bool = false) async -> Bool {
+        let ok = await backend.refresh(forceFresh: forceFresh)
+        hasV07Schema = await backend.hasV07Schema
+        hasV011Schema = await backend.hasV011Schema
+        lastOpenError = await backend.lastOpenError
+        return ok
     }
 
-    private func openInternal(forceFresh: Bool) async -> Bool {
-        if db != nil { return true }
-        let localPath: String
-        if context.isRemote {
-            // Pull a fresh snapshot from the remote host. Uses `sqlite3
-            // .backup` on the remote, which is WAL-safe; a plain cp would
-            // corrupt. Routed through SnapshotCoordinator so concurrent
-            // view models don't each spawn a parallel SSH backup for the
-            // same server.
-            do {
-                let url = try await SnapshotCoordinator.shared.snapshot(
-                    remotePath: context.paths.stateDB,
-                    contextID: context.id,
-                    transport: transport
-                )
-                localPath = url.path
-                lastOpenError = nil
-                isUsingStaleSnapshot = false
-                lastSnapshotMtime = mtime(at: url)
-            } catch {
-                // Fresh pull failed. If the caller demanded fresh data
-                // (`forceFresh: true`) OR there's no usable cache on
-                // disk, surface the error and bail. Otherwise serve
-                // the cached snapshot with `isUsingStaleSnapshot = true`
-                // so views can render a "Last updated X ago" banner.
-                if !forceFresh,
-                   let cached = transport.cachedSnapshotPath,
-                   FileManager.default.fileExists(atPath: cached.path)
-                {
-                    localPath = cached.path
-                    isUsingStaleSnapshot = true
-                    lastSnapshotMtime = mtime(at: cached)
-                    lastOpenError = humanize(error)   // user still sees why it's stale
-                    Self.logger.warning(
-                        "Using stale snapshot after pull failure: \(error.localizedDescription, privacy: .public)"
-                    )
-                } else {
-                    lastOpenError = humanize(error)
-                    Self.logger.warning("snapshotSQLite failed: \(error.localizedDescription, privacy: .public)")
-                    return false
-                }
-            }
-        } else {
-            localPath = context.paths.stateDB
-            guard FileManager.default.fileExists(atPath: localPath) else {
-                lastOpenError = "Hermes state database not found at \(localPath)."
-                return false
-            }
-            isUsingStaleSnapshot = false
-            lastSnapshotMtime = mtime(at: URL(fileURLWithPath: localPath))
-        }
-        // Remote snapshots are point-in-time copies that no one writes to;
-        // opening them with `immutable=1` tells SQLite to skip WAL/SHM and
-        // locking entirely, which is both faster and avoids spurious
-        // "unable to open database file" errors if the snapshot ever gets
-        // pulled mid-checkpoint. Local points at the live Hermes DB where
-        // the process already has WAL enabled in the header, so a plain
-        // readonly open is the right thing.
-        let flags: Int32
-        let openPath: String
-        if context.isRemote {
-            openPath = "file:\(localPath)?immutable=1"
-            flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_URI
-        } else {
-            openPath = localPath
-            flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
-        }
-        let result = sqlite3_open_v2(openPath, &db, flags, nil)
-        guard result == SQLITE_OK else {
-            let msg: String
-            if let db {
-                msg = String(cString: sqlite3_errmsg(db))
-            } else {
-                msg = "sqlite3_open_v2 returned \(result)"
-            }
-            lastOpenError = "Couldn't open state.db: \(msg)"
-            Self.logger.warning("sqlite3_open_v2 failed (\(result)) at \(localPath, privacy: .public): \(msg, privacy: .public)")
-            db = nil
-            return false
-        }
-        openedAtPath = localPath
-        lastOpenError = nil
-        detectSchema()
-        return true
+    public func close() async {
+        await backend.close()
     }
 
-    /// Turn a transport error into the one-line string Dashboard shows. Adds
-    /// hints for the common "sqlite3 not installed" and "permission denied"
-    /// cases so users know what to do.
+    /// Turn a transport / backend error into the one-line string Dashboard
+    /// shows. Adds hints for the common "sqlite3 not installed" and
+    /// "permission denied" cases so users know what to do. Mirrors the
+    /// pre-v2.7 humanise behaviour exactly so existing UI banners
+    /// continue to render with the same copy.
     private nonisolated func humanize(_ error: Error) -> String {
         let desc = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         let lower = desc.lowercased()
@@ -199,87 +104,13 @@ public actor HermesDataService {
         if lower.contains("permission denied") {
             return "Permission denied reading Hermes state on \(context.displayName). The SSH user may not have read access to ~/.hermes/state.db — try Run Diagnostics."
         }
-        if lower.contains("no such file") {
+        if lower.contains("no such file") || lower.contains("unable to open database file") {
             return "Hermes state not found at ~/.hermes on \(context.displayName). If Hermes is installed elsewhere, set its data directory in Manage Servers."
         }
         return desc
     }
 
-    /// Close the current connection and re-open with a fresh snapshot
-    /// pull (when remote). When `forceFresh` is `false` (default) and
-    /// the snapshot pull fails, falls back to the cached snapshot —
-    /// `isUsingStaleSnapshot` is set so views can render a "Last
-    /// updated X ago" banner. Pass `forceFresh: true` from call sites
-    /// that genuinely need post-write consistency (chat session
-    /// history reload), where stale data would hide messages the
-    /// agent just streamed.
-    @discardableResult
-    public func refresh(forceFresh: Bool = false) async -> Bool {
-        close()
-        return await openInternal(forceFresh: forceFresh)
-    }
-
-    /// Read the modification date of a local file. Returns `nil` if
-    /// the file is unreachable or has no mtime metadata. Used to
-    /// stamp `lastSnapshotMtime` so views can show "Last updated
-    /// X ago" without each one duplicating the FileManager dance.
-    private nonisolated func mtime(at url: URL) -> Date? {
-        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-        return attrs?[.modificationDate] as? Date
-    }
-
-    public func close() {
-        if let db {
-            sqlite3_close(db)
-        }
-        db = nil
-    }
-
-    // MARK: - Schema Detection
-
-    private func detectSchema() {
-        guard let db else { return }
-        // Sessions schema
-        var stmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, "PRAGMA table_info(sessions)", -1, &stmt, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(stmt) }
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let name = sqlite3_column_text(stmt, 1) {
-                    let column = String(cString: name)
-                    if column == "reasoning_tokens" {
-                        hasV07Schema = true
-                    }
-                    if column == "api_call_count" {
-                        hasV011Schema = true
-                    }
-                }
-            }
-        }
-        // Messages schema — confirm `reasoning_content` exists. We
-        // upgrade to v0.11 only if BOTH new columns are present so
-        // partial-migration DBs (sessions migrated, messages not yet)
-        // don't trigger a "no such column" runtime error on message
-        // reads. Belt-and-braces.
-        if hasV011Schema {
-            var msgStmt: OpaquePointer?
-            var sawReasoningContent = false
-            if sqlite3_prepare_v2(db, "PRAGMA table_info(messages)", -1, &msgStmt, nil) == SQLITE_OK {
-                defer { sqlite3_finalize(msgStmt) }
-                while sqlite3_step(msgStmt) == SQLITE_ROW {
-                    if let name = sqlite3_column_text(msgStmt, 1),
-                       String(cString: name) == "reasoning_content" {
-                        sawReasoningContent = true
-                        break
-                    }
-                }
-            }
-            if !sawReasoningContent {
-                hasV011Schema = false
-            }
-        }
-    }
-
-    // MARK: - Session Queries
+    // MARK: - Column shapes
 
     private var sessionColumns: String {
         var cols = """
@@ -297,53 +128,6 @@ public actor HermesDataService {
         return cols
     }
 
-    public func fetchSessions(limit: Int = QueryDefaults.sessionLimit) -> [HermesSession] {
-        guard let db else { return [] }
-        let sql = "SELECT \(sessionColumns) FROM sessions WHERE parent_session_id IS NULL ORDER BY started_at DESC LIMIT ?"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, Int32(limit))
-
-        var sessions: [HermesSession] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            sessions.append(sessionFromRow(stmt!))
-        }
-        return sessions
-    }
-
-    public func fetchSessionsInPeriod(since: Date) -> [HermesSession] {
-        guard let db else { return [] }
-        let sql = "SELECT \(sessionColumns) FROM sessions WHERE parent_session_id IS NULL AND started_at >= ? ORDER BY started_at DESC"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_double(stmt, 1, since.timeIntervalSince1970)
-
-        var sessions: [HermesSession] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            sessions.append(sessionFromRow(stmt!))
-        }
-        return sessions
-    }
-
-    public func fetchSubagentSessions(parentId: String) -> [HermesSession] {
-        guard let db else { return [] }
-        let sql = "SELECT \(sessionColumns) FROM sessions WHERE parent_session_id = ? ORDER BY started_at ASC"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, parentId, -1, sqliteTransient)
-
-        var sessions: [HermesSession] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            sessions.append(sessionFromRow(stmt!))
-        }
-        return sessions
-    }
-
-    // MARK: - Message Queries
-
     private var messageColumns: String {
         var cols = """
             id, session_id, role, content, tool_call_id, tool_calls,
@@ -358,6 +142,41 @@ public actor HermesDataService {
         return cols
     }
 
+    // MARK: - Session Queries
+
+    public func fetchSessions(limit: Int = QueryDefaults.sessionLimit) async -> [HermesSession] {
+        let sql = "SELECT \(sessionColumns) FROM sessions WHERE parent_session_id IS NULL ORDER BY started_at DESC LIMIT ?"
+        do {
+            let rows = try await backend.query(sql, params: [.integer(Int64(limit))])
+            return rows.map { sessionFromRow($0) }
+        } catch {
+            Self.logger.warning("fetchSessions failed: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
+    public func fetchSessionsInPeriod(since: Date) async -> [HermesSession] {
+        let sql = "SELECT \(sessionColumns) FROM sessions WHERE parent_session_id IS NULL AND started_at >= ? ORDER BY started_at DESC"
+        do {
+            let rows = try await backend.query(sql, params: [.real(since.timeIntervalSince1970)])
+            return rows.map { sessionFromRow($0) }
+        } catch {
+            return []
+        }
+    }
+
+    public func fetchSubagentSessions(parentId: String) async -> [HermesSession] {
+        let sql = "SELECT \(sessionColumns) FROM sessions WHERE parent_session_id = ? ORDER BY started_at ASC"
+        do {
+            let rows = try await backend.query(sql, params: [.text(parentId)])
+            return rows.map { sessionFromRow($0) }
+        } catch {
+            return []
+        }
+    }
+
+    // MARK: - Message Queries
+
     /// Bounded message fetch keyed by message id (monotonic per row,
     /// safer than timestamp-based pagination because streaming chunk
     /// timestamps can collide). Returns the most recent `limit`
@@ -368,57 +187,43 @@ public actor HermesDataService {
         sessionId: String,
         limit: Int,
         before: Int? = nil
-    ) -> [HermesMessage] {
-        guard let db else { return [] }
+    ) async -> [HermesMessage] {
         let sql: String
-        if before != nil {
+        let params: [SQLValue]
+        if let before {
             sql = "SELECT \(messageColumns) FROM messages WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?"
+            params = [.text(sessionId), .integer(Int64(before)), .integer(Int64(limit))]
         } else {
             sql = "SELECT \(messageColumns) FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?"
+            params = [.text(sessionId), .integer(Int64(limit))]
         }
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, sessionId, -1, sqliteTransient)
-        if let before {
-            sqlite3_bind_int(stmt, 2, Int32(before))
-            sqlite3_bind_int(stmt, 3, Int32(limit))
-        } else {
-            sqlite3_bind_int(stmt, 2, Int32(limit))
+        do {
+            let rows = try await backend.query(sql, params: params)
+            // Caller wants chronological (oldest-first) order; the SELECT
+            // is DESC for the LIMIT to bite the newest rows, so reverse.
+            return rows.map { messageFromRow($0) }.reversed()
+        } catch {
+            return []
         }
-
-        var messages: [HermesMessage] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            messages.append(messageFromRow(stmt!))
-        }
-        // Caller wants chronological (oldest-first) order; the SELECT
-        // is DESC for the LIMIT to bite the newest rows, so reverse.
-        return messages.reversed()
     }
 
     /// Legacy unbounded fetch retained for one release cycle so any
     /// out-of-tree consumers don't break. New code should use the
     /// bounded `fetchMessages(sessionId:limit:before:)` variant —
-    /// snapshot loads on 1000+-message sessions stall the UI when
-    /// they materialize the whole history at once.
+    /// loads on 1000+-message sessions stall the UI when they
+    /// materialise the whole history at once.
     @available(*, deprecated, message: "Use fetchMessages(sessionId:limit:before:) instead.")
-    public func fetchMessages(sessionId: String) -> [HermesMessage] {
-        guard let db else { return [] }
+    public func fetchMessages(sessionId: String) async -> [HermesMessage] {
         let sql = "SELECT \(messageColumns) FROM messages WHERE session_id = ? ORDER BY timestamp ASC"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, sessionId, -1, sqliteTransient)
-
-        var messages: [HermesMessage] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            messages.append(messageFromRow(stmt!))
+        do {
+            let rows = try await backend.query(sql, params: [.text(sessionId)])
+            return rows.map { messageFromRow($0) }
+        } catch {
+            return []
         }
-        return messages
     }
 
-    public func searchMessages(query: String, limit: Int = QueryDefaults.messageSearchLimit) -> [HermesMessage] {
-        guard let db else { return [] }
+    public func searchMessages(query: String, limit: Int = QueryDefaults.messageSearchLimit) async -> [HermesMessage] {
         let sanitized = sanitizeFTSQuery(query)
         guard !sanitized.isEmpty else { return [] }
         var msgCols = "m.id, m.session_id, m.role, m.content, m.tool_call_id, m.tool_calls, m.tool_name, m.timestamp, m.token_count, m.finish_reason"
@@ -432,32 +237,26 @@ public actor HermesDataService {
             ORDER BY rank
             LIMIT ?
             """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, sanitized, -1, sqliteTransient)
-        sqlite3_bind_int(stmt, 2, Int32(limit))
-
-        var messages: [HermesMessage] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            messages.append(messageFromRow(stmt!))
+        do {
+            let rows = try await backend.query(sql, params: [.text(sanitized), .integer(Int64(limit))])
+            return rows.map { messageFromRow($0) }
+        } catch {
+            return []
         }
-        return messages
     }
 
-    public func fetchToolResult(callId: String) -> String? {
-        guard let db else { return nil }
+    public func fetchToolResult(callId: String) async -> String? {
         let sql = "SELECT content FROM messages WHERE role = 'tool' AND tool_call_id = ? LIMIT 1"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, callId, -1, sqliteTransient)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return columnText(stmt!, 0)
+        do {
+            let rows = try await backend.query(sql, params: [.text(callId)])
+            guard let first = rows.first else { return nil }
+            return first.string(at: 0)
+        } catch {
+            return nil
+        }
     }
 
-    public func fetchRecentToolCalls(limit: Int = QueryDefaults.toolCallLimit) -> [HermesMessage] {
-        guard let db else { return [] }
+    public func fetchRecentToolCalls(limit: Int = QueryDefaults.toolCallLimit) async -> [HermesMessage] {
         let sql = """
             SELECT \(messageColumns)
             FROM messages
@@ -465,20 +264,15 @@ public actor HermesDataService {
             ORDER BY timestamp DESC
             LIMIT ?
             """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, Int32(limit))
-
-        var messages: [HermesMessage] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            messages.append(messageFromRow(stmt!))
+        do {
+            let rows = try await backend.query(sql, params: [.integer(Int64(limit))])
+            return rows.map { messageFromRow($0) }
+        } catch {
+            return []
         }
-        return messages
     }
 
-    public func fetchSessionPreviews(limit: Int = QueryDefaults.sessionPreviewLimit) -> [String: String] {
-        guard let db else { return [:] }
+    public func fetchSessionPreviews(limit: Int = QueryDefaults.sessionPreviewLimit) async -> [String: String] {
         let sql = """
             SELECT m.session_id, substr(m.content, 1, \(QueryDefaults.previewContentLength))
             FROM messages m
@@ -491,18 +285,16 @@ public actor HermesDataService {
             ORDER BY m.timestamp DESC
             LIMIT ?
             """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, Int32(limit))
-
-        var previews: [String: String] = [:]
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let sessionId = columnText(stmt!, 0)
-            let preview = columnText(stmt!, 1)
-            previews[sessionId] = preview
+        do {
+            let rows = try await backend.query(sql, params: [.integer(Int64(limit))])
+            var previews: [String: String] = [:]
+            for row in rows {
+                previews[row.string(at: 0)] = row.string(at: 1)
+            }
+            return previews
+        } catch {
+            return [:]
         }
-        return previews
     }
 
     // MARK: - Single-Row Queries
@@ -515,69 +307,67 @@ public actor HermesDataService {
         static let empty = MessageFingerprint(count: 0, maxId: 0, maxTimestamp: 0)
     }
 
-    public func fetchMessageFingerprint(sessionId: String) -> MessageFingerprint {
-        guard let db else { return .empty }
+    public func fetchMessageFingerprint(sessionId: String) async -> MessageFingerprint {
         let sql = "SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(MAX(timestamp), 0) FROM messages WHERE session_id = ?"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return .empty }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, sessionId, -1, sqliteTransient)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return .empty }
-        return MessageFingerprint(
-            count: Int(sqlite3_column_int(stmt, 0)),
-            maxId: Int(sqlite3_column_int(stmt, 1)),
-            maxTimestamp: sqlite3_column_double(stmt, 2)
-        )
+        do {
+            let rows = try await backend.query(sql, params: [.text(sessionId)])
+            guard let row = rows.first else { return .empty }
+            return MessageFingerprint(
+                count: row.int(at: 0),
+                maxId: row.int(at: 1),
+                maxTimestamp: row.double(at: 2)
+            )
+        } catch {
+            return .empty
+        }
     }
 
-    public func fetchMessageCount(sessionId: String) -> Int {
-        guard let db else { return 0 }
+    public func fetchMessageCount(sessionId: String) async -> Int {
         let sql = "SELECT COUNT(*) FROM messages WHERE session_id = ?"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, sessionId, -1, sqliteTransient)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
-        return Int(sqlite3_column_int(stmt, 0))
+        do {
+            let rows = try await backend.query(sql, params: [.text(sessionId)])
+            return rows.first?.int(at: 0) ?? 0
+        } catch {
+            return 0
+        }
     }
 
-    public func fetchSession(id: String) -> HermesSession? {
-        guard let db else { return nil }
+    public func fetchSession(id: String) async -> HermesSession? {
         let sql = "SELECT \(sessionColumns) FROM sessions WHERE id = ? LIMIT 1"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id, -1, sqliteTransient)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return sessionFromRow(stmt!)
+        do {
+            let rows = try await backend.query(sql, params: [.text(id)])
+            return rows.first.map { sessionFromRow($0) }
+        } catch {
+            return nil
+        }
     }
 
-    public func fetchMostRecentlyActiveSessionId() -> String? {
-        guard let db else { return nil }
+    public func fetchMostRecentlyActiveSessionId() async -> String? {
         let sql = "SELECT session_id FROM messages ORDER BY timestamp DESC LIMIT 1"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return columnText(stmt!, 0)
+        do {
+            let rows = try await backend.query(sql, params: [])
+            return rows.first?.optionalString(at: 0)
+        } catch {
+            return nil
+        }
     }
 
-    public func fetchMostRecentlyStartedSessionId(after: Date? = nil) -> String? {
-        guard let db else { return nil }
+    public func fetchMostRecentlyStartedSessionId(after: Date? = nil) async -> String? {
         let sql: String
-        if after != nil {
+        let params: [SQLValue]
+        if let after {
             sql = "SELECT id FROM sessions WHERE parent_session_id IS NULL AND started_at > ? ORDER BY started_at DESC LIMIT 1"
+            params = [.real(after.timeIntervalSince1970)]
         } else {
             sql = "SELECT id FROM sessions WHERE parent_session_id IS NULL ORDER BY started_at DESC LIMIT 1"
+            params = []
         }
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        if let after {
-            sqlite3_bind_double(stmt, 1, after.timeIntervalSince1970)
+        do {
+            let rows = try await backend.query(sql, params: params)
+            return rows.first?.optionalString(at: 0)
+        } catch {
+            return nil
         }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return columnText(stmt!, 0)
     }
 
     // MARK: - Stats
@@ -619,60 +409,64 @@ public actor HermesDataService {
         )
     }
 
-    public func fetchStats() -> SessionStats {
-        guard let db else { return .empty }
-        let sql: String
+    public func fetchStats() async -> SessionStats {
+        let sql = statsSQL()
+        do {
+            let rows = try await backend.query(sql, params: [])
+            return rows.first.map { statsFromRow($0) } ?? .empty
+        } catch {
+            return .empty
+        }
+    }
+
+    private func statsSQL() -> String {
         if hasV07Schema {
-            sql = """
+            return """
                 SELECT COUNT(*), COALESCE(SUM(message_count),0), COALESCE(SUM(tool_call_count),0),
                        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
                        COALESCE(SUM(estimated_cost_usd),0),
                        COALESCE(SUM(reasoning_tokens),0), COALESCE(SUM(actual_cost_usd),0)
                 FROM sessions
                 """
-        } else {
-            sql = """
-                SELECT COUNT(*), COALESCE(SUM(message_count),0), COALESCE(SUM(tool_call_count),0),
-                       COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
-                       COALESCE(SUM(estimated_cost_usd),0)
-                FROM sessions
-                """
         }
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return .empty }
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return .empty }
-        return SessionStats(
-            totalSessions: Int(sqlite3_column_int(stmt, 0)),
-            totalMessages: Int(sqlite3_column_int(stmt, 1)),
-            totalToolCalls: Int(sqlite3_column_int(stmt, 2)),
-            totalInputTokens: Int(sqlite3_column_int(stmt, 3)),
-            totalOutputTokens: Int(sqlite3_column_int(stmt, 4)),
-            totalCostUSD: sqlite3_column_double(stmt, 5),
-            totalReasoningTokens: hasV07Schema ? Int(sqlite3_column_int(stmt, 6)) : 0,
-            totalActualCostUSD: hasV07Schema ? sqlite3_column_double(stmt, 7) : 0
+        return """
+            SELECT COUNT(*), COALESCE(SUM(message_count),0), COALESCE(SUM(tool_call_count),0),
+                   COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                   COALESCE(SUM(estimated_cost_usd),0)
+            FROM sessions
+            """
+    }
+
+    private func statsFromRow(_ row: Row) -> SessionStats {
+        SessionStats(
+            totalSessions: row.int(at: 0),
+            totalMessages: row.int(at: 1),
+            totalToolCalls: row.int(at: 2),
+            totalInputTokens: row.int(at: 3),
+            totalOutputTokens: row.int(at: 4),
+            totalCostUSD: row.double(at: 5),
+            totalReasoningTokens: hasV07Schema ? row.int(at: 6) : 0,
+            totalActualCostUSD: hasV07Schema ? row.double(at: 7) : 0
         )
     }
 
     // MARK: - Insights Queries
 
-    public func fetchUserMessageCount(since: Date) -> Int {
-        guard let db else { return 0 }
+    public func fetchUserMessageCount(since: Date) async -> Int {
         let sql = """
             SELECT COUNT(*) FROM messages m
             JOIN sessions s ON m.session_id = s.id
             WHERE m.role = 'user' AND s.parent_session_id IS NULL AND s.started_at >= ?
             """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_double(stmt, 1, since.timeIntervalSince1970)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
-        return Int(sqlite3_column_int(stmt, 0))
+        do {
+            let rows = try await backend.query(sql, params: [.real(since.timeIntervalSince1970)])
+            return rows.first?.int(at: 0) ?? 0
+        } catch {
+            return 0
+        }
     }
 
-    public func fetchToolUsage(since: Date) -> [(name: String, count: Int)] {
-        guard let db else { return [] }
+    public func fetchToolUsage(since: Date) async -> [(name: String, count: Int)] {
         let sql = """
             SELECT m.tool_name, COUNT(*) as cnt
             FROM messages m
@@ -681,61 +475,198 @@ public actor HermesDataService {
             GROUP BY m.tool_name
             ORDER BY cnt DESC
             """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_double(stmt, 1, since.timeIntervalSince1970)
-
-        var results: [(name: String, count: Int)] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let name = columnText(stmt!, 0)
-            let count = Int(sqlite3_column_int(stmt!, 1))
-            results.append((name: name, count: count))
+        do {
+            let rows = try await backend.query(sql, params: [.real(since.timeIntervalSince1970)])
+            return rows.map { (name: $0.string(at: 0), count: $0.int(at: 1)) }
+        } catch {
+            return []
         }
-        return results
     }
 
-    public func fetchSessionStartHours(since: Date) -> [Int: Int] {
-        guard let db else { return [:] }
+    public func fetchSessionStartHours(since: Date) async -> [Int: Int] {
         let sql = """
             SELECT started_at FROM sessions WHERE parent_session_id IS NULL AND started_at >= ?
             """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_double(stmt, 1, since.timeIntervalSince1970)
-
-        var hours: [Int: Int] = [:]
-        let calendar = Calendar.current
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let ts = sqlite3_column_double(stmt!, 0)
-            let date = Date(timeIntervalSince1970: ts)
-            let hour = calendar.component(.hour, from: date)
-            hours[hour, default: 0] += 1
+        do {
+            let rows = try await backend.query(sql, params: [.real(since.timeIntervalSince1970)])
+            var hours: [Int: Int] = [:]
+            let calendar = Calendar.current
+            for row in rows {
+                if let date = row.date(at: 0) {
+                    let hour = calendar.component(.hour, from: date)
+                    hours[hour, default: 0] += 1
+                }
+            }
+            return hours
+        } catch {
+            return [:]
         }
-        return hours
     }
 
-    public func fetchSessionDaysOfWeek(since: Date) -> [Int: Int] {
-        guard let db else { return [:] }
+    public func fetchSessionDaysOfWeek(since: Date) async -> [Int: Int] {
         let sql = """
             SELECT started_at FROM sessions WHERE parent_session_id IS NULL AND started_at >= ?
             """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_double(stmt, 1, since.timeIntervalSince1970)
-
-        var days: [Int: Int] = [:]
-        let calendar = Calendar.current
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let ts = sqlite3_column_double(stmt!, 0)
-            let date = Date(timeIntervalSince1970: ts)
-            let weekday = (calendar.component(.weekday, from: date) + 5) % 7 // Mon=0
-            days[weekday, default: 0] += 1
+        do {
+            let rows = try await backend.query(sql, params: [.real(since.timeIntervalSince1970)])
+            var days: [Int: Int] = [:]
+            let calendar = Calendar.current
+            for row in rows {
+                if let date = row.date(at: 0) {
+                    let weekday = (calendar.component(.weekday, from: date) + 5) % 7 // Mon=0
+                    days[weekday, default: 0] += 1
+                }
+            }
+            return days
+        } catch {
+            return [:]
         }
-        return days
     }
+
+    // MARK: - Batched snapshots
+
+    /// Bundle the four queries Dashboard fires on every load into one
+    /// backend round-trip. For local backends this is just four
+    /// sequential `query` calls (no perf change). For remote backends
+    /// it's one SSH round-trip running one sqlite3 invocation, which
+    /// turns Dashboard's "open" cost from ~280 ms (4 × 70 ms) into
+    /// ~80–100 ms.
+    public struct DashboardSnapshot: Sendable {
+        public let stats: SessionStats
+        public let recentSessions: [HermesSession]
+        public let sessionPreviews: [String: String]
+        public let recentToolCalls: [HermesMessage]
+    }
+
+    public func dashboardSnapshot(
+        sessionLimit: Int = 5,
+        previewLimit: Int = 5,
+        toolCallLimit: Int = 8
+    ) async -> DashboardSnapshot {
+        let statements: [(sql: String, params: [SQLValue])] = [
+            (statsSQL(), []),
+            (
+                "SELECT \(sessionColumns) FROM sessions WHERE parent_session_id IS NULL ORDER BY started_at DESC LIMIT ?",
+                [.integer(Int64(sessionLimit))]
+            ),
+            (
+                """
+                SELECT m.session_id, substr(m.content, 1, \(QueryDefaults.previewContentLength))
+                FROM messages m
+                INNER JOIN (
+                    SELECT session_id, MIN(id) as min_id
+                    FROM messages
+                    WHERE role = 'user' AND content <> ''
+                    GROUP BY session_id
+                ) first ON m.id = first.min_id
+                ORDER BY m.timestamp DESC
+                LIMIT ?
+                """,
+                [.integer(Int64(previewLimit))]
+            ),
+            (
+                """
+                SELECT \(messageColumns)
+                FROM messages
+                WHERE tool_calls IS NOT NULL AND tool_calls != '[]' AND tool_calls != ''
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                [.integer(Int64(toolCallLimit))]
+            )
+        ]
+        do {
+            let resultSets = try await backend.queryBatch(statements)
+            let stats = resultSets.first?.first.map { statsFromRow($0) } ?? .empty
+            let sessions = (resultSets.count > 1 ? resultSets[1] : []).map { sessionFromRow($0) }
+            var previews: [String: String] = [:]
+            for row in (resultSets.count > 2 ? resultSets[2] : []) {
+                previews[row.string(at: 0)] = row.string(at: 1)
+            }
+            let toolCalls = (resultSets.count > 3 ? resultSets[3] : []).map { messageFromRow($0) }
+            return DashboardSnapshot(
+                stats: stats,
+                recentSessions: sessions,
+                sessionPreviews: previews,
+                recentToolCalls: toolCalls
+            )
+        } catch {
+            Self.logger.warning("dashboardSnapshot failed: \(error.localizedDescription, privacy: .public)")
+            return DashboardSnapshot(
+                stats: .empty,
+                recentSessions: [],
+                sessionPreviews: [:],
+                recentToolCalls: []
+            )
+        }
+    }
+
+    /// Bundle the queries Insights fires on every load into one
+    /// backend round-trip — same rationale as `dashboardSnapshot`.
+    public struct InsightsSnapshot: Sendable {
+        public let userMessageCount: Int
+        public let toolUsage: [(name: String, count: Int)]
+        public let startHours: [Int: Int]
+        public let daysOfWeek: [Int: Int]
+    }
+
+    public func insightsSnapshot(since: Date) async -> InsightsSnapshot {
+        let sinceTs = since.timeIntervalSince1970
+        let statements: [(sql: String, params: [SQLValue])] = [
+            (
+                """
+                SELECT COUNT(*) FROM messages m
+                JOIN sessions s ON m.session_id = s.id
+                WHERE m.role = 'user' AND s.parent_session_id IS NULL AND s.started_at >= ?
+                """,
+                [.real(sinceTs)]
+            ),
+            (
+                """
+                SELECT m.tool_name, COUNT(*) as cnt
+                FROM messages m
+                JOIN sessions s ON m.session_id = s.id
+                WHERE m.tool_name IS NOT NULL AND m.tool_name <> '' AND s.parent_session_id IS NULL AND s.started_at >= ?
+                GROUP BY m.tool_name
+                ORDER BY cnt DESC
+                """,
+                [.real(sinceTs)]
+            ),
+            (
+                "SELECT started_at FROM sessions WHERE parent_session_id IS NULL AND started_at >= ?",
+                [.real(sinceTs)]
+            )
+        ]
+        do {
+            let resultSets = try await backend.queryBatch(statements)
+            let userCount = resultSets.first?.first?.int(at: 0) ?? 0
+            let toolUsage = (resultSets.count > 1 ? resultSets[1] : []).map {
+                (name: $0.string(at: 0), count: $0.int(at: 1))
+            }
+            // The third statement returns timestamps; client-side
+            // calendar bucketing into hours + days-of-week.
+            let calendar = Calendar.current
+            var hours: [Int: Int] = [:]
+            var days: [Int: Int] = [:]
+            for row in (resultSets.count > 2 ? resultSets[2] : []) {
+                guard let date = row.date(at: 0) else { continue }
+                let hour = calendar.component(.hour, from: date)
+                hours[hour, default: 0] += 1
+                let weekday = (calendar.component(.weekday, from: date) + 5) % 7
+                days[weekday, default: 0] += 1
+            }
+            return InsightsSnapshot(
+                userMessageCount: userCount,
+                toolUsage: toolUsage,
+                startHours: hours,
+                daysOfWeek: days
+            )
+        } catch {
+            return InsightsSnapshot(userMessageCount: 0, toolUsage: [], startHours: [:], daysOfWeek: [:])
+        }
+    }
+
+    // MARK: - Modification date
 
     public func stateDBModificationDate() -> Date? {
         // For remote contexts we stat the remote paths. For local it's the
@@ -750,59 +681,56 @@ public actor HermesDataService {
 
     // MARK: - Row Parsing
 
-    private func sessionFromRow(_ stmt: OpaquePointer) -> HermesSession {
+    private func sessionFromRow(_ row: Row) -> HermesSession {
         // v0.11 column lives at index 20 (after the 16 base + 4 v0.7
-        // columns). Read defensively — old DBs that lack the column
+        // columns). Reading defensively — old DBs that lack the column
         // never reach this code path because hasV011Schema gates the
         // SELECT shape.
-        let apiCallCount: Int = {
-            guard hasV011Schema else { return 0 }
-            return Int(sqlite3_column_int(stmt, 20))
-        }()
+        let apiCallCount: Int = hasV011Schema ? row.int(at: 20) : 0
         return HermesSession(
-            id: columnText(stmt, 0),
-            source: columnText(stmt, 1),
-            userId: columnOptionalText(stmt, 2),
-            model: columnOptionalText(stmt, 3),
-            title: columnOptionalText(stmt, 4),
-            parentSessionId: columnOptionalText(stmt, 5),
-            startedAt: columnDate(stmt, 6),
-            endedAt: columnDate(stmt, 7),
-            endReason: columnOptionalText(stmt, 8),
-            messageCount: Int(sqlite3_column_int(stmt, 9)),
-            toolCallCount: Int(sqlite3_column_int(stmt, 10)),
-            inputTokens: Int(sqlite3_column_int(stmt, 11)),
-            outputTokens: Int(sqlite3_column_int(stmt, 12)),
-            cacheReadTokens: Int(sqlite3_column_int(stmt, 13)),
-            cacheWriteTokens: Int(sqlite3_column_int(stmt, 14)),
-            estimatedCostUSD: sqlite3_column_type(stmt, 15) != SQLITE_NULL ? sqlite3_column_double(stmt, 15) : nil,
-            reasoningTokens: hasV07Schema ? Int(sqlite3_column_int(stmt, 16)) : 0,
-            actualCostUSD: hasV07Schema && sqlite3_column_type(stmt, 17) != SQLITE_NULL ? sqlite3_column_double(stmt, 17) : nil,
-            costStatus: hasV07Schema ? columnOptionalText(stmt, 18) : nil,
-            billingProvider: hasV07Schema ? columnOptionalText(stmt, 19) : nil,
+            id: row.string(at: 0),
+            source: row.string(at: 1),
+            userId: row.optionalString(at: 2),
+            model: row.optionalString(at: 3),
+            title: row.optionalString(at: 4),
+            parentSessionId: row.optionalString(at: 5),
+            startedAt: row.date(at: 6),
+            endedAt: row.date(at: 7),
+            endReason: row.optionalString(at: 8),
+            messageCount: row.int(at: 9),
+            toolCallCount: row.int(at: 10),
+            inputTokens: row.int(at: 11),
+            outputTokens: row.int(at: 12),
+            cacheReadTokens: row.int(at: 13),
+            cacheWriteTokens: row.int(at: 14),
+            estimatedCostUSD: row.optionalDouble(at: 15),
+            reasoningTokens: hasV07Schema ? row.int(at: 16) : 0,
+            actualCostUSD: hasV07Schema ? row.optionalDouble(at: 17) : nil,
+            costStatus: hasV07Schema ? row.optionalString(at: 18) : nil,
+            billingProvider: hasV07Schema ? row.optionalString(at: 19) : nil,
             apiCallCount: apiCallCount
         )
     }
 
-    private func messageFromRow(_ stmt: OpaquePointer) -> HermesMessage {
-        let toolCallsJSON = columnOptionalText(stmt, 5)
+    private func messageFromRow(_ row: Row) -> HermesMessage {
+        let toolCallsJSON = row.optionalString(at: 5)
         let toolCalls = parseToolCalls(toolCallsJSON)
         // reasoning lives at index 10 (v0.7+); reasoning_content at 11
         // when v0.11 schema is present. Both columns can carry text
         // simultaneously — UI prefers `reasoningContent`.
-        let reasoningContent: String? = hasV011Schema ? columnOptionalText(stmt, 11) : nil
+        let reasoningContent: String? = hasV011Schema ? row.optionalString(at: 11) : nil
         return HermesMessage(
-            id: Int(sqlite3_column_int(stmt, 0)),
-            sessionId: columnText(stmt, 1),
-            role: columnText(stmt, 2),
-            content: columnText(stmt, 3),
-            toolCallId: columnOptionalText(stmt, 4),
+            id: row.int(at: 0),
+            sessionId: row.string(at: 1),
+            role: row.string(at: 2),
+            content: row.string(at: 3),
+            toolCallId: row.optionalString(at: 4),
             toolCalls: toolCalls,
-            toolName: columnOptionalText(stmt, 6),
-            timestamp: columnDate(stmt, 7),
-            tokenCount: sqlite3_column_type(stmt, 8) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 8)) : nil,
-            finishReason: columnOptionalText(stmt, 9),
-            reasoning: hasV07Schema ? columnOptionalText(stmt, 10) : nil,
+            toolName: row.optionalString(at: 6),
+            timestamp: row.date(at: 7),
+            tokenCount: row.optionalInt(at: 8),
+            finishReason: row.optionalString(at: 9),
+            reasoning: hasV07Schema ? row.optionalString(at: 10) : nil,
             reasoningContent: reasoningContent
         )
     }
@@ -816,25 +744,6 @@ public actor HermesDataService {
             Self.logger.error("Failed to decode tool calls: \(error.localizedDescription, privacy: .public)")
             return []
         }
-    }
-
-    private func columnText(_ stmt: OpaquePointer, _ col: Int32) -> String {
-        if let cStr = sqlite3_column_text(stmt, col) {
-            return String(cString: cStr)
-        }
-        return ""
-    }
-
-    private func columnOptionalText(_ stmt: OpaquePointer, _ col: Int32) -> String? {
-        guard sqlite3_column_type(stmt, col) != SQLITE_NULL,
-              let cStr = sqlite3_column_text(stmt, col) else { return nil }
-        return String(cString: cStr)
-    }
-
-    private func columnDate(_ stmt: OpaquePointer, _ col: Int32) -> Date? {
-        guard sqlite3_column_type(stmt, col) != SQLITE_NULL else { return nil }
-        let value = sqlite3_column_double(stmt, col)
-        return Date(timeIntervalSince1970: value)
     }
 
     /// Wraps each whitespace-delimited token in double quotes to prevent FTS5 parse errors

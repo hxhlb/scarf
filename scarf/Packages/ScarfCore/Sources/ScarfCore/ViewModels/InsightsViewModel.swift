@@ -117,12 +117,19 @@ public final class InsightsViewModel {
         }
 
         let since = period.sinceDate
+        // The four insights queries (user-message count, tool usage,
+        // hourly + daily activity histograms) batch through one
+        // `insightsSnapshot` round-trip. Sessions and session-previews
+        // stay separate — they're large result sets and stay on their
+        // own calls. For remote contexts this turns ~5 SSH round-trips
+        // into 3.
         sessions = await dataService.fetchSessionsInPeriod(since: since)
         sessionPreviews = await dataService.fetchSessionPreviews(limit: 500)
-        userMessageCount = await dataService.fetchUserMessageCount(since: since)
-        let tools = await dataService.fetchToolUsage(since: since)
-        hourlyActivity = await dataService.fetchSessionStartHours(since: since)
-        dailyActivity = await dataService.fetchSessionDaysOfWeek(since: since)
+        let snapshot = await dataService.insightsSnapshot(since: since)
+        userMessageCount = snapshot.userMessageCount
+        let tools = snapshot.toolUsage
+        hourlyActivity = snapshot.startHours
+        dailyActivity = snapshot.daysOfWeek
 
         await dataService.close()
 

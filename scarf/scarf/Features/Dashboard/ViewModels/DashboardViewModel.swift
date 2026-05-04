@@ -43,16 +43,23 @@ final class DashboardViewModel {
 
     func load() async {
         isLoading = true
-        // refresh() = close + reopen, forces a fresh remote snapshot. Cheap
-        // on local (live DB reopen).
+        // refresh() is essentially free for the streaming remote backend
+        // (no transfer — every query is fresh) and a cheap reopen for
+        // local. The four data-service queries below are batched
+        // through `dashboardSnapshot` so a remote load is one SSH
+        // round-trip instead of four.
         let opened = await dataService.refresh()
         var collectedErrors: [String] = []
         if opened {
-            stats = await dataService.fetchStats()
-            recentSessions = await dataService.fetchSessions(limit: 5)
-            sessionPreviews = await dataService.fetchSessionPreviews(limit: 5)
-            let activityMessages = await dataService.fetchRecentToolCalls(limit: 8)
-            recentActivity = activityMessages.flatMap { msg in
+            let snapshot = await dataService.dashboardSnapshot(
+                sessionLimit: 5,
+                previewLimit: 5,
+                toolCallLimit: 8
+            )
+            stats = snapshot.stats
+            recentSessions = snapshot.recentSessions
+            sessionPreviews = snapshot.sessionPreviews
+            recentActivity = snapshot.recentToolCalls.flatMap { msg in
                 msg.toolCalls.map { call in
                     ActivityEntry(
                         id: call.callId,

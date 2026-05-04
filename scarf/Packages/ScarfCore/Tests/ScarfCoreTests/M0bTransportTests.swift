@@ -219,12 +219,6 @@ import Foundation
         try transport.removeFile(tmp.path)
     }
 
-    @Test func localTransportSnapshotSQLiteReturnsPathUnchanged() throws {
-        let transport = LocalTransport()
-        let url = try transport.snapshotSQLite(remotePath: "/tmp/some/state.db")
-        #expect(url.path == "/tmp/some/state.db")
-    }
-
     /// The Mac target wires `SSHTransport.environmentEnricher` at launch to
     /// `HermesFileService.enrichedEnvironment()` so SSH subprocesses
     /// inherit SSH_AUTH_SOCK from the user's login shell (1Password /

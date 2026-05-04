@@ -58,6 +58,9 @@ public final class CitadelServerTransport: ServerTransport, @unchecked Sendable 
 
     /// Shared directory under which cached SQLite snapshots land. On
     /// iOS this maps to `<Caches>/scarf/snapshots/<server-id>/`.
+    /// Stable per-server cache directory. Was used by the snapshot
+    /// pipeline pre-v2.7; kept for the cache-cleanup migration that
+    /// purges old snapshot files at first launch on the new build.
     private let snapshotBaseDir: URL
 
     /// Actor-serialized access to the one shared `SSHClient`. Opens
@@ -159,19 +162,66 @@ public final class CitadelServerTransport: ServerTransport, @unchecked Sendable 
         AsyncThrowingStream { $0.finish() }
     }
 
-    // MARK: - ServerTransport: SQLite snapshot
+    // MARK: - ServerTransport: script streaming
 
-    public func snapshotSQLite(remotePath: String) throws -> URL {
-        try runSync { try await self.asyncSnapshotSQLite(remotePath: remotePath) }
+    /// Pipe `script` to `/bin/sh -s` over Citadel's exec channel.
+    ///
+    /// **Why base64.** Citadel's `executeCommandStream` doesn't expose
+    /// stdin in the version we're on, so we can't just open `sh -s` and
+    /// write the script. Instead we encode the script as base64, decode
+    /// it on the remote inline, and pipe the result into `sh`:
+    ///
+    ///     printf '%s' '<b64>' | base64 -d | /bin/sh
+    ///
+    /// `base64 -d` is universally available on Linux/macOS. The base64
+    /// blob travels as a single shell-safe argv token, so multi-line
+    /// scripts with `"$VAR"` references and nested quotes survive
+    /// untouched — same correctness guarantee as `SSHScriptRunner`'s
+    /// stdin-pipe approach.
+    public func streamScript(_ script: String, timeout: TimeInterval) async throws -> ProcessResult {
+        let scriptBytes = Data(script.utf8)
+        let b64 = scriptBytes.base64EncodedString()
+        // Prepend the same PATH guard that `asyncRunProcess` uses so
+        // base64 + sh resolve on hosts where they live in non-default
+        // prefixes. Most distros have base64 in /usr/bin but
+        // homebrew-installed coreutils in /opt/homebrew/bin would
+        // otherwise be invisible from a stripped-PATH exec channel.
+        let cmd = "PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\" "
+            + "printf '%s' '\(b64)' | base64 -d | /bin/sh"
+        return try await runScript(cmd, timeout: timeout)
     }
 
-    /// Path where the most recent successful snapshot was written —
-    /// returned even when the SSH connection is currently down. The
-    /// data service falls back to this when `snapshotSQLite` throws so
-    /// Dashboard / Sessions / Chat-history stay viewable while the
-    /// phone is offline.
-    public var cachedSnapshotPath: URL? {
-        snapshotBaseDir.appendingPathComponent("state.db")
+    private func runScript(_ cmd: String, timeout: TimeInterval) async throws -> ProcessResult {
+        let client = try await connectionHolder.ssh()
+        let stream: AsyncThrowingStream<ExecCommandOutput, Error>
+        do {
+            stream = try await client.executeCommandStream(cmd)
+        } catch {
+            throw TransportError.other(message: "Failed to start exec stream: \(error.localizedDescription)")
+        }
+        var stdout = Data()
+        var stderr = Data()
+        var exitCode: Int32 = 0
+        do {
+            for try await chunk in stream {
+                switch chunk {
+                case .stdout(var buf):
+                    if let s = buf.readString(length: buf.readableBytes) {
+                        stdout.append(Data(s.utf8))
+                    }
+                case .stderr(var buf):
+                    if let s = buf.readString(length: buf.readableBytes) {
+                        stderr.append(Data(s.utf8))
+                    }
+                }
+            }
+        } catch let failed as SSHClient.CommandFailed {
+            exitCode = Int32(failed.exitCode)
+        } catch {
+            stderr.append(Data(error.localizedDescription.utf8))
+            exitCode = -1
+        }
+        return ProcessResult(exitCode: exitCode, stdout: stdout, stderr: stderr)
     }
 
     // MARK: - ServerTransport: watching
@@ -395,101 +445,6 @@ public final class CitadelServerTransport: ServerTransport, @unchecked Sendable 
             exitCode = -1
         }
         return ProcessResult(exitCode: exitCode, stdout: stdout, stderr: stderr)
-    }
-
-    private func asyncSnapshotSQLite(remotePath: String) async throws -> URL {
-        // Same flow as SSHTransport: run `sqlite3 .backup` on the remote
-        // (WAL-safe), flip out of WAL mode on the snapshot, then SFTP
-        // the backup file down to the local cache.
-        try? FileManager.default.createDirectory(at: snapshotBaseDir, withIntermediateDirectories: true)
-        let localURL = snapshotBaseDir.appendingPathComponent("state.db")
-        let client = try await connectionHolder.ssh()
-        let remoteTmp = "/tmp/scarf-snapshot-\(UUID().uuidString).db"
-        // Double-quote paths; $HOME expansion happens inside double quotes.
-        let rewritten = Self.rewriteHomeRelative(remotePath)
-
-        // Prepend the same PATH prefix `asyncRunProcess` uses so `sqlite3`
-        // resolves on hosts where it lives in /usr/local/bin or
-        // /opt/homebrew/bin (issue #56). Citadel's bare exec channel
-        // inherits a stripped PATH (typically `/usr/bin:/bin` on Linux);
-        // without this, statically-linked or custom-prefix sqlite3
-        // installs fail "command not found" at exit 127.
-        let backupScript =
-            #"PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH" "#
-            + #"sqlite3 "\#(rewritten)" ".backup '\#(remoteTmp)'" && sqlite3 '\#(remoteTmp)' "PRAGMA journal_mode=DELETE;" > /dev/null"#
-
-        // Drive `executeCommandStream` instead of `executeCommand` so we
-        // capture stderr regardless of exit code (issue #56). Pre-fix
-        // a non-zero exit threw `CommandFailed` and discarded the buffer
-        // — surfaced as the unhelpful "Citadel.SSHClient.CommandFailed
-        // error 1" banner. Now we propagate the real stderr so
-        // `HermesDataService.humanize` can translate "sqlite3: command
-        // not found" / "no such file" / "permission denied" into the
-        // dashboard banner with actionable copy.
-        let stream: AsyncThrowingStream<ExecCommandOutput, Error>
-        do {
-            stream = try await client.executeCommandStream(backupScript)
-        } catch {
-            throw NSError(
-                domain: "CitadelServerTransport",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to start snapshot stream: \(error.localizedDescription)"]
-            )
-        }
-        var stdout = Data()
-        var stderr = Data()
-        var exitCode: Int32 = 0
-        do {
-            for try await chunk in stream {
-                switch chunk {
-                case .stdout(var buf):
-                    if let s = buf.readString(length: buf.readableBytes) {
-                        stdout.append(Data(s.utf8))
-                    }
-                case .stderr(var buf):
-                    if let s = buf.readString(length: buf.readableBytes) {
-                        stderr.append(Data(s.utf8))
-                    }
-                }
-            }
-        } catch let failed as SSHClient.CommandFailed {
-            exitCode = Int32(failed.exitCode)
-        } catch {
-            stderr.append(Data(error.localizedDescription.utf8))
-            exitCode = -1
-        }
-        if exitCode != 0 {
-            // Combine stdout + stderr into the error message — sqlite3
-            // sometimes prints "Error: ..." on stdout depending on the
-            // remote shell. HermesDataService.humanize keys off
-            // substrings like "sqlite3: command not found",
-            // "permission denied", "no such file", so as long as one of
-            // them ends up in the message we get a useful banner.
-            let messageBytes = stderr.isEmpty ? stdout : stderr
-            let message = String(data: messageBytes, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            throw NSError(
-                domain: "CitadelServerTransport",
-                code: Int(exitCode),
-                userInfo: [
-                    NSLocalizedDescriptionKey: message.isEmpty
-                        ? "Snapshot exited \(exitCode) with no output (likely sqlite3 missing on remote)"
-                        : message
-                ]
-            )
-        }
-
-        // SFTP-download the remote tmp into our local snapshot cache.
-        let sftp = try await connectionHolder.sftp()
-        let data: Data = try await sftp.withFile(filePath: remoteTmp, flags: [.read]) { file in
-            let buf = try await file.readAll()
-            return Data(buffer: buf)
-        }
-        try data.write(to: localURL, options: .atomic)
-
-        // Best-effort cleanup of the remote tmp.
-        _ = try? await client.executeCommand("rm -f '\(remoteTmp)'")
-
-        return localURL
     }
 
     // MARK: - Shell helpers

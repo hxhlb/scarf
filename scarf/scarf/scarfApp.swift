@@ -27,6 +27,18 @@ struct ScarfApp: App {
         // wasn't running. Cheap: just an `ls` of the snapshots root.
         registry.sweepOrphanCaches()
 
+        // v2.7 cache cleanup: the remote-DB pipeline switched from
+        // "snapshot the whole state.db locally" to "stream queries
+        // over SSH per call" (issue #74). Old snapshot files for an
+        // active 5GB-DB user could be 5GB+ on disk, with no live
+        // codepath that would ever clean them up. Wipe the snapshots
+        // root once at first launch on the new build. Subsequent
+        // launches no-op via the UserDefaults flag.
+        if !UserDefaults.standard.bool(forKey: "scarf.v27.snapshotCacheCleaned") {
+            try? FileManager.default.removeItem(atPath: SSHTransport.snapshotRootPath())
+            UserDefaults.standard.set(true, forKey: "scarf.v27.snapshotCacheCleaned")
+        }
+
         // Wire ScarfCore's SSHTransport to the Mac-target login-shell env
         // probe. Without this, `ssh`/`scp` subprocesses spawned from Scarf
         // can't reach 1Password / Secretive / `.zshrc`-exported ssh-agent

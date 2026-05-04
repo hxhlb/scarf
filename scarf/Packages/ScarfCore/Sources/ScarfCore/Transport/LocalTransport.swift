@@ -289,17 +289,34 @@ public struct LocalTransport: ServerTransport {
         #endif
     }
 
-    // MARK: - SQLite
+    // MARK: - Script streaming
 
-    public func snapshotSQLite(remotePath: String) throws -> URL {
-        // Local case: no copy needed. Services open the path directly.
-        URL(fileURLWithPath: remotePath)
+    /// Run `script` through `/bin/sh -c` locally. Local data path
+    /// doesn't actually call this in production (the data service
+    /// hands `LocalSQLiteBackend` the libsqlite3-direct path) — kept
+    /// for protocol parity and for tooling that wants a uniform
+    /// "run a script" entry on either context kind.
+    public func streamScript(_ script: String, timeout: TimeInterval) async throws -> ProcessResult {
+        #if os(iOS)
+        throw TransportError.other(message: "LocalTransport.streamScript is unavailable on iOS")
+        #else
+        let outcome = await SSHScriptRunner.run(
+            script: script,
+            context: ServerContext(id: contextID, displayName: "Local", kind: .local),
+            timeout: timeout
+        )
+        switch outcome {
+        case .connectFailure(let reason):
+            throw TransportError.other(message: reason)
+        case .completed(let stdout, let stderr, let exitCode):
+            return ProcessResult(
+                exitCode: exitCode,
+                stdout: Data(stdout.utf8),
+                stderr: Data(stderr.utf8)
+            )
+        }
+        #endif
     }
-
-    /// Local transport reads the live DB directly — there's no cached
-    /// snapshot to fall back to (and no failure mode where falling back
-    /// would help, since a missing local file is missing both ways).
-    public var cachedSnapshotPath: URL? { nil }
 
     // MARK: - Watching
 

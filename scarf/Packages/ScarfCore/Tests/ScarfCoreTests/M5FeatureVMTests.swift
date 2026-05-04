@@ -455,8 +455,9 @@ import Foundation
                 }
             }
         }
-        func snapshotSQLite(remotePath: String) throws -> URL { URL(fileURLWithPath: remotePath) }
-        var cachedSnapshotPath: URL? { nil }
+        func streamScript(_ script: String, timeout: TimeInterval) async throws -> ProcessResult {
+            ProcessResult(exitCode: 0, stdout: Data(), stderr: Data())
+        }
         func watchPaths(_ paths: [String]) -> AsyncStream<WatchEvent> {
             AsyncStream { $0.finish() }
         }

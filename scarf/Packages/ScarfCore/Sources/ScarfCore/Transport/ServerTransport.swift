@@ -96,27 +96,25 @@ public protocol ServerTransport: Sendable {
         args: [String]
     ) -> AsyncThrowingStream<Data, Error>
 
-    // MARK: - SQLite
-
-    /// Return a local filesystem URL pointing at a fresh, consistent copy of
-    /// the SQLite database at `remotePath`. For local transports this is
-    /// just the remote path unchanged. For SSH transports this performs
-    /// `sqlite3 .backup` on the remote side and scp's the backup into
-    /// `~/Library/Caches/scarf/<serverID>/state.db`, returning that URL.
-    nonisolated func snapshotSQLite(remotePath: String) throws -> URL
-
-    /// Local filesystem URL where this transport caches its SQLite snapshot,
-    /// returned even when the remote is unreachable. Callers should
-    /// `FileManager.default.fileExists(atPath:)` before reading — the
-    /// transport can't atomically check existence and return the URL
-    /// in one step without TOCTOU. Local transports return `nil`
-    /// (their data is the live DB, not a cache).
+    /// Pipe a multi-line shell script through `/bin/sh -s` on the
+    /// target and return its captured output. The script travels as a
+    /// single opaque byte stream — no per-line shell interpolation,
+    /// no per-arg quoting — so `"$VAR"` references, here-docs, and
+    /// nested quotes survive untouched.
     ///
-    /// Used by `HermesDataService.open()` to fall back to the last
-    /// successful snapshot when a fresh `snapshotSQLite` call fails,
-    /// so the app keeps showing data with a "Last updated X ago"
-    /// affordance instead of a blank screen.
-    nonisolated var cachedSnapshotPath: URL? { get }
+    /// Replaces the old `snapshotSQLite` + scp pipeline. Used by
+    /// `RemoteSQLiteBackend` to invoke `sqlite3 -readonly -json` over
+    /// SSH per query (or per batch). Local transport runs the script
+    /// in-process via `/bin/sh -c`. SSH transport delegates to
+    /// `SSHScriptRunner` (ControlMaster-shared channel). Citadel
+    /// transport (iOS) base64-encodes the script + decodes remotely
+    /// to skirt Citadel's missing-stdin support.
+    ///
+    /// Throws on transport failures (host unreachable, ssh exit 255,
+    /// timeout). Returns `ProcessResult` with the script's exit code
+    /// + stdout + stderr on completion — non-zero exit is NOT a
+    /// throw; callers inspect `exitCode` and decide.
+    nonisolated func streamScript(_ script: String, timeout: TimeInterval) async throws -> ProcessResult
 
     // MARK: - Watching
 

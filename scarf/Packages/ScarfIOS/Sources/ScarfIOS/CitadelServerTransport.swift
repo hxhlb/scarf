@@ -199,29 +199,65 @@ public final class CitadelServerTransport: ServerTransport, @unchecked Sendable 
         } catch {
             throw TransportError.other(message: "Failed to start exec stream: \(error.localizedDescription)")
         }
-        var stdout = Data()
-        var stderr = Data()
-        var exitCode: Int32 = 0
-        do {
-            for try await chunk in stream {
-                switch chunk {
-                case .stdout(var buf):
-                    if let s = buf.readString(length: buf.readableBytes) {
-                        stdout.append(Data(s.utf8))
+        // Drain in a child task and race against a sleep so a wedged remote
+        // sqlite3 (or a mid-stream Citadel transport failure) can't hang the
+        // caller indefinitely. Mirrors the busy-wait deadline that
+        // SSHScriptRunner enforces on Mac.
+        return try await withThrowingTaskGroup(of: ProcessResult?.self) { group in
+            group.addTask {
+                var stdout = Data()
+                var stderr = Data()
+                var exitCode: Int32 = 0
+                do {
+                    for try await chunk in stream {
+                        try Task.checkCancellation()
+                        switch chunk {
+                        case .stdout(var buf):
+                            if let s = buf.readString(length: buf.readableBytes) {
+                                stdout.append(Data(s.utf8))
+                            }
+                        case .stderr(var buf):
+                            if let s = buf.readString(length: buf.readableBytes) {
+                                stderr.append(Data(s.utf8))
+                            }
+                        }
                     }
-                case .stderr(var buf):
-                    if let s = buf.readString(length: buf.readableBytes) {
-                        stderr.append(Data(s.utf8))
-                    }
+                } catch let failed as SSHClient.CommandFailed {
+                    // Genuine remote non-zero exit — surface as
+                    // ProcessResult so the caller's existing exit-code
+                    // handling fires (mapped to BackendError.sqlite by
+                    // RemoteSQLiteBackend).
+                    exitCode = Int32(failed.exitCode)
+                } catch is CancellationError {
+                    throw TransportError.timeout(seconds: timeout, partialStdout: stdout)
+                } catch {
+                    // Transport-level failure (host unreachable, channel
+                    // dropped, ControlMaster died, NIO read error). Throw
+                    // as a typed TransportError so RemoteSQLiteBackend
+                    // routes it to BackendError.transport rather than
+                    // misclassifying as a sqlite crash via a fake -1 exit.
+                    throw TransportError.other(
+                        message: "SSH stream failed: \(error.localizedDescription)"
+                    )
                 }
+                return ProcessResult(exitCode: exitCode, stdout: stdout, stderr: stderr)
             }
-        } catch let failed as SSHClient.CommandFailed {
-            exitCode = Int32(failed.exitCode)
-        } catch {
-            stderr.append(Data(error.localizedDescription.utf8))
-            exitCode = -1
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return nil
+            }
+            guard let first = try await group.next() else {
+                group.cancelAll()
+                throw TransportError.other(message: "SSH stream produced no result")
+            }
+            group.cancelAll()
+            if let result = first {
+                return result
+            }
+            // Timeout fired first — drain task gets cancelled by the
+            // group cancel above; surface as a typed timeout.
+            throw TransportError.timeout(seconds: timeout, partialStdout: Data())
         }
-        return ProcessResult(exitCode: exitCode, stdout: stdout, stderr: stderr)
     }
 
     // MARK: - ServerTransport: watching

@@ -124,10 +124,22 @@ public enum SSHScriptRunner {
 
             let deadline = Date().addingTimeInterval(timeout)
             while proc.isRunning && Date() < deadline {
+                if Task.isCancelled {
+                    proc.terminate()
+                    try? stdoutPipe.fileHandleForReading.close()
+                    try? stderrPipe.fileHandleForReading.close()
+                    return .connectFailure("Script cancelled")
+                }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
             if proc.isRunning {
                 proc.terminate()
+                // Pipe fds leak otherwise — closing on the timeout branch
+                // matches the success-path discipline (see CLAUDE.md
+                // "Always close both fileHandleForReading and
+                // fileHandleForWriting on Pipe objects").
+                try? stdoutPipe.fileHandleForReading.close()
+                try? stderrPipe.fileHandleForReading.close()
                 return .connectFailure("Script timed out after \(Int(timeout))s")
             }
             let out = (try? stdoutPipe.fileHandleForReading.readToEnd()) ?? Data()
@@ -162,10 +174,18 @@ public enum SSHScriptRunner {
             }
             let deadline = Date().addingTimeInterval(timeout)
             while proc.isRunning && Date() < deadline {
+                if Task.isCancelled {
+                    proc.terminate()
+                    try? stdoutPipe.fileHandleForReading.close()
+                    try? stderrPipe.fileHandleForReading.close()
+                    return .connectFailure("Script cancelled")
+                }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
             if proc.isRunning {
                 proc.terminate()
+                try? stdoutPipe.fileHandleForReading.close()
+                try? stderrPipe.fileHandleForReading.close()
                 return .connectFailure("Script timed out after \(Int(timeout))s")
             }
             let out = (try? stdoutPipe.fileHandleForReading.readToEnd()) ?? Data()

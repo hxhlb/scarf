@@ -38,7 +38,7 @@ struct CronStatusWidgetView: View {
                 )
             }
         }
-        .task(id: fileWatcher.lastChangeDate) {
+        .task(id: "\(jobId ?? "")|\(lineCount)|\(fileWatcher.lastChangeDate.timeIntervalSince1970)") {
             await reload()
         }
     }

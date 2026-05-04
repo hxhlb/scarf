@@ -105,7 +105,10 @@ struct ImageWidgetView: View {
         let outcome: WidgetIOResult<NSImage> = await Task.detached {
             let transport = context.makeTransport()
             do {
-                let data = try transport.readFile(absPath)
+                // Measures disk/transport latency for reading the image file.
+                let data = try ScarfMon.measure(.diskIO, "widget.image.load") {
+                    try transport.readFile(absPath)
+                }
                 if let img = NSImage(data: data) { return .success(img) }
                 return .failure("File is not a recognized image format.")
             } catch {

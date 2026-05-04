@@ -65,13 +65,15 @@ public struct ImageEncoder: Sendable {
         sourceFilename: String? = nil
     ) throws -> ChatImageAttachment {
         guard !rawBytes.isEmpty else { throw EncoderError.empty }
-
+        ScarfMon.event(.render, "imageEncoder.input.bytes", count: 1, bytes: rawBytes.count)
+        return try ScarfMon.measure(.render, "imageEncoder.downsample") {
         #if canImport(AppKit)
         guard let nsImage = NSImage(data: rawBytes) else { throw EncoderError.decodeFailed }
         let targetSize = Self.fittedSize(for: nsImage.size, maxLongEdge: Self.maxLongEdge)
         let mainData = try Self.jpegBytes(from: nsImage, size: targetSize)
         let thumbSize = Self.fittedSize(for: nsImage.size, maxLongEdge: Self.thumbnailLongEdge)
         let thumbData = try? Self.jpegBytes(from: nsImage, size: thumbSize)
+        ScarfMon.event(.render, "imageEncoder.bytes", count: 1, bytes: mainData.count)
         return ChatImageAttachment(
             mimeType: "image/jpeg",
             base64Data: mainData.base64EncodedString(),
@@ -86,6 +88,7 @@ public struct ImageEncoder: Sendable {
         let mainData = try Self.jpegBytes(from: uiImage, size: targetSize)
         let thumbSize = Self.fittedSize(for: uiImage.size, maxLongEdge: Self.thumbnailLongEdge)
         let thumbData = try? Self.jpegBytes(from: uiImage, size: thumbSize)
+        ScarfMon.event(.render, "imageEncoder.bytes", count: 1, bytes: mainData.count)
         return ChatImageAttachment(
             mimeType: "image/jpeg",
             base64Data: mainData.base64EncodedString(),
@@ -99,6 +102,7 @@ public struct ImageEncoder: Sendable {
         // input already looks like a JPEG, else refuse. Keeps the
         // package compiling without a hard AppKit/UIKit dep.
         if rawBytes.starts(with: [0xFF, 0xD8]) {
+            ScarfMon.event(.render, "imageEncoder.bytes", count: 1, bytes: rawBytes.count)
             return ChatImageAttachment(
                 mimeType: "image/jpeg",
                 base64Data: rawBytes.base64EncodedString(),
@@ -109,6 +113,7 @@ public struct ImageEncoder: Sendable {
         }
         throw EncoderError.unsupportedFormat
         #endif
+        }
     }
 
     nonisolated private static func fittedSize(for source: CGSize, maxLongEdge: CGFloat) -> CGSize {

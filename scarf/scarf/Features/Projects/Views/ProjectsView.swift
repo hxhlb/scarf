@@ -80,7 +80,11 @@ struct ProjectsView: View {
     @State private var selectedTab: DashboardTab = .dashboard
 
     var body: some View {
-        HSplitView {
+        // ScarfMon — counts each ProjectsView body evaluation. Pair with
+        // `widget.<type>.load` to spot churn that re-fires file-reading
+        // widgets unnecessarily.
+        let _: Void = ScarfMon.event(.render, "mac.dashboard.body")
+        return HSplitView {
             projectList
                 .frame(minWidth: 180, maxWidth: 220)
             dashboardArea

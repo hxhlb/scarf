@@ -71,7 +71,10 @@ struct MarkdownFileWidgetView: View {
         let outcome: WidgetIOResult<String> = await Task.detached {
             let transport = context.makeTransport()
             do {
-                let data = try transport.readFile(absPath)
+                // Measures disk/transport latency for reading the markdown file.
+                let data = try ScarfMon.measure(.diskIO, "widget.markdown_file.load") {
+                    try transport.readFile(absPath)
+                }
                 guard let text = String(data: data, encoding: .utf8) else {
                     return .failure("File is not UTF-8 — markdown_file expects text.")
                 }

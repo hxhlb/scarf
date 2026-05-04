@@ -161,11 +161,13 @@ struct CronStatusWidgetView: View {
         defer { isLoading = false }
         let result: (HermesCronJob?, String?, String?) = await Task.detached {
             let fs = HermesFileService(context: context)
-            let jobs = fs.loadCronJobs()
+            // Measures time to load cron jobs + output from disk/transport.
+            let (jobs, outputRaw): ([HermesCronJob], String?) = ScarfMon.measure(.diskIO, "widget.cron_status.load") {
+                (fs.loadCronJobs(), fs.loadCronOutput(jobId: jobId))
+            }
             guard let match = jobs.first(where: { $0.id == jobId }) else {
                 return (nil, nil, "No cron job with id `\(jobId)`.")
             }
-            let outputRaw = fs.loadCronOutput(jobId: jobId)
             let trimmed: String? = {
                 guard let outputRaw else { return nil }
                 let stripped = AnsiStripper.strip(outputRaw)

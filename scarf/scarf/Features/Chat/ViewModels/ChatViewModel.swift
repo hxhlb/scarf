@@ -172,7 +172,7 @@ final class ChatViewModel {
     /// for the user to pick a model. Replayed verbatim once
     /// `confirmModelPreflight` writes the chosen model+provider to
     /// config.yaml. Cleared on cancel or after replay.
-    private var pendingStartArgs: (sessionId: String?, projectPath: String?)?
+    private var pendingStartArgs: (sessionId: String?, projectPath: String?, initialPrompt: String?)?
 
     private static let maxReconnectAttempts = 5
     private static let reconnectBaseDelay: UInt64 = 1_000_000_000 // 1 second
@@ -207,13 +207,24 @@ final class ChatViewModel {
     // MARK: - Session Lifecycle
 
     func startNewSession(projectPath: String? = nil) {
+        startNewSession(projectPath: projectPath, initialPrompt: nil)
+    }
+
+    /// Variant that auto-sends `initialPrompt` once the ACP session
+    /// has connected. Used by the "New Project from Scratch" wizard
+    /// (v2.8) to kick the conversation off with a message the agent
+    /// recognizes as a `scarf-template-author` invocation, so the user
+    /// doesn't have to type anything to begin the interview.
+    /// Terminal mode ignores the prompt — the wizard runs in rich-chat
+    /// only.
+    func startNewSession(projectPath: String?, initialPrompt: String?) {
         voiceEnabled = false
         ttsEnabled = false
         isRecording = false
         richChatViewModel.reset()
 
         if displayMode == .richChat {
-            startACPSession(resume: nil, projectPath: projectPath)
+            startACPSession(resume: nil, projectPath: projectPath, initialPrompt: initialPrompt)
         } else {
             // Terminal mode doesn't surface project attribution today —
             // `hermes chat` uses the shell's cwd, so starting a terminal
@@ -222,6 +233,18 @@ final class ChatViewModel {
             // the primary surface for project-scoped sessions.
             launchTerminal(arguments: ["chat"])
         }
+    }
+
+    /// Start a new project-scoped ACP session and send `text` as the
+    /// first prompt once connected. Thin wrapper named for the
+    /// wizard's call site to make intent obvious; behaves identically
+    /// to `startNewSession(projectPath:initialPrompt:)`.
+    func startNewSessionAndSend(projectPath: String, text: String) {
+        // Force rich-chat — the wizard handoff doesn't make sense in
+        // terminal mode, and we'd silently swallow the initial prompt
+        // if the user happened to be on the terminal segment.
+        displayMode = .richChat
+        startNewSession(projectPath: projectPath, initialPrompt: text)
     }
 
     func resumeSession(_ sessionId: String) {
@@ -477,7 +500,11 @@ final class ChatViewModel {
 
     // MARK: - ACP Session Management
 
-    private func startACPSession(resume sessionId: String?, projectPath: String? = nil) {
+    private func startACPSession(
+        resume sessionId: String?,
+        projectPath: String? = nil,
+        initialPrompt: String? = nil
+    ) {
         ScarfMon.event(.sessionLoad, "mac.startACPSession", count: 1)
         stopACP()
         clearACPErrorState()
@@ -491,7 +518,7 @@ final class ChatViewModel {
         // unchanged after the user picks a model.
         let preflight = ModelPreflight.check(fileService.loadConfig())
         if !preflight.isConfigured {
-            pendingStartArgs = (sessionId, projectPath)
+            pendingStartArgs = (sessionId, projectPath, initialPrompt)
             modelPreflightReason = preflight.reason
             acpStatus = ""
             hasActiveProcess = false
@@ -645,6 +672,18 @@ final class ChatViewModel {
                 await loadRecentSessions()
 
                 logger.info("ACP session ready: \(resolvedSessionId)")
+
+                // v2.8 wizard handoff: auto-send the kickoff prompt now
+                // that the session is connected. Renders as a normal user
+                // bubble (matches the user's intent — they triggered this
+                // flow via the New Project sheet) and routes through the
+                // same `sendViaACP` path that typed messages use, so the
+                // event loop, attribution, and streaming are identical.
+                if let prompt = initialPrompt,
+                   !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    richChatViewModel.addUserMessage(text: prompt)
+                    sendViaACP(client: client, text: prompt, images: [])
+                }
             } catch {
                 acpStatus = "Failed"
                 await recordACPFailure(error, client: client, context: "Failed to start ACP session")
@@ -833,7 +872,11 @@ final class ChatViewModel {
                 guard let self else { return }
                 if ok {
                     if let pending {
-                        self.startACPSession(resume: pending.sessionId, projectPath: pending.projectPath)
+                        self.startACPSession(
+                            resume: pending.sessionId,
+                            projectPath: pending.projectPath,
+                            initialPrompt: pending.initialPrompt
+                        )
                     }
                 } else {
                     self.acpError = "Couldn't save model+provider to config.yaml. Open Settings to retry."
@@ -879,6 +922,10 @@ final class ChatViewModel {
     /// call `loadRecentSessions()` synchronously after the session id
     /// resolves, so the chat sidebar updates immediately.
     func scheduleSessionsRefresh() {
+        // Track every file-watcher-driven debounce entry. During an ACP
+        // stream this fires many times per second; the count helps us see
+        // how often the watcher fires vs. how often a real reload executes.
+        ScarfMon.event(.sessionLoad, "mac.scheduleSessionsRefresh", count: 1)
         sessionsRefreshTask?.cancel()
         sessionsRefreshTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -888,43 +935,53 @@ final class ChatViewModel {
     }
 
     func loadRecentSessions() async {
-        let opened = await dataService.open()
-        guard opened else { return }
-        // Bumped from 10 → 50 so the project filter has enough data to
-        // surface attributed sessions (older attributed sessions were
-        // getting truncated out of the original limit). Sessions feature
-        // loads 500; the chat sidebar doesn't need that, but 50 keeps
-        // the project filter useful without measurable cost.
-        let fetchedSessions = await dataService.fetchSessions(limit: 50)
-        let fetchedPreviews = await dataService.fetchSessionPreviews(limit: 50)
-        await dataService.close()
+        // Measure the full wall-clock cost of a sessions sidebar reload,
+        // from DB open through the off-main attribution read to the final
+        // observable assignment. Surfaces fetch regressions and SQLite
+        // latency spikes in the ScarfMon trace.
+        await ScarfMon.measureAsync(.sessionLoad, "mac.loadRecentSessions") {
+            let opened = await dataService.open()
+            guard opened else { return }
+            // Bumped from 10 → 50 so the project filter has enough data to
+            // surface attributed sessions (older attributed sessions were
+            // getting truncated out of the original limit). Sessions feature
+            // loads 500; the chat sidebar doesn't need that, but 50 keeps
+            // the project filter useful without measurable cost.
+            let fetchedSessions = await dataService.fetchSessions(limit: 50)
+            let fetchedPreviews = await dataService.fetchSessionPreviews(limit: 50)
+            await dataService.close()
 
-        // Project attribution + registry — single batched off-main read.
-        let ctx = context
-        let bundle: (names: [String: String], projects: [ProjectEntry]) = await Task.detached {
-            let attribution = SessionAttributionService(context: ctx)
-            let registry = ProjectDashboardService(context: ctx).loadRegistry()
-            let pathToName = Dictionary(
-                uniqueKeysWithValues: registry.projects.map { ($0.path, $0.name) }
-            )
-            let map = attribution.load().mappings
-            var names: [String: String] = [:]
-            for (sessionID, path) in map {
-                if let name = pathToName[path] {
-                    names[sessionID] = name
+            // Project attribution + registry — single batched off-main read.
+            let ctx = context
+            let bundle: (names: [String: String], projects: [ProjectEntry]) = await Task.detached {
+                let attribution = SessionAttributionService(context: ctx)
+                let registry = ProjectDashboardService(context: ctx).loadRegistry()
+                let pathToName = Dictionary(
+                    uniqueKeysWithValues: registry.projects.map { ($0.path, $0.name) }
+                )
+                let map = attribution.load().mappings
+                var names: [String: String] = [:]
+                for (sessionID, path) in map {
+                    if let name = pathToName[path] {
+                        names[sessionID] = name
+                    }
                 }
-            }
-            return (names: names, projects: registry.projects)
-        }.value
+                return (names: names, projects: registry.projects)
+            }.value
 
-        // Single batched commit — assigning all four observables at once
-        // means SwiftUI sees one update rather than four staggered ones.
-        // Eliminates the brief "list flashes / project chips appear
-        // late" reload artifact during session switches.
-        recentSessions = fetchedSessions
-        sessionPreviews = fetchedPreviews
-        sessionProjectNames = bundle.names
-        allProjects = bundle.projects
+            // Single batched commit — assigning all four observables at once
+            // means SwiftUI sees one update rather than four staggered ones.
+            // Eliminates the brief "list flashes / project chips appear
+            // late" reload artifact during session switches.
+            recentSessions = fetchedSessions
+            sessionPreviews = fetchedPreviews
+            sessionProjectNames = bundle.names
+            allProjects = bundle.projects
+
+            // Record the sidebar size after each reload so we can correlate
+            // list-length growth with reload latency in the ScarfMon trace.
+            ScarfMon.event(.sessionLoad, "mac.recentSessions.count", count: recentSessions.count)
+        }
     }
 
     /// Resolved project display name for a recent session, or nil for

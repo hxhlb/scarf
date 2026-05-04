@@ -178,7 +178,11 @@ public struct ModelCatalogService: Sendable {
     /// can keep using the sync method.
     public nonisolated func loadProvidersAsync() async -> [HermesProviderInfo] {
         await Task.detached { [self] in
-            self.loadProviders()
+            let providers = ScarfMon.measure(.diskIO, "modelCatalog.loadProviders") {
+                self.loadProviders()
+            }
+            ScarfMon.event(.diskIO, "modelCatalog.providers.count", count: providers.count)
+            return providers
         }.value
     }
 
@@ -218,7 +222,11 @@ public struct ModelCatalogService: Sendable {
     /// Issue #59.
     public nonisolated func loadModelsAsync(for providerID: String) async -> [HermesModelInfo] {
         await Task.detached { [self] in
-            self.loadModels(for: providerID)
+            let models = ScarfMon.measure(.diskIO, "modelCatalog.loadModels") {
+                self.loadModels(for: providerID)
+            }
+            ScarfMon.event(.diskIO, "modelCatalog.models.count", count: models.count)
+            return models
         }.value
     }
 
@@ -335,47 +343,49 @@ public struct ModelCatalogService: Sendable {
     /// Nous's catalog has no such model and Hermes later failed with
     /// HTTP 404 at runtime. Catch that at save time, not 6 hours later.
     public func validateModel(_ modelID: String, for providerID: String) -> ModelValidation {
-        let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return .invalid(providerName: providerID, suggestions: [])
-        }
+        ScarfMon.measure(.diskIO, "modelCatalog.validateModel") {
+            let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return .invalid(providerName: providerID, suggestions: [])
+            }
 
-        // Overlay-only providers (Nous Portal, OpenAI Codex, Qwen
-        // OAuth, …) serve their own catalogs that aren't mirrored to
-        // models.dev, so we don't have a reliable way to check model
-        // IDs locally. Treat any non-empty value as provisionally
-        // valid — the worst case is the runtime 404 we hit in pass-1,
-        // but the UI has the error banner now (M7 #2) to surface that
-        // cleanly.
-        //
-        // Exception: if an overlay-only provider DOES appear in the
-        // models.dev cache (unlikely but possible as catalogs evolve),
-        // we fall through to the real check below.
-        let models = loadModels(for: providerID)
-        if models.isEmpty {
-            if Self.overlayOnlyProviders[providerID] != nil {
+            // Overlay-only providers (Nous Portal, OpenAI Codex, Qwen
+            // OAuth, …) serve their own catalogs that aren't mirrored to
+            // models.dev, so we don't have a reliable way to check model
+            // IDs locally. Treat any non-empty value as provisionally
+            // valid — the worst case is the runtime 404 we hit in pass-1,
+            // but the UI has the error banner now (M7 #2) to surface that
+            // cleanly.
+            //
+            // Exception: if an overlay-only provider DOES appear in the
+            // models.dev cache (unlikely but possible as catalogs evolve),
+            // we fall through to the real check below.
+            let models = loadModels(for: providerID)
+            if models.isEmpty {
+                if Self.overlayOnlyProviders[providerID] != nil {
+                    return .valid
+                }
+                return .unknownProvider(providerID: providerID)
+            }
+
+            if models.contains(where: { $0.modelID == trimmed }) {
                 return .valid
             }
-            return .unknownProvider(providerID: providerID)
-        }
 
-        if models.contains(where: { $0.modelID == trimmed }) {
-            return .valid
+            // No exact match — offer the closest names (by prefix) as
+            // suggestions. Up to 5, ordered by release date (newest
+            // first — already the sort order of loadModels).
+            let lowerTrimmed = trimmed.lowercased()
+            let byPrefix = models
+                .filter { $0.modelID.lowercased().hasPrefix(String(lowerTrimmed.prefix(3))) }
+                .prefix(5)
+                .map(\.modelID)
+            let suggestions = byPrefix.isEmpty
+                ? Array(models.prefix(5).map(\.modelID))
+                : Array(byPrefix)
+            let providerName = providerByID(providerID)?.providerName ?? providerID
+            return .invalid(providerName: providerName, suggestions: suggestions)
         }
-
-        // No exact match — offer the closest names (by prefix) as
-        // suggestions. Up to 5, ordered by release date (newest
-        // first — already the sort order of loadModels).
-        let lowerTrimmed = trimmed.lowercased()
-        let byPrefix = models
-            .filter { $0.modelID.lowercased().hasPrefix(String(lowerTrimmed.prefix(3))) }
-            .prefix(5)
-            .map(\.modelID)
-        let suggestions = byPrefix.isEmpty
-            ? Array(models.prefix(5).map(\.modelID))
-            : Array(byPrefix)
-        let providerName = providerByID(providerID)?.providerName ?? providerID
-        return .invalid(providerName: providerName, suggestions: suggestions)
     }
 
     // MARK: - Decoding

@@ -15,14 +15,18 @@ public struct ProjectDashboardService: Sendable {
     // MARK: - Registry
 
     public func loadRegistry() -> ProjectRegistry {
-        guard let data = try? transport.readFile(context.paths.projectsRegistry) else {
-            return ProjectRegistry(projects: [])
-        }
-        do {
-            return try JSONDecoder().decode(ProjectRegistry.self, from: data)
-        } catch {
-            Self.logger.error("Failed to decode project registry: \(error.localizedDescription, privacy: .public)")
-            return ProjectRegistry(projects: [])
+        // Tracks time spent reading + decoding projects.json from the transport
+        // (local file or SSH). Helps spot slow remote round-trips.
+        ScarfMon.measure(.diskIO, "dashboard.loadRegistry") {
+            guard let data = try? transport.readFile(context.paths.projectsRegistry) else {
+                return ProjectRegistry(projects: [])
+            }
+            do {
+                return try JSONDecoder().decode(ProjectRegistry.self, from: data)
+            } catch {
+                Self.logger.error("Failed to decode project registry: \(error.localizedDescription, privacy: .public)")
+                return ProjectRegistry(projects: [])
+            }
         }
     }
 

@@ -724,12 +724,28 @@ public struct SSHTransport: ServerTransport {
             try? stdinPipe.fileHandleForWriting.close()
         }
         if let timeout {
-            let deadline = Date().addingTimeInterval(timeout)
-            while proc.isRunning && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.1)
-            }
-            if proc.isRunning {
+            // Kernel-wait via DispatchGroup + terminationHandler instead
+            // of a 100ms Thread.sleep spin loop. The old loop burned a
+            // cooperative-pool thread for the full timeout duration AND
+            // had 100ms granularity on the deadline; this version blocks
+            // once on a semaphore that the OS wakes when the process
+            // terminates (or when the timeout fires). Net effect: under
+            // concurrent SSH load (sidebar reload + chat finalize +
+            // watcher poll all firing together) we don't accumulate
+            // multiple spin-blocked threads, which was the mechanism
+            // behind the 7-second `loadRecentSessions` outliers
+            // observed in remote-context perf captures.
+            let waitGroup = DispatchGroup()
+            waitGroup.enter()
+            proc.terminationHandler = { _ in waitGroup.leave() }
+            let outcome = waitGroup.wait(timeout: .now() + timeout)
+            proc.terminationHandler = nil
+            if outcome == .timedOut {
                 proc.terminate()
+                // Brief block until the kill actually lands so we can
+                // collect partial stdout. terminate() is async; without
+                // this wait the readToEnd below could race the close.
+                proc.waitUntilExit()
                 let partial = (try? stdoutPipe.fileHandleForReading.readToEnd()) ?? Data()
                 try? stdoutPipe.fileHandleForReading.close()
                 try? stderrPipe.fileHandleForReading.close()

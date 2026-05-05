@@ -82,30 +82,32 @@ struct NousSubscriptionService: Sendable {
     /// on any read or parse failure — callers treat "absent" and "can't
     /// read" the same in UI (show a "not subscribed" CTA).
     nonisolated func loadState() -> NousSubscriptionState {
-        guard let data = try? transport.readFile(authJSONPath) else {
-            return .absent
+        ScarfMon.measure(.diskIO, "nous.subscription.loadState") {
+            guard let data = try? transport.readFile(authJSONPath) else {
+                return .absent
+            }
+            guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                logger.warning("auth.json is not a JSON object; assuming no Nous subscription")
+                return .absent
+            }
+            let providers = root["providers"] as? [String: Any] ?? [:]
+            let nous = providers["nous"] as? [String: Any]
+            let token = nous?["access_token"] as? String
+            let present = (token?.isEmpty == false)
+
+            let activeProvider = root["active_provider"] as? String
+            let providerIsNous = (activeProvider == "nous")
+
+            let updatedAt: Date? = {
+                guard let raw = root["updated_at"] as? String else { return nil }
+                return ISO8601DateFormatter().date(from: raw)
+            }()
+
+            return NousSubscriptionState(
+                present: present,
+                providerIsNous: providerIsNous,
+                updatedAt: updatedAt
+            )
         }
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            logger.warning("auth.json is not a JSON object; assuming no Nous subscription")
-            return .absent
-        }
-        let providers = root["providers"] as? [String: Any] ?? [:]
-        let nous = providers["nous"] as? [String: Any]
-        let token = nous?["access_token"] as? String
-        let present = (token?.isEmpty == false)
-
-        let activeProvider = root["active_provider"] as? String
-        let providerIsNous = (activeProvider == "nous")
-
-        let updatedAt: Date? = {
-            guard let raw = root["updated_at"] as? String else { return nil }
-            return ISO8601DateFormatter().date(from: raw)
-        }()
-
-        return NousSubscriptionState(
-            present: present,
-            providerIsNous: providerIsNous,
-            updatedAt: updatedAt
-        )
     }
 }

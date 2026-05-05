@@ -96,21 +96,23 @@ public struct NousModelCatalogService: Sendable {
     /// malformed cache → nil; the loader treats that as "no cache" and
     /// kicks off a fresh fetch.
     public func readCache() -> NousModelsCache? {
-        let transport = context.makeTransport()
-        guard transport.fileExists(cachePath) else { return nil }
-        do {
-            let data = try transport.readFile(cachePath)
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            let cache = try decoder.decode(NousModelsCache.self, from: data)
-            guard cache.version == NousModelsCache.currentVersion else {
-                Self.logger.info("nous models cache schema mismatch (got v\(cache.version), expected v\(NousModelsCache.currentVersion)); ignoring")
+        ScarfMon.measure(.diskIO, "nous.readCache") {
+            let transport = context.makeTransport()
+            guard transport.fileExists(cachePath) else { return nil }
+            do {
+                let data = try transport.readFile(cachePath)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let cache = try decoder.decode(NousModelsCache.self, from: data)
+                guard cache.version == NousModelsCache.currentVersion else {
+                    Self.logger.info("nous models cache schema mismatch (got v\(cache.version), expected v\(NousModelsCache.currentVersion)); ignoring")
+                    return nil
+                }
+                return cache
+            } catch {
+                Self.logger.warning("couldn't decode nous models cache: \(error.localizedDescription, privacy: .public)")
                 return nil
             }
-            return cache
-        } catch {
-            Self.logger.warning("couldn't decode nous models cache: \(error.localizedDescription, privacy: .public)")
-            return nil
         }
     }
 
@@ -148,15 +150,22 @@ public struct NousModelCatalogService: Sendable {
         // The subscription service already checks for `present`; we
         // re-read the raw token here because we need the actual string,
         // not just a Bool. Mirrors the SubscriptionService parse path.
-        let transport = context.makeTransport()
-        guard transport.fileExists(context.paths.authJSON) else { return nil }
-        guard let data = try? transport.readFile(context.paths.authJSON) else { return nil }
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let providers = root["providers"] as? [String: Any] ?? [:]
-        let nous = providers["nous"] as? [String: Any]
-        let token = nous?["access_token"] as? String
-        guard let token, !token.isEmpty else { return nil }
-        return token
+        // ScarfMon: separate `nous.bearerToken` measure point because
+        // this is the second auth.json read of the picker's open
+        // sequence (subscriptionService.loadState() did the first).
+        // Together with `nous.subscription.loadState`, total two SSH
+        // round-trips of the same file — candidate for caching.
+        ScarfMon.measure(.diskIO, "nous.bearerToken") {
+            let transport = context.makeTransport()
+            guard transport.fileExists(context.paths.authJSON) else { return nil }
+            guard let data = try? transport.readFile(context.paths.authJSON) else { return nil }
+            guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            let providers = root["providers"] as? [String: Any] ?? [:]
+            let nous = providers["nous"] as? [String: Any]
+            let token = nous?["access_token"] as? String
+            guard let token, !token.isEmpty else { return nil }
+            return token
+        }
     }
 
     /// Make the API call. Times out after `requestTimeout` so a hung
@@ -164,25 +173,28 @@ public struct NousModelCatalogService: Sendable {
     /// `[NousModel]` on success, throws on any HTTP / decode error so
     /// the caller can log + fall back.
     public func fetchModels() async throws -> [NousModel] {
-        guard let token = bearerToken() else {
-            throw NousModelCatalogError.notAuthenticated
-        }
-        var request = URLRequest(url: Self.baseURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = Self.requestTimeout
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        try await ScarfMon.measureAsync(.transport, "nous.fetchModels") {
+            guard let token = bearerToken() else {
+                throw NousModelCatalogError.notAuthenticated
+            }
+            var request = URLRequest(url: Self.baseURL)
+            request.httpMethod = "GET"
+            request.timeoutInterval = Self.requestTimeout
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw NousModelCatalogError.transport("non-HTTP response")
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw NousModelCatalogError.transport("non-HTTP response")
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                throw NousModelCatalogError.http(status: http.statusCode)
+            }
+            struct Envelope: Decodable { let data: [NousModel] }
+            let envelope = try JSONDecoder().decode(Envelope.self, from: data)
+            ScarfMon.event(.transport, "nous.fetchModels.bytes", count: envelope.data.count, bytes: data.count)
+            return envelope.data
         }
-        guard (200..<300).contains(http.statusCode) else {
-            throw NousModelCatalogError.http(status: http.statusCode)
-        }
-        struct Envelope: Decodable { let data: [NousModel] }
-        let envelope = try JSONDecoder().decode(Envelope.self, from: data)
-        return envelope.data
     }
 
     // MARK: - Public entry

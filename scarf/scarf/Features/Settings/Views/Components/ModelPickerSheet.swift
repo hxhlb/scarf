@@ -344,7 +344,7 @@ struct ModelPickerSheet: View {
                 }
             }
             List(selection: $overlayModelID) {
-                ForEach(nousModels) { model in
+                ForEach(filteredNousModels) { model in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.id)
                             .font(.system(.body, design: .monospaced))
@@ -360,12 +360,23 @@ struct ModelPickerSheet: View {
             .listStyle(.inset)
             .frame(minHeight: 220)
             .overlay {
-                if nousModels.isEmpty && !nousIsRefreshing {
-                    ContentUnavailableView(
-                        "No models loaded",
-                        systemImage: "cpu",
-                        description: Text("Sign in to Nous Portal to load the catalog, or enter a model ID manually.")
-                    )
+                if filteredNousModels.isEmpty && !nousIsRefreshing {
+                    if nousModels.isEmpty {
+                        ContentUnavailableView(
+                            "No models loaded",
+                            systemImage: "cpu",
+                            description: Text("Sign in to Nous Portal to load the catalog, or enter a model ID manually.")
+                        )
+                    } else {
+                        // Models loaded but the search filtered them all
+                        // out. Different message so the user knows the
+                        // catalog is fine, just their query didn't match.
+                        ContentUnavailableView(
+                            "No matches",
+                            systemImage: "magnifyingglass",
+                            description: Text("No models match \"\(searchText)\".")
+                        )
+                    }
                 }
             }
             if nousFetchedAt == nil && !nousModels.isEmpty {
@@ -574,6 +585,20 @@ struct ModelPickerSheet: View {
         let q = searchText.lowercased()
         return models.filter {
             $0.modelName.lowercased().contains(q) || $0.modelID.lowercased().contains(q)
+        }
+    }
+
+    /// Same shape as `filteredModels` but for the Nous overlay path
+    /// (`nousModels` is `[NousModel]`, not `[HermesModelInfo]`).
+    /// Nous returned 402 models in the user's capture; without a
+    /// filter the picker is a flat unsearchable list. Reuses the
+    /// same `searchText` field so the user types once and both
+    /// paths respond.
+    private var filteredNousModels: [NousModel] {
+        guard !searchText.isEmpty else { return nousModels }
+        let q = searchText.lowercased()
+        return nousModels.filter {
+            $0.id.lowercased().contains(q) || ($0.owned_by ?? "").lowercased().contains(q)
         }
     }
 

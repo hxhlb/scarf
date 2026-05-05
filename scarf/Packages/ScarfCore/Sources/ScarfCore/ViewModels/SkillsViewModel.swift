@@ -82,16 +82,23 @@ public final class SkillsViewModel {
         let ctx = context
         let xport = transport
         let pins = pinnedNames
-        let cats: [HermesSkillCategory] = await Task.detached {
-            let disabled = Self.readDisabledSkillNames(context: ctx)
-            let pinned = pins ?? Self.readPinnedSkillNames(context: ctx)
-            return SkillsScanner.scan(
-                context: ctx,
-                transport: xport,
-                disabledNames: disabled,
-                pinnedNames: pinned
-            )
-        }.value
+        // v2.8 — instrumented so future captures show how many SSH
+        // RTTs the SkillsScanner walk costs on remote (it stats
+        // every ~/.hermes/skills/* directory + reads SKILL.md per).
+        let cats: [HermesSkillCategory] = await ScarfMon.measureAsync(.diskIO, "skills.load") {
+            await Task.detached {
+                let disabled = Self.readDisabledSkillNames(context: ctx)
+                let pinned = pins ?? Self.readPinnedSkillNames(context: ctx)
+                return SkillsScanner.scan(
+                    context: ctx,
+                    transport: xport,
+                    disabledNames: disabled,
+                    pinnedNames: pinned
+                )
+            }.value
+        }
+        let totalSkills = cats.reduce(0) { $0 + $1.skills.count }
+        ScarfMon.event(.diskIO, "skills.load.count", count: totalSkills)
         categories = cats
         isLoading = false
     }

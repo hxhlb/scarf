@@ -637,27 +637,42 @@ public actor HermesDataService {
     }
 
     public func fetchSessionPreviews(limit: Int = QueryDefaults.sessionPreviewLimit) async -> [String: String] {
-        let sql = """
-            SELECT m.session_id, substr(m.content, 1, \(QueryDefaults.previewContentLength))
-            FROM messages m
-            INNER JOIN (
-                SELECT session_id, MIN(id) as min_id
-                FROM messages
-                WHERE role = 'user' AND content <> ''
-                GROUP BY session_id
-            ) first ON m.id = first.min_id
-            ORDER BY m.timestamp DESC
-            LIMIT ?
-            """
-        do {
-            let rows = try await backend.query(sql, params: [.integer(Int64(limit))])
-            var previews: [String: String] = [:]
-            for row in rows {
-                previews[row.string(at: 0)] = row.string(at: 1)
+        // Already bounded by `substr(content, 1, previewContentLength)`
+        // — wire payload caps at ~limit × 100 bytes. v2.8 added
+        // ScarfMon instrumentation + transport-error logging for
+        // parity with `fetchRecentToolCallsOutcome`; if this query
+        // ever does start timing out on a slow remote we'll see it
+        // in captures rather than swallowing the error and returning
+        // an empty preview map.
+        await ScarfMon.measureAsync(.sessionLoad, "mac.fetchSessionPreviews") {
+            let sql = """
+                SELECT m.session_id, substr(m.content, 1, \(QueryDefaults.previewContentLength))
+                FROM messages m
+                INNER JOIN (
+                    SELECT session_id, MIN(id) as min_id
+                    FROM messages
+                    WHERE role = 'user' AND content <> ''
+                    GROUP BY session_id
+                ) first ON m.id = first.min_id
+                ORDER BY m.timestamp DESC
+                LIMIT ?
+                """
+            do {
+                let rows = try await backend.query(sql, params: [.integer(Int64(limit))])
+                var previews: [String: String] = [:]
+                for row in rows {
+                    previews[row.string(at: 0)] = row.string(at: 1)
+                }
+                ScarfMon.event(.sessionLoad, "mac.fetchSessionPreviews.rows", count: previews.count)
+                return previews
+            } catch let BackendError.transport(reason) {
+                ScarfMon.event(.sessionLoad, "mac.fetchSessionPreviews.transportError", count: 1)
+                Self.logger.warning("fetchSessionPreviews transport error: \(reason, privacy: .public)")
+                return [:]
+            } catch {
+                Self.logger.warning("fetchSessionPreviews failed: \(error.localizedDescription, privacy: .public)")
+                return [:]
             }
-            return previews
-        } catch {
-            return [:]
         }
     }
 

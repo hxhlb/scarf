@@ -50,7 +50,7 @@ public enum ModelPreflight: Sendable {
     }
 
     private static func isUnset(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespaces).lowercased()
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed.isEmpty || trimmed == "unknown"
     }
 
@@ -79,8 +79,8 @@ public enum ModelPreflight: Sendable {
     /// Uses case-insensitive comparison — Hermes accepts both
     /// `Anthropic/...` and `anthropic/...` casings in the wild.
     public static func detectMismatch(_ config: HermesConfig) -> Mismatch? {
-        let modelDefault = config.model.trimmingCharacters(in: .whitespaces)
-        let activeProvider = config.provider.trimmingCharacters(in: .whitespaces)
+        let modelDefault = config.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeProvider = config.provider.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isUnset(modelDefault), !isUnset(activeProvider) else { return nil }
         guard let slash = modelDefault.firstIndex(of: "/") else { return nil }
         let prefix = String(modelDefault[..<slash])

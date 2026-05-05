@@ -40,17 +40,22 @@ final class CronViewModel {
         let selectedID = selectedJob?.id
         Task.detached { [weak self] in
             // Three sync transport ops on remote — keep them off main.
-            let jobs = svc.loadCronJobs()
-            let skills = svc.loadSkills().flatMap { $0.skills.map(\.id) }.sorted()
-            let refreshed = selectedID.flatMap { id in jobs.first(where: { $0.id == id }) }
-            let output = refreshed.flatMap { svc.loadCronOutput(jobId: $0.id) }
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.jobs = jobs
-                self.availableSkills = skills
-                if let refreshed { self.selectedJob = refreshed }
-                if output != nil { self.jobOutput = output }
-                self.isLoading = false
+            // v2.8: instrumented so we can see how many SSH RTTs the
+            // Cron tab actually costs in captures.
+            await ScarfMon.measureAsync(.diskIO, "cron.load") {
+                let jobs = svc.loadCronJobs()
+                let skills = svc.loadSkills().flatMap { $0.skills.map(\.id) }.sorted()
+                let refreshed = selectedID.flatMap { id in jobs.first(where: { $0.id == id }) }
+                let output = refreshed.flatMap { svc.loadCronOutput(jobId: $0.id) }
+                ScarfMon.event(.diskIO, "cron.load.jobs", count: jobs.count)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.jobs = jobs
+                    self.availableSkills = skills
+                    if let refreshed { self.selectedJob = refreshed }
+                    if output != nil { self.jobOutput = output }
+                    self.isLoading = false
+                }
             }
         }
     }

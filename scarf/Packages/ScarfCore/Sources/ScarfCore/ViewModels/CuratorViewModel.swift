@@ -37,22 +37,34 @@ public final class CuratorViewModel {
         isLoading = true
         defer { isLoading = false }
         let context = self.context
-        let parsed = await Task.detached(priority: .userInitiated) { () -> (HermesCuratorStatus, String?) in
-            let textResult = Self.runCuratorStatus(context: context)
-            let stateData = context.readData(context.paths.curatorStateFile)
-            let parsed = HermesCuratorStatusParser.parse(text: textResult, stateFileJSON: stateData)
-            // Best-effort markdown report: the state file points at the
-            // most recent <YYYYMMDD-HHMMSS>/ dir; load REPORT.md from
-            // there. Missing on first run, which is fine.
-            var report: String?
-            if let reportDir = parsed.lastReportPath {
-                let reportPath = reportDir.hasSuffix("/")
-                    ? "\(reportDir)REPORT.md"
-                    : "\(reportDir)/REPORT.md"
-                report = context.readText(reportPath)
-            }
-            return (parsed, report)
-        }.value
+        // v2.8 — instrumented. Curator load fires `hermes curator
+        // status` (CLI subprocess) plus 1-2 file reads; on remote
+        // each is a separate SSH RTT. Visibility lets future captures
+        // show how often the report file is missing or oversized.
+        let parsed = await ScarfMon.measureAsync(.diskIO, "curator.load") {
+            await Task.detached(priority: .userInitiated) { () -> (HermesCuratorStatus, String?) in
+                let textResult = Self.runCuratorStatus(context: context)
+                let stateData = context.readData(context.paths.curatorStateFile)
+                let parsed = HermesCuratorStatusParser.parse(text: textResult, stateFileJSON: stateData)
+                // Best-effort markdown report: the state file points at the
+                // most recent <YYYYMMDD-HHMMSS>/ dir; load REPORT.md from
+                // there. Missing on first run, which is fine.
+                var report: String?
+                if let reportDir = parsed.lastReportPath {
+                    let reportPath = reportDir.hasSuffix("/")
+                        ? "\(reportDir)REPORT.md"
+                        : "\(reportDir)/REPORT.md"
+                    report = context.readText(reportPath)
+                }
+                return (parsed, report)
+            }.value
+        }
+        ScarfMon.event(
+            .diskIO,
+            "curator.load.bytes",
+            count: 0,
+            bytes: parsed.1?.utf8.count ?? 0
+        )
         self.status = parsed.0
         self.lastReportMarkdown = parsed.1
     }

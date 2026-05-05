@@ -43,21 +43,26 @@ final class MemoryViewModel {
         let svc = fileService
         let currentProfile = activeProfile
         // Sync transport calls would beach-ball the UI on remote — dispatch
-        // off main, then commit results back on MainActor.
+        // off main, then commit results back on MainActor. v2.8: wrapped
+        // in ScarfMon so we can see how many SSH RTTs this load actually
+        // costs (4 sequential SFTP reads on the slow path).
         Task.detached { [weak self] in
-            let config = svc.loadConfig()
-            let profiles = svc.loadMemoryProfiles()
-            let profile = currentProfile.isEmpty ? config.memoryProfile : currentProfile
-            let memory = svc.loadMemory(profile: profile)
-            let user = svc.loadUserProfile(profile: profile)
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.memoryProvider = config.memoryProvider
-                self.profiles = profiles
-                self.activeProfile = profile
-                self.memoryContent = memory
-                self.userContent = user
-                self.isLoading = false
+            await ScarfMon.measureAsync(.diskIO, "memory.load") {
+                let config = svc.loadConfig()
+                let profiles = svc.loadMemoryProfiles()
+                let profile = currentProfile.isEmpty ? config.memoryProfile : currentProfile
+                let memory = svc.loadMemory(profile: profile)
+                let user = svc.loadUserProfile(profile: profile)
+                ScarfMon.event(.diskIO, "memory.load.bytes", count: 0, bytes: memory.utf8.count + user.utf8.count)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.memoryProvider = config.memoryProvider
+                    self.profiles = profiles
+                    self.activeProfile = profile
+                    self.memoryContent = memory
+                    self.userContent = user
+                    self.isLoading = false
+                }
             }
         }
     }

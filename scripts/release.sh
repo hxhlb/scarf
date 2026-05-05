@@ -221,6 +221,23 @@ FILE_LENGTH="$(echo "$SIG_OUTPUT" | sed -nE 's/.*length="([^"]+)".*/\1/p')"
 
 DOWNLOAD_URL="$DOWNLOAD_URL_BASE/v${VERSION}/Scarf-v${VERSION}-Universal.zip"
 PUB_DATE="$(LC_TIME=en_US.UTF-8 date -u +"%a, %d %b %Y %H:%M:%S +0000")"
+
+# Render RELEASE_NOTES.md to a Sparkle-friendly inline HTML fragment
+# and embed it as <description><![CDATA[…]]></description> on the
+# appcast item. Sparkle's standard update alert renders this in a
+# WebKit view so users see the release-specific "what's new" inside
+# the in-app update sheet, not just the version number. Falls back to
+# a placeholder line when the notes file is missing (matches the
+# `--notes-file` fallback behavior of `gh release create` below).
+RELEASE_NOTES_HTML=""
+if [[ -f "$NOTES_FILE" ]]; then
+  log "Render in-app release notes from $NOTES_FILE"
+  RELEASE_NOTES_HTML="$(python3 "$REPO_ROOT/tools/render-release-notes.py" "$NOTES_FILE")"
+fi
+if [[ -z "$RELEASE_NOTES_HTML" ]]; then
+  RELEASE_NOTES_HTML="<p>Release v${VERSION}. See the <a href=\"https://github.com/awizemann/scarf/releases/tag/v${VERSION}\">GitHub release page</a> for details.</p>"
+fi
+
 APPCAST_ITEM=$(cat <<EOF
     <item>
       <title>Version ${VERSION}</title>
@@ -228,6 +245,9 @@ APPCAST_ITEM=$(cat <<EOF
       <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.6</sparkle:minimumSystemVersion>
       <pubDate>${PUB_DATE}</pubDate>
+      <description><![CDATA[
+${RELEASE_NOTES_HTML}
+      ]]></description>
       <enclosure url="${DOWNLOAD_URL}"
                  sparkle:edSignature="${ED_SIGNATURE}"
                  length="${FILE_LENGTH}"

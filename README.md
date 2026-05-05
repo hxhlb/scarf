@@ -19,39 +19,52 @@
   <a href="https://www.buymeacoffee.com/awizemann"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="28"></a>
 </p>
 
-## What's New in 2.6
+## What's New in 2.7
 
-### Hermes v2026.4.30 (v0.12.0) catch-up
+The biggest release since 2.6 — six weeks of work focused on **remote-context performance**, a **new project authoring flow**, **dashboard widgets**, **OAuth resilience**, and a top-to-bottom **performance instrumentation harness** that drove the bulk of the rest. 36 commits, no schema bump, no Hermes capability bump.
 
-The largest single Hermes update Scarf has had to follow since v0.10's Tool Gateway. Every new surface is **capability-gated** through `HermesCapabilities` (parses `hermes --version` once per server) — on a v0.11 host, Scarf 2.6 looks identical to Scarf 2.5.2 and the new affordances are hidden.
+### Remote chats and Activity in seconds, not 30s timeouts
 
-- **Autonomous Curator (Mac sidebar + iOS panel).** `hermes curator` self-prunes / -consolidates the skill library on a 7-day cycle. Status panel, **Run Now / Pause / Resume** actions, three leaderboards (least-recently-active / most-active / least-active) with activity / use / view / patch counters, inline pin toggles, restore-archived sheet. Last-run REPORT.md renders inline. New "Curator" sidebar item under Interact (between Memory and Skills); ScarfGo gets a Curator nav row under System.
-- **Multimodal image input in chat.** Drag/drop, paste, or NSOpenPanel multi-pick on Mac; PhotosPicker on iOS (up to 5 images per message). `ImageEncoder` downsamples to 1568px long-edge JPEG q=0.85, **detached only** so encoding never blocks MainActor. Hermes routes the prompt to a vision-capable model automatically. Image-only sends are valid — vision models accept "describe this" with no caption.
-- **5 new inference providers** in the model picker — GMI Cloud, Azure AI Foundry, LM Studio (now first-class), MiniMax (OAuth), Tencent TokenHub. Provider IDs match `HERMES_OVERLAYS` in `hermes_cli/providers.py` exactly.
-- **Microsoft Teams + Yuanbao** as the 18th and 19th gateway platforms in the Platforms tab.
-- **Read-only Kanban view (Mac).** Paginated table over `hermes kanban list --json` filtered by status, with status badges, meta chips (id / assignee / workspace / skills), and 5s polling while foregrounded. Create / claim / dispatch UI is deferred until upstream stabilizes the multi-profile collab layer (which was reverted in v0.12).
-- **Skills v0.12 surface.** Direct-URL install (`hermes skills install <https-url>`) via a new "Install from URL…" toolbar button on Mac; reload via `hermes skills audit`; `skills.disabled` rendered as strikethrough + an "OFF" pill on Mac and iOS rows; Curator pin badge from `~/.hermes/skills/.curator_state` surfaced as a pin glyph.
-- **Cron — `--workdir` field (Mac).** Inject `AGENTS.md` / `CLAUDE.md` / `.cursorrules` from a working directory and pin cwd for terminal/file/code_exec tools. Scarf's CronJobEditor adds the field; both create and edit paths forward the flag.
-- **Settings deltas.** New **Caching & Redaction** section under Advanced — prompt cache TTL picker (5m / 1h), redact-secrets-in-patches toggle (now off by default on v0.12; flip back on here), runtime metadata footer toggle. TTS provider list gains **piper** (native local TTS); terminal backend list gains **vercel** (Vercel Sandbox).
-- **`auxiliary.curator` aux task.** Curator's review fork can run on a separate model from the main agent. `auxiliary.flush_memories` was removed in v0.12 — Scarf preserves the row on v0.11 hosts (inverse gate) and hides it on v0.12.
-- **ScarfGo catch-up.** Read-only Webhooks / Plugins / Profiles tabs parity-match the Mac surfaces (no mutating CLI verbs on the phone). Yellow Hermes-version banner nudges pre-v0.12 hosts to upgrade; renders only when the connected target is below v0.12.
+Resuming a chat or opening Activity on a slow remote (a 420ms-RTT droplet, an underprovisioned VPS, a tunnel through 4G) used to fetch the full message column set in one shot, which routinely tripped the 30s SSH timeout on chats with multi-page tool result blobs. v2.7 introduces a **skeleton-then-hydrate pattern** that bounds the wire payload by what the user actually needs to see RIGHT NOW, then fills in the heavy stuff in the background.
 
-### Chat fixes (post-merge round)
+- **Chat skeleton** — user + assistant rows only (skips `role='tool'`), `tool_calls` / `reasoning` hard-NULLed at SQL level. Wire payload bounded by conversational text. The chat appears in seconds. Background hydration pages tool calls in 5-id batches; tool-result CONTENT is opt-in (Settings → Display → "Load tool results in past chats", default off) with per-card lazy-fetch in the inspector pane.
+- **Activity skeleton** — metadata-only fetch (~3 KB for 50 rows). Placeholder rows render immediately; real per-call entries swap in as paged hydration completes.
+- **Single-id whale recovery** — when a 5-id batch trips the 30s timeout (one row carries an oversized `tool_calls` blob), an L1 single-id retry isolates the offender so the rest of the batch still hydrates.
 
-A focused pass over GitHub issue triage:
+### SSH cancellation that actually cancels
 
-- **Typing lag in the chat composer ([#67](https://github.com/awizemann/scarf/issues/67))** — `RichChatInputBar.updateMenuState()` was firing on every keystroke and writing two state vars per `.onChange`, tripping SwiftUI's "action tried to update multiple times per frame" warning. Composer now coalesces writes, short-circuits when the slash menu can't apply, and watches `commands.count` instead of allocating `commands.map(\.id)` per keystroke.
-- **Chat font-size slider now actually scales rich chat content ([#68](https://github.com/awizemann/scarf/issues/68))** — `\.dynamicTypeSize` couldn't reach the fixed-point ScarfFont tokens. New `\.chatFontScale` env value plumbed through bubbles, markdown, and code blocks.
-- **Placeholder ghosting on first keystroke ([#65](https://github.com/awizemann/scarf/issues/65))** — `TextEditor`'s NSTextView surfaces a typed glyph one frame before the SwiftUI binding propagates. Pinned an opaque background behind the placeholder rect; switched the conditional to `.opacity(...)` for view-tree stability.
-- **Draft text leaked between conversations ([#62](https://github.com/awizemann/scarf/issues/62))** — composer `@State` survived session switches because the surrounding view tree was structurally identical. Bound `RichChatInputBar`'s identity to `richChat.sessionId`.
-- **Sent message rendered blank after navigating away ([#63](https://github.com/awizemann/scarf/issues/63))** — `loadSessionHistory` atomically replaced messages from a state.db that hadn't yet flushed the user's row. New per-session pending-user-messages cache survives `reset()` and re-injects entries until the DB catches up.
-- **Background completion notifications ([#64](https://github.com/awizemann/scarf/issues/64))** — new `ChatNotificationService` fires a local UNUserNotificationCenter banner when a prompt completes while Scarf isn't the foreground app. Settings → Display → Feedback → "Notify when Hermes finishes" toggle, default on.
-- **Per-message TTS playback ([#66](https://github.com/awizemann/scarf/issues/66))** — small speaker glyph on each settled assistant bubble. Tap to read aloud through `AVSpeechSynthesizer` with the user's macOS Spoken Content default voice.
-- **ACP control-message timeout 30s → 60s ([#61](https://github.com/awizemann/scarf/issues/61))** — gives `initialize` / `session/new` / `session/load` headroom against gateway-induced state.db lock contention.
+`Task.detached` doesn't inherit cancellation from the awaiting parent. Pre-fix, navigating away from a chat left the underlying ssh subprocess running for the full 30s, pinning a remote sqlite query and a ControlMaster session — the "third chat hangs" / "dashboard spins after rapid switching" symptom. v2.7 wires `withTaskCancellationHandler` through `SSHScriptRunner.run` and `RemoteSQLiteBackend.query`; cancellation now reaches the `Process` within ~100ms.
 
-See the full [v2.6.0 release notes](https://github.com/awizemann/scarf/releases/tag/v2.6.0).
+### New Project from Scratch wizard + Keychain-backed cron secrets
 
-**Previous releases:** see the [Release Notes Index](https://github.com/awizemann/scarf/wiki/Release-Notes-Index) on the wiki for v2.5, v2.3, v2.2, v2.0, v1.6, and earlier.
+A third project entry point alongside Browse Catalog and Add Existing Project. Scaffolds a Scarf-standard skeleton, registers it, and hands off to a chat session that auto-activates the bundled `scarf-template-author` skill. The skill drives the rest conversationally — widgets, optional config schema, optional cron — and writes the final files itself.
+
+**Cron + Keychain.** Cron prompts that referenced `secret`-typed config fields used to get the literal `keychain://...` URI back, producing 401s. v2.7 mirrors resolved Keychain values into `~/.hermes/.env` under `$SCARF_<UPPER_SLUG>_<UPPER_FIELD>` env vars. Hermes already reloads `.env` per cron tick — credential rotation is automatic.
+
+### Project dashboards — file-reading widgets, sparklines, typed status
+
+Five new widget types and project-wide auto-refresh. **Backwards-compatible** — every existing `dashboard.json` renders byte-identically.
+
+- **`markdown_file`** / **`log_tail`** / **`cron_status`** / **`image`** / **`status_grid`** — file-reading widgets that auto-refresh when the underlying file changes. By convention, place files inside `<project>/.scarf/`.
+- **`stat` widget gains inline sparklines** via optional `sparkline: [Number]`. SVG-only render; dozens per dashboard cost nothing.
+- **Typed status badges** with lenient decode (`ok`/`up` → success, `down`/`error` → danger). Unknown strings render as plain text rather than crashing.
+- **Structured widget error card** replaces the legacy "Unknown: \<type\>" placeholder.
+
+### OAuth resilience + Credential Pools
+
+- **Daily OAuth keepalive cron** prevents Anthropic OAuth refresh tokens from expiring after weeks of inactivity.
+- **Remote re-auth** unblocked — OAuth flow drives a remote `hermes auth add` correctly with stdin forwarded.
+- **OAuth remove button** + auto-refresh of Credential Pools on `auth.json` change.
+- **`resolve_provider_client` errors** (auxiliary task references an unauthenticated provider) classified into a clear hint with a one-click jump to Settings → Aux Models.
+- **Model/provider mismatch banner** detects when `model.default` carries a `<provider>/...` prefix that disagrees with `model.provider`, with one-click fix in either direction.
+
+### ScarfMon — performance instrumentation harness
+
+The diagnostic surface that drove the bulk of the v2.7 perf work. Off by default; signpost-only mode (Instruments-friendly) is free; Full mode keeps a 4096-entry in-memory ring buffer you can copy as JSON for paste-into-issue diagnosis. Wiki: [Performance-Monitoring](https://github.com/awizemann/scarf/wiki/Performance-Monitoring).
+
+See the full [v2.7.0 release notes](https://github.com/awizemann/scarf/releases/tag/v2.7.0) for the complete list (36 commits, including: in-flight coalescing for `loadRecentSessions`, snapshot pipeline rewrite from `sqlite3 .backup` to direct SSH-streamed queries [#74](https://github.com/awizemann/scarf/issues/74), per-message TTS, window-position persistence, sidebar reorder, and many other fixes).
+
+**Previous releases:** see the [Release Notes Index](https://github.com/awizemann/scarf/wiki/Release-Notes-Index) on the wiki for v2.6, v2.5, v2.3, v2.2, v2.0, v1.6, and earlier.
 
 ## ScarfGo — the iPhone companion
 

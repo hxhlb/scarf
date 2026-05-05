@@ -55,6 +55,31 @@ struct ChatSessionListPane: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, ScarfSpace.s2)
             }
+            // While a session is mid-boot the SSH tunnel is bottlenecked
+            // on the in-flight start/load — letting the user queue up a
+            // second session-switch ends with both fights racing for
+            // the same backend (we've seen the small fast chat lose to
+            // a 30s timeout from the prior big chat). Disable the
+            // entire pane (taps + visual) during prep, plus a
+            // ProgressView so the cause is obvious. v2.8.
+            .disabled(chatViewModel.isPreparingSession)
+            .opacity(chatViewModel.isPreparingSession ? 0.55 : 1.0)
+            .overlay {
+                if chatViewModel.isPreparingSession {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(chatViewModel.acpStatus.isEmpty ? "Loading…" : chatViewModel.acpStatus)
+                            .scarfStyle(.caption)
+                            .foregroundStyle(ScarfColor.foregroundMuted)
+                    }
+                    .padding(.horizontal, ScarfSpace.s3)
+                    .padding(.vertical, ScarfSpace.s2)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(.bottom, ScarfSpace.s5)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .allowsHitTesting(false)
+                }
+            }
             footer
         }
         .background(ScarfColor.backgroundTertiary)

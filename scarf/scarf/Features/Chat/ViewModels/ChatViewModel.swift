@@ -48,6 +48,17 @@ final class ChatViewModel {
     @ObservationIgnored
     private var sessionsRefreshTask: Task<Void, Never>?
 
+    /// L2 (v2.8) — in-flight coalescing handle for `loadRecentSessions`.
+    /// On a slow remote each load is a 1.5–2.5s SSH round-trip; the
+    /// 500 ms `scheduleSessionsRefresh` debounce only suppresses a
+    /// pending tick, not one that's already executing. Without this
+    /// guard, file-watcher deltas during a stream stack 2–3 parallel
+    /// loadRecentSessions tasks (observed at t=305844 in 2026-05-05
+    /// dogfooding). The in-flight pointer lets a second caller await
+    /// the active task instead of spawning another SSH subprocess.
+    @ObservationIgnored
+    private var inFlightSessionLoad: Task<Void, Never>?
+
     /// Per-recent-session project attribution. Keyed by `HermesSession.id`,
     /// value is the project's display name. Populated alongside
     /// `recentSessions` via a single batched read in `loadRecentSessions()`.
@@ -122,21 +133,57 @@ final class ChatViewModel {
     var isACPConnected: Bool { acpClient != nil && hasActiveProcess }
     var acpStatus: String = ""
 
+    /// User-facing status strings that all map to "the session is in
+    /// the middle of being established." Centralized so the toolbar
+    /// status pill, the chat-pane loader, and `ChatSessionListPane`'s
+    /// click-gating stay in sync. v2.8 added `loadingHistory` after
+    /// the user reported the chat looked engageable while the
+    /// 30-second `fetchMessages` was still in flight on a slow remote.
+    static let preparingPhases: Set<String> = [
+        ACPPhase.spawning,
+        ACPPhase.authenticating,
+        ACPPhase.creatingSession,
+        ACPPhase.creatingNewSession,
+        ACPPhase.loadingSession,
+        ACPPhase.loadingHistory
+    ]
+
+    enum ACPPhase {
+        static let spawning = "Spawning hermes acp…"
+        static let authenticating = "Authenticating…"
+        static let creatingSession = "Creating session…"
+        static let creatingNewSession = "Creating new session…"
+        static let loadingSession = "Loading session…"
+        static let loadingHistory = "Loading history…"
+        static let ready = "Ready"
+        static let agentWorking = "Agent working…"
+        static let cancelled = "Cancelled"
+        static let failed = "Failed"
+        static let error = "Error"
+        static let connectionLost = "Connection lost"
+    }
+
+    /// Set true the moment the user kicks off a session-start path
+    /// (resume / new / continue), cleared when the ACP session is
+    /// fully ready or has failed. Decoupled from `hasActiveProcess`
+    /// — that flag only flips true AFTER `client.start()` succeeds,
+    /// which on remote contexts is a 5–7s window where the user sees
+    /// nothing happening even though they've just clicked. v2.8 —
+    /// fixes the gap between row-click and overlay-appears that
+    /// the user reported in 2026-05-05 dogfooding.
+    var isStartingSession: Bool = false
+
     /// True while a session is being established or restored — from the user
     /// kicking off "start chat" or "resume session" until the ACP session is
     /// ready for messages. The chat pane uses this to show a loader in place
-    /// of the empty-state placeholder.
+    /// of the empty-state placeholder; `ChatSessionListPane` uses it to
+    /// disable session-row taps so the user can't queue up a second
+    /// switch while the first is still mid-boot (v2.8).
     var isPreparingSession: Bool {
+        if isStartingSession { return true }
         guard hasActiveProcess else { return false }
-        switch acpStatus {
-        case "Starting...",
-             "Creating session...",
-             "Creating new session...",
-             "Loading session...":
-            return true
-        default:
-            return acpStatus.hasPrefix("Reconnecting")
-        }
+        if Self.preparingPhases.contains(acpStatus) { return true }
+        return acpStatus.hasPrefix("Reconnecting")
     }
     /// Error triplet moved to RichChatViewModel in M7 #2 so ScarfGo can
     /// share the same banner. These are forwarding accessors to keep
@@ -159,6 +206,16 @@ final class ChatViewModel {
     }
     /// True when `hasAnyAICredential()` returned false at last preflight.
     var missingCredentials: Bool = false
+
+    /// `model.default` / `model.provider` mismatch detected by the
+    /// last `refreshConfigDiagnostics` pass. Drives the "Configuration
+    /// mismatch" banner in `errorBanner`. Nil when config is coherent
+    /// or unset. v2.8 — observed in dogfooding when switching OAuth
+    /// providers via Credential Pools left a stale model prefix
+    /// behind (e.g. `model.default: anthropic/...` with
+    /// `model.provider: nous`); chats died with `-32603 Internal error`
+    /// at first prompt with no diagnostic.
+    var modelProviderMismatch: ModelPreflight.Mismatch?
 
     /// Set when chat-start is blocked because the active server's
     /// `config.yaml` has no `model.default` / `model.provider`. The chat
@@ -191,6 +248,72 @@ final class ChatViewModel {
         missingCredentials = !fileService.hasAnyAICredential()
     }
 
+    /// Re-reads config.yaml and refreshes the
+    /// `model.default` / `model.provider` mismatch state. Off-MainActor
+    /// because `loadConfig()` is a synchronous file read (and an SSH
+    /// round-trip on remote contexts). Safe to call from `.task` or
+    /// after a write that would have changed config.
+    func refreshConfigDiagnostics() {
+        let svc = fileService
+        Task.detached { [weak self] in
+            let config = svc.loadConfig()
+            let mismatch = ModelPreflight.detectMismatch(config)
+            await MainActor.run { [weak self] in
+                self?.modelProviderMismatch = mismatch
+            }
+        }
+    }
+
+    /// Persist a one-click mismatch fix. Aligns `model.provider` to the
+    /// prefix carried in `model.default` (the user's "I just authed
+    /// against this provider, that's what the prefix means" intent).
+    /// Triggers a config-diagnostics refresh on completion to clear the
+    /// banner if the write took. Failures fall through to the existing
+    /// `acpError` banner so the user sees something happened.
+    func alignProviderToModelPrefix(_ mismatch: ModelPreflight.Mismatch) {
+        let svc = fileService
+        Task.detached { [weak self] in
+            // We pass the bare model so config.yaml ends up with a
+            // clean (provider-prefix-free) model name alongside the
+            // matching provider — matches what `confirmModelPreflight`
+            // writes for a fresh setup.
+            let ok = svc.setModelAndProvider(
+                model: mismatch.bareModel,
+                provider: mismatch.prefixProvider
+            )
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if ok {
+                    self.modelProviderMismatch = nil
+                } else {
+                    self.acpError = "Couldn't write the new provider to config.yaml. Open Settings to fix manually."
+                }
+            }
+        }
+    }
+
+    /// Persist the inverse mismatch fix — strip the provider prefix
+    /// off `model.default` and keep `model.provider` as the active
+    /// authoritative value. Use case: the user genuinely intended to
+    /// switch their active provider and the stale prefix is the bug.
+    func stripPrefixFromModelDefault(_ mismatch: ModelPreflight.Mismatch) {
+        let svc = fileService
+        Task.detached { [weak self] in
+            let ok = svc.setModelAndProvider(
+                model: mismatch.bareModel,
+                provider: mismatch.activeProvider
+            )
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if ok {
+                    self.modelProviderMismatch = nil
+                } else {
+                    self.acpError = "Couldn't rewrite model.default in config.yaml. Open Settings to fix manually."
+                }
+            }
+        }
+    }
+
     /// Forwarders to the ScarfCore implementation so the error-banner
     /// state lives in one place (M7 #2). The per-site logging label
     /// stays here — only the storage is shared.
@@ -218,6 +341,12 @@ final class ChatViewModel {
     /// Terminal mode ignores the prompt — the wizard runs in rich-chat
     /// only.
     func startNewSession(projectPath: String?, initialPrompt: String?) {
+        // Flip the loading flag synchronously on the user's tap so
+        // SwiftUI paints the session-list overlay on the same tick
+        // — `startACPSession` won't reach `acpStatus = .spawning`
+        // until the Task body runs, which on remote contexts is
+        // multiple seconds after the click. v2.8.
+        isStartingSession = true
         voiceEnabled = false
         ttsEnabled = false
         isRecording = false
@@ -248,6 +377,7 @@ final class ChatViewModel {
     }
 
     func resumeSession(_ sessionId: String) {
+        isStartingSession = true
         voiceEnabled = false
         ttsEnabled = false
         isRecording = false
@@ -262,6 +392,7 @@ final class ChatViewModel {
     }
 
     func continueLastSession() {
+        isStartingSession = true
         voiceEnabled = false
         ttsEnabled = false
         isRecording = false
@@ -272,6 +403,7 @@ final class ChatViewModel {
             Task { @MainActor in
                 let opened = await dataService.open()
                 if !opened {
+                    isStartingSession = false
                     acpError = context.isRemote
                         ? "Couldn't reach \(context.displayName). Check the SSH connection and try again."
                         : "Couldn't open the Hermes state database."
@@ -334,6 +466,7 @@ final class ChatViewModel {
     /// between the DB read and ACP `session/load`, producing a silent prompt
     /// failure with no UI feedback.
     private func autoStartACPAndSend(text: String, images: [ChatImageAttachment] = []) {
+        isStartingSession = true
         // Show the user message immediately
         richChatViewModel.addUserMessage(text: text)
 
@@ -344,8 +477,9 @@ final class ChatViewModel {
             self.acpClient = client
 
             do {
+                acpStatus = ACPPhase.spawning
                 try await client.start()
-                acpStatus = await client.statusMessage
+                acpStatus = ACPPhase.authenticating
                 startACPEventLoop(client: client)
                 startHealthMonitor(client: client)
 
@@ -355,21 +489,22 @@ final class ChatViewModel {
 
                 let resolvedSessionId: String
                 if let existing = sessionToResume {
-                    acpStatus = "Loading session..."
+                    acpStatus = ACPPhase.loadingSession
                     do {
                         resolvedSessionId = try await client.loadSession(cwd: cwd, sessionId: existing)
                     } catch {
                         logger.info("Session \(existing) not found in ACP, creating new session")
-                        acpStatus = "Creating new session..."
+                        acpStatus = ACPPhase.creatingNewSession
                         resolvedSessionId = try await client.newSession(cwd: cwd)
                     }
                 } else {
-                    acpStatus = "Creating session..."
+                    acpStatus = ACPPhase.creatingSession
                     resolvedSessionId = try await client.newSession(cwd: cwd)
                 }
 
                 richChatViewModel.setSessionId(resolvedSessionId)
-                acpStatus = "Connected (\(resolvedSessionId.prefix(12)))"
+                acpStatus = ACPPhase.ready
+                isStartingSession = false
 
                 // Surface the freshly-created session in the chat
                 // sidebar immediately. We can't lean on the file
@@ -382,7 +517,8 @@ final class ChatViewModel {
                 // Now send the queued prompt
                 sendViaACP(client: client, text: text, images: images)
             } catch {
-                acpStatus = "Failed"
+                acpStatus = ACPPhase.failed
+                isStartingSession = false
                 await recordACPFailure(error, client: client, context: "Auto-start ACP failed")
                 hasActiveProcess = false
                 acpClient = nil
@@ -454,14 +590,14 @@ final class ChatViewModel {
                 }
             }
         } else {
-            acpStatus = "Agent working..."
+            acpStatus = ACPPhase.agentWorking
         }
         acpPromptTask = Task { @MainActor in
             do {
                 let result = try await ScarfMon.measureAsync(.chatStream, "mac.sendPrompt") {
                     try await client.sendPrompt(sessionId: sessionId, text: wireText, images: images)
                 }
-                acpStatus = "Ready"
+                acpStatus = ACPPhase.ready
                 richChatViewModel.handleACPEvent(
                     .promptComplete(sessionId: sessionId, response: result)
                 )
@@ -483,9 +619,9 @@ final class ChatViewModel {
                     )
                 }
             } catch is CancellationError {
-                acpStatus = "Cancelled"
+                acpStatus = ACPPhase.cancelled
             } catch {
-                acpStatus = "Error"
+                acpStatus = ACPPhase.error
                 await recordACPFailure(error, client: client, context: "ACP prompt failed")
                 richChatViewModel.handleACPEvent(
                     .promptComplete(sessionId: sessionId, response: ACPPromptResult(
@@ -508,6 +644,10 @@ final class ChatViewModel {
         ScarfMon.event(.sessionLoad, "mac.startACPSession", count: 1)
         stopACP()
         clearACPErrorState()
+        // stopACP() clears `isStartingSession` (it's a generic teardown
+        // helper used by disconnect paths too). Re-arm it here so the
+        // session-list overlay stays up through the entire boot.
+        isStartingSession = true
 
         // Pre-flight: bail before opening any ACP plumbing if the
         // active server's `config.yaml` has no primary model or
@@ -522,10 +662,11 @@ final class ChatViewModel {
             modelPreflightReason = preflight.reason
             acpStatus = ""
             hasActiveProcess = false
+            isStartingSession = false
             return
         }
 
-        acpStatus = "Starting..."
+        acpStatus = ACPPhase.spawning
 
         let client = ACPClient.forMacApp(context: context)
         self.acpClient = client
@@ -564,7 +705,7 @@ final class ChatViewModel {
             do {
                 // Start ACP process and event loop FIRST
                 try await client.start()
-                acpStatus = await client.statusMessage
+                acpStatus = ACPPhase.authenticating
                 startACPEventLoop(client: client)
                 startHealthMonitor(client: client)
 
@@ -588,26 +729,34 @@ final class ChatViewModel {
 
                 let resolvedSessionId: String
                 if let sessionId {
-                    acpStatus = "Loading session..."
+                    acpStatus = ACPPhase.loadingSession
                     do {
                         resolvedSessionId = try await client.loadSession(cwd: cwd, sessionId: sessionId)
                     } catch {
                         logger.info("Session \(sessionId) not found in ACP, creating new session with history")
-                        acpStatus = "Creating new session..."
+                        acpStatus = ACPPhase.creatingNewSession
                         resolvedSessionId = try await client.newSession(cwd: cwd)
                     }
-                    // Load messages from both origin CLI session and ACP session
+                    // Surface "Loading history…" before the (potentially
+                    // 30s) message-history fetch fires. Pre-fix the user
+                    // saw "Loading session…" through start(), then jump
+                    // straight to "Ready" the moment the bytes hit the
+                    // pane — but the actual hydrate is the slowest step
+                    // on a remote and the pane looked engageable while
+                    // the SQLite query was still pending. v2.8.
+                    acpStatus = ACPPhase.loadingHistory
                     await richChatViewModel.loadSessionHistory(
                         sessionId: sessionId,
                         acpSessionId: resolvedSessionId
                     )
                 } else {
-                    acpStatus = "Creating session..."
+                    acpStatus = ACPPhase.creatingSession
                     resolvedSessionId = try await client.newSession(cwd: cwd)
                 }
 
                 richChatViewModel.setSessionId(resolvedSessionId)
-                acpStatus = "Connected (\(resolvedSessionId.prefix(12)))"
+                acpStatus = ACPPhase.ready
+                isStartingSession = false
 
                 // Attribute this session to the project it was started
                 // under, so the per-project Sessions tab can surface it
@@ -685,7 +834,8 @@ final class ChatViewModel {
                     sendViaACP(client: client, text: prompt, images: [])
                 }
             } catch {
-                acpStatus = "Failed"
+                acpStatus = ACPPhase.failed
+                isStartingSession = false
                 await recordACPFailure(error, client: client, context: "Failed to start ACP session")
                 hasActiveProcess = false
                 acpClient = nil
@@ -702,7 +852,12 @@ final class ChatViewModel {
                 ScarfMon.measure(.chatStream, "mac.handleACPEvent") {
                     self?.richChatViewModel.handleACPEvent(event)
                 }
-                self?.acpStatus = await client.statusMessage
+                // Don't overwrite a phase-typed acpStatus with the
+                // ACP-side "Connected" string mid-stream; we promote
+                // to ready/agentWorking from the call sites that own
+                // the lifecycle. The event-loop side-effect is
+                // the heartbeat — leave acpStatus alone here.
+                _ = await client.statusMessage
             }
             // Stream ended — if we weren't cancelled, the connection died
             if !Task.isCancelled {
@@ -768,7 +923,7 @@ final class ChatViewModel {
             for attempt in 1...Self.maxReconnectAttempts {
                 guard !Task.isCancelled else { return }
 
-                acpStatus = "Reconnecting (\(attempt)/\(Self.maxReconnectAttempts))..."
+                acpStatus = "Reconnecting (\(attempt)/\(Self.maxReconnectAttempts))…"
                 logger.info("Reconnect attempt \(attempt)/\(Self.maxReconnectAttempts) for session \(sessionId)")
 
                 // Backoff delay (skip on first attempt for fast recovery)
@@ -805,7 +960,7 @@ final class ChatViewModel {
                     // Reconcile in-memory messages with what Hermes persisted to DB
                     await richChatViewModel.reconcileWithDB(sessionId: resolvedSessionId)
 
-                    acpStatus = "Reconnected (\(resolvedSessionId.prefix(12)))"
+                    acpStatus = ACPPhase.ready
                     clearACPErrorState()
 
                     startACPEventLoop(client: client)
@@ -830,7 +985,7 @@ final class ChatViewModel {
 
     private func showConnectionFailure() {
         richChatViewModel.handleACPEvent(.connectionLost(reason: "The ACP process terminated unexpectedly"))
-        acpStatus = "Connection lost"
+        acpStatus = ACPPhase.connectionLost
         clearACPErrorState()
         acpError = "Connection lost. Use the Session menu to reconnect."
     }
@@ -850,6 +1005,7 @@ final class ChatViewModel {
         acpClient = nil
         hasActiveProcess = false
         isHandlingDisconnect = false
+        isStartingSession = false
     }
 
     // MARK: - Model preflight
@@ -935,6 +1091,25 @@ final class ChatViewModel {
     }
 
     func loadRecentSessions() async {
+        // L2 (v2.8) — coalesce against an in-flight load. If one's
+        // already running, await its completion instead of spawning a
+        // parallel one. Drops the 2-3× contention seen during file-
+        // watcher streams.
+        if let existing = inFlightSessionLoad {
+            ScarfMon.event(.sessionLoad, "mac.loadRecentSessions.coalesced", count: 1)
+            await existing.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performLoadRecentSessions()
+        }
+        inFlightSessionLoad = task
+        await task.value
+        inFlightSessionLoad = nil
+    }
+
+    private func performLoadRecentSessions() async {
         // Measure the full wall-clock cost of a sessions sidebar reload,
         // from DB open through the off-main attribution read to the final
         // observable assignment. Surfaces fetch regressions and SQLite

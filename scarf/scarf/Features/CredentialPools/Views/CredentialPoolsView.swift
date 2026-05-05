@@ -590,6 +590,22 @@ private struct AddCredentialSheet: View {
     /// regular `OAuthFlowController` silently stalls, so we route Nous
     /// through ``NousSignInSheet`` instead.
     @State private var showNousSignIn: Bool = false
+    /// Provider/model swap prompt presented after a successful OAuth.
+    /// Captures the just-authed provider and the active config so the
+    /// confirm sheet can show the user what's about to change. Nil
+    /// when no swap is offered (already aligned, or user dismissed).
+    @State private var pendingProviderSwap: PendingProviderSwap?
+
+    /// Snapshot of the post-OAuth state used to render the
+    /// "Switch active provider?" sheet. Frozen at the moment OAuth
+    /// succeeded so the sheet stays consistent if config.yaml is
+    /// edited concurrently.
+    private struct PendingProviderSwap: Identifiable {
+        let id = UUID()
+        let newProvider: String
+        let currentProvider: String
+        let currentModelDefault: String
+    }
 
     private var catalog: ModelCatalogService { ModelCatalogService(context: viewModel.context) }
 
@@ -633,11 +649,43 @@ private struct AddCredentialSheet: View {
         // off `succeeded` which the controller sets only when hermes exited
         // zero AND the output has no failure markers. The 0.8s delay lets the
         // user see the success banner before the sheet disappears.
+        //
+        // v2.8 — before auto-dismissing, check whether the just-authed
+        // provider matches `model.provider` in config.yaml. If they
+        // disagree, surface the "Switch active provider?" sheet so the
+        // user doesn't have to dig into Settings to make the new
+        // credentials actually drive chats. Detected entirely on the
+        // detached read; only the present-sheet branch keeps the user
+        // from auto-dismissing.
         .onChange(of: viewModel.oauthFlow.succeeded) { _, newValue in
             guard newValue else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                onDismiss()
+            let trimmedProvider = providerID.trimmingCharacters(in: .whitespaces)
+            let ctx = viewModel.context
+            Task.detached {
+                let svc = HermesFileService(context: ctx)
+                let config = svc.loadConfig()
+                let activeProvider = config.provider.trimmingCharacters(in: .whitespaces)
+                let modelDefault = config.model.trimmingCharacters(in: .whitespaces)
+                let needsSwap = !trimmedProvider.isEmpty
+                    && !activeProvider.isEmpty
+                    && trimmedProvider.caseInsensitiveCompare(activeProvider) != .orderedSame
+                await MainActor.run {
+                    if needsSwap {
+                        pendingProviderSwap = PendingProviderSwap(
+                            newProvider: trimmedProvider,
+                            currentProvider: activeProvider,
+                            currentModelDefault: modelDefault
+                        )
+                    } else {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            onDismiss()
+                        }
+                    }
+                }
             }
+        }
+        .sheet(item: $pendingProviderSwap) { swap in
+            providerSwapSheet(swap: swap)
         }
         // Nous sign-in is a parallel flow that bypasses OAuthFlowController.
         // When it completes, the parent list refreshes from auth.json just
@@ -936,6 +984,61 @@ private struct AddCredentialSheet: View {
                 }
             }
         }
+    }
+
+    /// "Switch active provider?" sheet shown after a successful OAuth
+    /// when the just-authed provider doesn't match `model.provider` in
+    /// config.yaml. Without this, the user has to remember to open
+    /// Settings and swap the provider manually — they'd otherwise hit
+    /// the v2.8 mismatch banner on the very next chat. v2.8.
+    private func providerSwapSheet(swap: PendingProviderSwap) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Switch active provider to \(swap.newProvider)?")
+                        .font(.headline)
+                    Text("`\(swap.newProvider)` is now authenticated, but `model.provider` in config.yaml is still `\(swap.currentProvider)`.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            if !swap.currentModelDefault.isEmpty {
+                Text("Current `model.default`: `\(swap.currentModelDefault)` — Hermes will pick a default for `\(swap.newProvider)` if you switch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Button("Keep \(swap.currentProvider)") {
+                    pendingProviderSwap = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { onDismiss() }
+                }
+                Spacer()
+                Button("Switch to \(swap.newProvider)") {
+                    let target = swap.newProvider
+                    let ctx = viewModel.context
+                    pendingProviderSwap = nil
+                    Task.detached {
+                        let svc = HermesFileService(context: ctx)
+                        // Empty model lets Hermes pick its own default
+                        // for the new provider — matches the Nous Portal
+                        // path and avoids re-introducing a stale prefix.
+                        _ = svc.setModelAndProvider(model: "", provider: target)
+                        await MainActor.run {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { onDismiss() }
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 460)
     }
 
     /// Gate-aware OAuth primary action. For PKCE providers it's the

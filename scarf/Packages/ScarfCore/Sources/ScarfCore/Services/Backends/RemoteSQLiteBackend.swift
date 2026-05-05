@@ -182,7 +182,10 @@ public actor RemoteSQLiteBackend: HermesQueryBackend {
         // the dedup actually fires in the wild.
         if let existing = inFlightQueries[inlined] {
             ScarfMon.event(.sqlite, "query.coalesced", count: 1)
-            return try await existing.value
+            return try await withTaskCancellationHandler(
+                operation: { try await existing.value },
+                onCancel: { existing.cancel() }
+            )
         }
         let task = Task<[Row], Error> { [self] in
             try await ScarfMon.measureAsync(.sqlite, "query") {
@@ -208,7 +211,20 @@ public actor RemoteSQLiteBackend: HermesQueryBackend {
         }
         inFlightQueries[inlined] = task
         defer { inFlightQueries[inlined] = nil }
-        return try await task.value
+        // v2.8 — propagate parent task cancellation INTO the
+        // unstructured `task`. `Task<...>{ ... }` doesn't inherit
+        // cancellation from the awaiting context, so without this a
+        // cancelled chat-hydration / dashboard-refresh would keep
+        // the ssh subprocess alive for the full 30s queryTimeout
+        // — pinning a remote sqlite query and a ControlMaster
+        // session slot. With the bridge, the inner task's awaits
+        // see a cancelled parent and `SSHScriptRunner.run`'s own
+        // cancellation handler (v2.8) kills the ssh process inside
+        // the next 100ms poll.
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
     }
 
     public func queryBatch(_ statements: [(sql: String, params: [SQLValue])]) async throws -> [[Row]] {

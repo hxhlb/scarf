@@ -53,4 +53,45 @@ public enum ModelPreflight: Sendable {
         let trimmed = value.trimmingCharacters(in: .whitespaces).lowercased()
         return trimmed.isEmpty || trimmed == "unknown"
     }
+
+    /// Result of a `model.default` ↔ `model.provider` mismatch check.
+    /// Captures the case where `model.default` carries a `<provider>/...`
+    /// prefix that doesn't match the standalone `model.provider` key —
+    /// observed in 2026-05-05 dogfooding when switching OAuth providers
+    /// via Credential Pools left the prior provider's model name
+    /// stranded in `model.default`. Hermes can't reconcile the two and
+    /// chats die with an opaque `-32603 Internal error` at first prompt.
+    public struct Mismatch: Sendable, Equatable {
+        /// The provider prefix found in `model.default` (e.g. `"anthropic"`).
+        public let prefixProvider: String
+        /// The standalone `model.provider` value (e.g. `"nous"`).
+        public let activeProvider: String
+        /// The full `model.default` string as configured.
+        public let modelDefault: String
+        /// The bare model id (with the prefix stripped) — what the user
+        /// would see if Scarf rewrites `model.default` for them.
+        public let bareModel: String
+    }
+
+    /// Detect a `model.default` / `model.provider` mismatch. Returns
+    /// `nil` when there's no provider prefix on `model.default`, when
+    /// either field is unset, or when the prefix matches the provider.
+    /// Uses case-insensitive comparison — Hermes accepts both
+    /// `Anthropic/...` and `anthropic/...` casings in the wild.
+    public static func detectMismatch(_ config: HermesConfig) -> Mismatch? {
+        let modelDefault = config.model.trimmingCharacters(in: .whitespaces)
+        let activeProvider = config.provider.trimmingCharacters(in: .whitespaces)
+        guard !isUnset(modelDefault), !isUnset(activeProvider) else { return nil }
+        guard let slash = modelDefault.firstIndex(of: "/") else { return nil }
+        let prefix = String(modelDefault[..<slash])
+        let bare = String(modelDefault[modelDefault.index(after: slash)...])
+        guard !prefix.isEmpty, !bare.isEmpty else { return nil }
+        guard prefix.caseInsensitiveCompare(activeProvider) != .orderedSame else { return nil }
+        return Mismatch(
+            prefixProvider: prefix,
+            activeProvider: activeProvider,
+            modelDefault: modelDefault,
+            bareModel: bare
+        )
+    }
 }

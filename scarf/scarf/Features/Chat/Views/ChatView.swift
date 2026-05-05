@@ -48,6 +48,7 @@ struct ChatView: View {
         .task {
             await viewModel.loadRecentSessions()
             viewModel.refreshCredentialPreflight()
+            viewModel.refreshConfigDiagnostics()
             // Cold-launch handoff: if the user clicked "New Chat" on
             // a project before ChatView had a chance to render, the
             // coordinator was already populated. Consume the request
@@ -136,6 +137,15 @@ struct ChatView: View {
         if viewModel.richChatViewModel.isStreamingThoughtsOnly {
             return "Thinking…"
         }
+        // v2.8 — promote the otherwise-ready status to a more honest
+        // "Loading tool details…" while the two-phase loader's
+        // background hydration is still pulling tool_calls JSON and
+        // tool result rows. The bare conversation transcript is
+        // already on screen; this just tells the user that the
+        // missing tool cards / result bodies are on their way.
+        if viewModel.richChatViewModel.isHydratingTools {
+            return "Loading tool details…"
+        }
         return viewModel.acpStatus.isEmpty ? "Active" : viewModel.acpStatus
     }
 
@@ -222,6 +232,50 @@ struct ChatView: View {
                     Text("Add credentials in **Configure → Credential Pools**, set `ANTHROPIC_API_KEY` (or similar) in `~/.hermes/.env`, or export it in your shell profile, then restart Scarf.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(Color.orange.opacity(0.08))
+            .overlay(
+                Rectangle()
+                    .fill(Color.orange.opacity(0.25))
+                    .frame(height: 1),
+                alignment: .bottom
+            )
+        } else if let mismatch = viewModel.modelProviderMismatch, !viewModel.hasActiveProcess {
+            // Provider/model mismatch — `model.default` carries one
+            // provider prefix while `model.provider` names another.
+            // Hermes can't reconcile and the chat dies with -32603 at
+            // first prompt. v2.8 surfaces a one-click fix for both
+            // directions: align provider to the model's prefix
+            // (likely the user just authed against `prefixProvider`),
+            // or strip the prefix to keep the active provider intact.
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Model/provider mismatch in config.yaml")
+                        .font(.callout)
+                    Text("`model.default` is `\(mismatch.modelDefault)` but `model.provider` is `\(mismatch.activeProvider)`. Chats will fail at first prompt until this is reconciled.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    HStack(spacing: 6) {
+                        Button("Use \(mismatch.prefixProvider)") {
+                            viewModel.alignProviderToModelPrefix(mismatch)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .help("Set model.provider = \(mismatch.prefixProvider) and model.default = \(mismatch.bareModel).")
+                        Button("Keep \(mismatch.activeProvider)") {
+                            viewModel.stripPrefixFromModelDefault(mismatch)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Strip the prefix from model.default, leaving model.provider = \(mismatch.activeProvider).")
+                    }
+                    .padding(.top, 2)
                 }
                 Spacer()
             }

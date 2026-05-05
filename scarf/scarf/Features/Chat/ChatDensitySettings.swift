@@ -1,4 +1,5 @@
 import SwiftUI
+import ScarfCore
 
 /// Scarf-local chat rendering preferences (issues #47 / #48).
 ///
@@ -22,6 +23,16 @@ enum ChatDensityKeys {
     /// When hidden, clicking a tool card auto-flips it back on so the
     /// click does what the user expects (`ToolCallCard.onFocus`). Issue #58.
     static let showInspector    = "scarf.chat.showInspector"
+    /// v2.8 — opt-in auto-fetch of tool result CONTENT in past chats.
+    /// Defaults FALSE because a single tool result blob (file dump,
+    /// stack trace) can be hundreds of KB; bulk-fetching all of them
+    /// during chat resume on a slow remote can blow past the 30s SSH
+    /// timeout (observed in 2026-05-05 dogfooding). When false, tool
+    /// CALL cards still render (the `tool_calls` JSON path is bounded
+    /// and fast); only the inspector pane's "Output" section is empty
+    /// until the user expands a card, at which point we lazy-fetch
+    /// just that single result via `fetchToolResult(callId:)`.
+    static let loadHistoricalToolResults = RichChatViewModel.loadHistoricalToolResultsKey
 }
 
 /// How `RichMessageBubble` renders the per-call tool widgets.

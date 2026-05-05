@@ -167,6 +167,33 @@ public actor HermesDataService {
         return cols
     }
 
+    /// Skeleton column set for the v2.8 two-phase chat loader. Returns
+    /// EVERYTHING needed to render a user-or-assistant bubble — id,
+    /// role, content, timestamp, token_count, finish_reason — but
+    /// hard-NULLs the heavy content-bearing columns (`tool_calls`,
+    /// `reasoning`, `reasoning_content`) at the SQL level so the wire
+    /// payload is bounded by the conversational text alone. A
+    /// 30-message session with multi-page tool result blobs that
+    /// previously timed out the 30s SSH budget reduces here to a few
+    /// KB. The chat appears in seconds; tool details fill in via
+    /// `hydrateAssistantToolCalls(...)` and `hydrateToolResults(...)`
+    /// in the background.
+    ///
+    /// The schema-shape match against `messageFromRow` is exact —
+    /// same column ordering as `messageColumnsLight`. The literal
+    /// NULLs let messageFromRow's defaulting paths fill empty
+    /// arrays / nils without any callee changes.
+    private var messageColumnsSkeleton: String {
+        var cols = """
+            id, session_id, role, content, tool_call_id, NULL AS tool_calls,
+            tool_name, timestamp, token_count, finish_reason
+            """
+        if hasV07Schema {
+            cols += ", NULL AS reasoning"
+        }
+        return cols
+    }
+
     // MARK: - Session Queries
 
     public func fetchSessions(limit: Int = QueryDefaults.sessionLimit) async -> [HermesSession] {
@@ -213,6 +240,22 @@ public actor HermesDataService {
         limit: Int,
         before: Int? = nil
     ) async -> [HermesMessage] {
+        await fetchMessagesOutcome(sessionId: sessionId, limit: limit, before: before).messages
+    }
+
+    /// Outcome-returning variant of `fetchMessages`. Distinguishes a
+    /// successful empty result (genuinely zero rows) from a transport
+    /// failure (SSH timeout, ControlMaster drop) so callers can decide
+    /// whether to silently render the rows or surface a "couldn't load
+    /// full history" banner. The plain `fetchMessages` shape stays so
+    /// background paths (reconcile, polling, sessions detail) keep
+    /// their silent-best-effort behavior — only the chat-resume path
+    /// asks for the outcome.
+    public func fetchMessagesOutcome(
+        sessionId: String,
+        limit: Int,
+        before: Int? = nil
+    ) async -> MessageFetchOutcome {
         await ScarfMon.measureAsync(.sessionLoad, "mac.fetchMessages") {
             // Use the lite column set — excludes reasoning_content which
             // can be 20+ KB per message on thinking-model sessions and
@@ -235,8 +278,208 @@ public actor HermesDataService {
                 // is DESC for the LIMIT to bite the newest rows, so reverse.
                 let messages = rows.map { messageFromRow($0) }.reversed() as [HermesMessage]
                 ScarfMon.event(.sessionLoad, "mac.fetchMessages.rows", count: messages.count)
+                return MessageFetchOutcome(messages: messages, transportError: nil)
+            } catch let BackendError.transport(reason) {
+                // SSH timeout / ControlMaster drop / connection blip. The
+                // chat resume path renders the partial-result banner so
+                // the user sees "couldn't load full history" instead of
+                // an empty transcript. v2.8.
+                ScarfMon.event(.sessionLoad, "mac.fetchMessages.transportError", count: 1)
+                return MessageFetchOutcome(messages: [], transportError: reason)
+            } catch {
+                return MessageFetchOutcome(messages: [], transportError: nil)
+            }
+        }
+    }
+
+    /// Phase 1 of the v2.8 two-phase chat loader. Fetches user +
+    /// assistant rows ONLY (skips `role='tool'` entirely) with
+    /// `tool_calls`, `reasoning`, and `reasoning_content` hard-NULLed
+    /// at the SQL level. The wire payload is bounded by the
+    /// conversational text alone — a 30-message session whose tool
+    /// results blob ran 100KB+ per row drops from a 30s timeout to a
+    /// few hundred ms. The chat is rendered immediately; tool details
+    /// fill in via `hydrateAssistantToolCalls` and `hydrateToolResults`
+    /// in background tasks.
+    ///
+    /// Returns the same `MessageFetchOutcome` shape as the full
+    /// `fetchMessagesOutcome` so the caller can distinguish a
+    /// transport failure (banner-worthy) from a genuinely empty
+    /// session.
+    public func fetchSkeletonMessages(
+        sessionId: String,
+        limit: Int,
+        before: Int? = nil
+    ) async -> MessageFetchOutcome {
+        await ScarfMon.measureAsync(.sessionLoad, "mac.fetchSkeletonMessages") {
+            let sql: String
+            let params: [SQLValue]
+            if let before {
+                sql = "SELECT \(messageColumnsSkeleton) FROM messages WHERE session_id = ? AND role IN ('user','assistant') AND id < ? ORDER BY id DESC LIMIT ?"
+                params = [.text(sessionId), .integer(Int64(before)), .integer(Int64(limit))]
+            } else {
+                sql = "SELECT \(messageColumnsSkeleton) FROM messages WHERE session_id = ? AND role IN ('user','assistant') ORDER BY id DESC LIMIT ?"
+                params = [.text(sessionId), .integer(Int64(limit))]
+            }
+            do {
+                let rows = try await backend.query(sql, params: params)
+                let messages = rows.map { messageFromRow($0) }.reversed() as [HermesMessage]
+                ScarfMon.event(.sessionLoad, "mac.fetchSkeletonMessages.rows", count: messages.count)
+                return MessageFetchOutcome(messages: messages, transportError: nil)
+            } catch let BackendError.transport(reason) {
+                ScarfMon.event(.sessionLoad, "mac.fetchSkeletonMessages.transportError", count: 1)
+                return MessageFetchOutcome(messages: [], transportError: reason)
+            } catch {
+                return MessageFetchOutcome(messages: [], transportError: nil)
+            }
+        }
+    }
+
+    /// Phase 2a of the two-phase loader. Hydrate `tool_calls` for
+    /// assistant rows in `messageIds`. Returns parsed `[HermesToolCall]`
+    /// keyed by message id — caller splices into the existing
+    /// `HermesMessage` values to bring the tool cards online without
+    /// a full re-fetch. Empty / missing `tool_calls` rows are omitted
+    /// from the result.
+    ///
+    /// **Paged into 5-id batches.** A single 25-id IN-clause query
+    /// returning 10 large `tool_calls` JSON blobs (a long Edit's args
+    /// can be 100KB+ on its own) tripped the 30s SSH timeout in
+    /// 2026-05-05 dogfooding. Pages run sequentially so the worst
+    /// case is one slow batch instead of one slow whole-fetch — and
+    /// the user sees tool cards trickle in newest-first as each page
+    /// completes, since the caller drives the splice + UI rebuild.
+    public func hydrateAssistantToolCalls(
+        messageIds: [Int]
+    ) async -> [Int: [HermesToolCall]] {
+        guard !messageIds.isEmpty else { return [:] }
+        return await ScarfMon.measureAsync(.sessionLoad, "mac.hydrateToolCalls") {
+            // Page newest-first: callers pass ids in chronological
+            // order from the skeleton fetch; the tail of that array is
+            // the most-recent assistant turn, which is the one the
+            // user is most likely looking at.
+            let pageSize = 5
+            let pages = stride(from: 0, to: messageIds.count, by: pageSize).map {
+                Array(messageIds[$0..<min($0 + pageSize, messageIds.count)])
+            }.reversed()
+            var out: [Int: [HermesToolCall]] = [:]
+            for page in pages {
+                // Bail immediately if the parent task got cancelled
+                // (chat switch, view dismiss). v2.8 — without this
+                // explicit check the catch-all below would swallow
+                // `CancellationError` and keep firing batches against
+                // the abandoned session, defeating the whole point of
+                // the cancellation propagation chain we wired through
+                // SSHScriptRunner + RemoteSQLiteBackend.
+                if Task.isCancelled {
+                    ScarfMon.event(.sessionLoad, "mac.hydrateToolCalls.cancelled", count: 1)
+                    return out
+                }
+                let placeholders = Array(repeating: "?", count: page.count).joined(separator: ",")
+                let sql = "SELECT id, tool_calls FROM messages WHERE id IN (\(placeholders)) AND tool_calls IS NOT NULL AND tool_calls != '' AND tool_calls != '[]'"
+                let params: [SQLValue] = page.map { .integer(Int64($0)) }
+                do {
+                    let rows = try await backend.query(sql, params: params)
+                    for row in rows {
+                        let id = row.int(at: 0)
+                        let json = row.optionalString(at: 1)
+                        let parsed = parseToolCalls(json)
+                        if !parsed.isEmpty {
+                            out[id] = parsed
+                        }
+                    }
+                } catch is CancellationError {
+                    // Parent cancelled mid-page — return what we have
+                    // and stop. Distinct from the transport-timeout
+                    // path below, which is a per-page failure.
+                    ScarfMon.event(.sessionLoad, "mac.hydrateToolCalls.cancelled", count: 1)
+                    return out
+                } catch let BackendError.transport(reason) {
+                    // One page tripped the 30s timeout — at least one
+                    // id in this batch carries an oversized tool_calls
+                    // blob (multi-hundred-KB Edit args, big diffs).
+                    // L1 (v2.8) — fall back to single-id queries to
+                    // isolate the whale. The non-whale ids in the same
+                    // batch hydrate normally; only the actual offender
+                    // stays bare. Adds at most `page.count` extra
+                    // round-trips on a timeout, but each is bounded by
+                    // its own queryTimeout so we won't compound the
+                    // wait beyond ~30s per id.
+                    ScarfMon.event(.sessionLoad, "mac.hydrateToolCalls.pageTimeout", count: 1)
+                    Self.logger.warning("hydrateToolCalls page timed out (\(page.count) ids), falling back to single-id retry: \(reason, privacy: .public)")
+                    for id in page {
+                        if Task.isCancelled { return out }
+                        do {
+                            let singleSQL = "SELECT id, tool_calls FROM messages WHERE id = ? AND tool_calls IS NOT NULL AND tool_calls != '' AND tool_calls != '[]'"
+                            let rows = try await backend.query(singleSQL, params: [.integer(Int64(id))])
+                            for row in rows {
+                                let rid = row.int(at: 0)
+                                let json = row.optionalString(at: 1)
+                                let parsed = parseToolCalls(json)
+                                if !parsed.isEmpty {
+                                    out[rid] = parsed
+                                }
+                            }
+                        } catch is CancellationError {
+                            return out
+                        } catch let BackendError.transport(singleReason) {
+                            // This is the whale. Skip it — the user
+                            // can still expand the assistant message;
+                            // only the per-call cards on this row
+                            // stay bare. Recorded so future captures
+                            // show how often we hit a single-id
+                            // timeout vs. a batch timeout.
+                            ScarfMon.event(.sessionLoad, "mac.hydrateToolCalls.singleTimeout", count: 1)
+                            Self.logger.warning("hydrateToolCalls single-id retry timed out (id=\(id)): \(singleReason, privacy: .public)")
+                            continue
+                        } catch {
+                            Self.logger.warning("hydrateToolCalls single-id retry failed (id=\(id)): \(error.localizedDescription, privacy: .public)")
+                            continue
+                        }
+                    }
+                    continue
+                } catch {
+                    Self.logger.warning("hydrateAssistantToolCalls page failed: \(error.localizedDescription, privacy: .public)")
+                    continue
+                }
+            }
+            ScarfMon.event(.sessionLoad, "mac.hydrateToolCalls.rows", count: out.count)
+            return out
+        }
+    }
+
+    /// Phase 2b of the two-phase loader. Fetch `role='tool'` rows in
+    /// `[minId, maxId]` for `sessionId`. These are the heavy ones —
+    /// a single tool result can carry a multi-page text blob. The
+    /// caller pages through the id range in chunks (newest-first) so
+    /// each round-trip is bounded.
+    ///
+    /// Returns `[HermesMessage]` in DESC order (newest first) the
+    /// caller can splice into the live `messages` array. Transport
+    /// failures fall through to an empty result with a warning logged
+    /// — the chat is already usable without tool results, so this is
+    /// best-effort rather than banner-worthy.
+    public func fetchToolResultsInRange(
+        sessionId: String,
+        minId: Int,
+        maxId: Int,
+        limit: Int = 50
+    ) async -> [HermesMessage] {
+        await ScarfMon.measureAsync(.sessionLoad, "mac.hydrateToolResults") {
+            let sql = "SELECT \(messageColumnsLight) FROM messages WHERE session_id = ? AND role = 'tool' AND id >= ? AND id <= ? ORDER BY id DESC LIMIT ?"
+            let params: [SQLValue] = [
+                .text(sessionId),
+                .integer(Int64(minId)),
+                .integer(Int64(maxId)),
+                .integer(Int64(limit))
+            ]
+            do {
+                let rows = try await backend.query(sql, params: params)
+                let messages = rows.map { messageFromRow($0) }
+                ScarfMon.event(.sessionLoad, "mac.hydrateToolResults.rows", count: messages.count)
                 return messages
             } catch {
+                Self.logger.warning("fetchToolResultsInRange failed: \(error.localizedDescription, privacy: .public)")
                 return []
             }
         }
@@ -309,18 +552,87 @@ public actor HermesDataService {
     }
 
     public func fetchRecentToolCalls(limit: Int = QueryDefaults.toolCallLimit) async -> [HermesMessage] {
-        let sql = """
-            SELECT \(messageColumns)
-            FROM messages
-            WHERE tool_calls IS NOT NULL AND tool_calls != '[]' AND tool_calls != ''
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """
-        do {
-            let rows = try await backend.query(sql, params: [.integer(Int64(limit))])
-            return rows.map { messageFromRow($0) }
-        } catch {
-            return []
+        await fetchRecentToolCallsOutcome(limit: limit).messages
+    }
+
+    /// Phase L (v2.8) skeleton fetch for the Activity feed. Returns
+    /// metadata-only rows for tool-call-bearing messages — `id`,
+    /// `session_id`, `role`, `timestamp`. Everything fat (`content`,
+    /// `tool_calls` JSON, `reasoning`, `reasoning_content`) is NULLed
+    /// at the SQL level. The wire payload for 50 rows drops to
+    /// ~3-5 KB regardless of how big the underlying tool_calls blobs
+    /// are. `ActivityViewModel` renders placeholder "Loading tool
+    /// calls…" rows from the skeleton, then pages through
+    /// `hydrateAssistantToolCalls` to fill the real rows in.
+    ///
+    /// Mirrors `fetchSkeletonMessages` for the chat path — same
+    /// philosophy: get something on screen fast, hydrate the heavy
+    /// columns in the background.
+    public func fetchRecentToolCallSkeleton(
+        limit: Int = QueryDefaults.toolCallLimit
+    ) async -> MessageFetchOutcome {
+        await ScarfMon.measureAsync(.sessionLoad, "mac.fetchToolCallSkeleton") {
+            // Project everything as NULL except the four columns
+            // ActivityEntry actually needs to render a placeholder
+            // row. The WHERE clause still hits the tool_calls
+            // column so SQLite reads it from disk — but it never
+            // travels back over SSH.
+            let cols: String
+            if hasV07Schema {
+                cols = "id, session_id, role, NULL AS content, NULL AS tool_call_id, NULL AS tool_calls, NULL AS tool_name, timestamp, NULL AS token_count, NULL AS finish_reason, NULL AS reasoning"
+            } else {
+                cols = "id, session_id, role, NULL AS content, NULL AS tool_call_id, NULL AS tool_calls, NULL AS tool_name, timestamp, NULL AS token_count, NULL AS finish_reason"
+            }
+            let sql = """
+                SELECT \(cols)
+                FROM messages
+                WHERE tool_calls IS NOT NULL AND tool_calls != '[]' AND tool_calls != ''
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """
+            do {
+                let rows = try await backend.query(sql, params: [.integer(Int64(limit))])
+                let messages = rows.map { messageFromRow($0) }
+                ScarfMon.event(.sessionLoad, "mac.fetchToolCallSkeleton.rows", count: messages.count)
+                return MessageFetchOutcome(messages: messages, transportError: nil)
+            } catch let BackendError.transport(reason) {
+                ScarfMon.event(.sessionLoad, "mac.fetchToolCallSkeleton.transportError", count: 1)
+                Self.logger.warning("fetchRecentToolCallSkeleton transport error: \(reason, privacy: .public)")
+                return MessageFetchOutcome(messages: [], transportError: reason)
+            } catch {
+                Self.logger.warning("fetchRecentToolCallSkeleton failed: \(error.localizedDescription, privacy: .public)")
+                return MessageFetchOutcome(messages: [], transportError: nil)
+            }
+        }
+    }
+
+    /// Outcome variant of `fetchRecentToolCalls` — distinguishes a
+    /// genuinely empty result from a transport failure so Activity can
+    /// surface a banner instead of the empty-state. v2.8.
+    public func fetchRecentToolCallsOutcome(
+        limit: Int = QueryDefaults.toolCallLimit
+    ) async -> MessageFetchOutcome {
+        await ScarfMon.measureAsync(.sessionLoad, "mac.fetchRecentToolCalls") {
+            let sql = """
+                SELECT \(messageColumnsLight)
+                FROM messages
+                WHERE tool_calls IS NOT NULL AND tool_calls != '[]' AND tool_calls != ''
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """
+            do {
+                let rows = try await backend.query(sql, params: [.integer(Int64(limit))])
+                let messages = rows.map { messageFromRow($0) }
+                ScarfMon.event(.sessionLoad, "mac.fetchRecentToolCalls.rows", count: messages.count)
+                return MessageFetchOutcome(messages: messages, transportError: nil)
+            } catch let BackendError.transport(reason) {
+                ScarfMon.event(.sessionLoad, "mac.fetchRecentToolCalls.transportError", count: 1)
+                Self.logger.warning("fetchRecentToolCalls transport error: \(reason, privacy: .public)")
+                return MessageFetchOutcome(messages: [], transportError: reason)
+            } catch {
+                Self.logger.warning("fetchRecentToolCalls failed: \(error.localizedDescription, privacy: .public)")
+                return MessageFetchOutcome(messages: [], transportError: nil)
+            }
         }
     }
 

@@ -64,6 +64,28 @@ public struct HermesMessage: Identifiable, Sendable {
         if let rc = reasoningContent, !rc.isEmpty { return rc }
         return reasoning
     }
+
+    /// Return a copy of this message with `toolCalls` replaced. Used
+    /// by the v2.8 two-phase chat loader: skeleton fetch returns
+    /// messages with empty `toolCalls`; the background hydrate splices
+    /// the parsed values in without re-fetching the conversational
+    /// columns.
+    public func withToolCalls(_ newCalls: [HermesToolCall]) -> HermesMessage {
+        HermesMessage(
+            id: id,
+            sessionId: sessionId,
+            role: role,
+            content: content,
+            toolCallId: toolCallId,
+            toolCalls: newCalls,
+            toolName: toolName,
+            timestamp: timestamp,
+            tokenCount: tokenCount,
+            finishReason: finishReason,
+            reasoning: reasoning,
+            reasoningContent: reasoningContent
+        )
+    }
 }
 
 public struct HermesToolCall: Identifiable, Sendable, Codable {
@@ -209,4 +231,24 @@ public enum ToolKind: String, Sendable, CaseIterable {
         case .other: return "gray"
         }
     }
+}
+
+/// Outcome of a `fetchMessagesOutcome` call. `transportError` is non-nil
+/// only when the underlying SSH/SQLite call hit a transport-layer
+/// failure (timeout, ControlMaster drop) — distinguishes a genuine
+/// empty session from a silent partial-load. The chat resume path uses
+/// it to surface a "couldn't load full history" banner.
+public struct MessageFetchOutcome: Sendable {
+    public let messages: [HermesMessage]
+    public let transportError: String?
+
+    public init(messages: [HermesMessage], transportError: String?) {
+        self.messages = messages
+        self.transportError = transportError
+    }
+
+    /// True when the fetch tripped a transport failure. Distinct from
+    /// `messages.isEmpty` — an empty session is a successful zero-row
+    /// result, while a transport error is "we don't know what's there."
+    public var didTimeOut: Bool { transportError != nil }
 }

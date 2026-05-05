@@ -730,6 +730,22 @@ public enum ACPErrorHint {
             || haystack.localizedCaseInsensitiveContains("429") {
             return Classification(hint: "Your AI provider returned a rate-limit error. Try again in a moment.")
         }
+        // Model-availability failure. Hermes pins each session to the
+        // model that opened it, so resuming an old session whose model
+        // is no longer available (provider deprecation, OAuth swapped
+        // to a different provider, model name changed) returns a 404
+        // / model_not_found from the upstream provider — surfaced as
+        // an opaque "-32603 Internal error" in chat. v2.8 surfaces a
+        // clear "session is pinned" hint with the recovery path.
+        if haystack.localizedCaseInsensitiveContains("model_not_found")
+            || haystack.localizedCaseInsensitiveContains("model not found")
+            || haystack.localizedCaseInsensitiveContains("invalid_model")
+            || haystack.localizedCaseInsensitiveContains("model is not available")
+            || haystack.localizedCaseInsensitiveContains("unknown model")
+            || (haystack.contains("404") && (haystack.localizedCaseInsensitiveContains("model")
+                                              || haystack.localizedCaseInsensitiveContains("messages"))) {
+            return Classification(hint: "This session was created with a model the provider no longer offers. Hermes pins each session to its original model — start a new chat to use your current model, or run `hermes sessions clone` in Terminal to copy this conversation onto the new model.")
+        }
         return nil
     }
 

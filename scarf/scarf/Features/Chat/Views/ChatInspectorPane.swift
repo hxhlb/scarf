@@ -44,6 +44,16 @@ struct ChatInspectorPane: View {
             }
         }
         .background(ScarfColor.backgroundSecondary)
+        // v2.8 — lazy-load the tool result content when the inspector
+        // opens for a call whose result wasn't auto-hydrated. The
+        // chat-resume path skips Phase 2b by default (the bulk fetch
+        // can blow past the 30s SSH timeout on remote contexts), so
+        // the inspector is the user-initiated lazy path.
+        .task(id: chatViewModel.focusedToolCallId) {
+            guard let id = chatViewModel.focusedToolCallId,
+                  chatViewModel.focusedToolCall?.result == nil else { return }
+            await chatViewModel.richChatViewModel.loadToolResultIfMissing(callId: id)
+        }
     }
 
     // MARK: - Header

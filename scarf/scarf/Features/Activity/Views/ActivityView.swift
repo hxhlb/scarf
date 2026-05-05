@@ -19,12 +19,17 @@ struct ActivityView: View {
         VStack(spacing: 0) {
             pageHeader
             filterStrip
+            if let err = viewModel.loadError {
+                loadErrorBanner(err)
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: ScarfSpace.s5) {
                     ForEach(groupedByDay) { group in
                         dayGroup(group)
                     }
-                    if viewModel.filteredActivity.isEmpty && !viewModel.isLoading {
+                    if viewModel.isLoading && viewModel.filteredActivity.isEmpty {
+                        loadingState
+                    } else if viewModel.filteredActivity.isEmpty && viewModel.loadError == nil {
                         emptyState
                     }
                 }
@@ -43,6 +48,53 @@ struct ActivityView: View {
         .sheet(isPresented: detailSheetBinding) { detailSheet }
     }
 
+    /// Spinner + label rendered while the first load is in flight and
+    /// the feed is still empty. v2.8 fix — pre-fix, `isLoading=true`
+    /// rendered nothing because the empty-state was gated on
+    /// `!isLoading`, leaving the user staring at a blank pane during
+    /// the SSH round-trip.
+    private var loadingState: some View {
+        HStack(spacing: ScarfSpace.s3) {
+            ProgressView().controlSize(.small)
+            Text("Loading activity…")
+                .scarfStyle(.body)
+                .foregroundStyle(ScarfColor.foregroundMuted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(ScarfSpace.s6)
+    }
+
+    /// Orange banner shown above the feed when the most recent load
+    /// hit a transport failure. Replaces the silent empty-state that
+    /// pre-v2.8 left users thinking Activity was broken.
+    private func loadErrorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: ScarfSpace.s2) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Couldn't load activity")
+                    .scarfStyle(.bodyEmph)
+                    .foregroundStyle(ScarfColor.foregroundPrimary)
+                Text(message)
+                    .scarfStyle(.caption)
+                    .foregroundStyle(ScarfColor.foregroundMuted)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            Button("Retry") {
+                Task { await viewModel.load() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(ScarfSpace.s3)
+        .background(Color.orange.opacity(0.08))
+        .overlay(
+            Rectangle().fill(Color.orange.opacity(0.25)).frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
     // MARK: - Page header
 
     private var pageHeader: some View {
@@ -56,6 +108,17 @@ struct ActivityView: View {
                     .foregroundStyle(ScarfColor.foregroundMuted)
             }
             Spacer()
+            if viewModel.isHydratingToolCalls {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading tool details…")
+                        .scarfStyle(.caption)
+                        .foregroundStyle(ScarfColor.foregroundMuted)
+                }
+                .padding(.horizontal, ScarfSpace.s3)
+                .padding(.vertical, 4)
+                .background(.thinMaterial, in: Capsule())
+            }
         }
         .padding(.horizontal, ScarfSpace.s6)
         .padding(.top, ScarfSpace.s5)
@@ -321,19 +384,25 @@ private struct ActivityRow: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(toneBackground)
-                    Image(systemName: entry.kind.icon)
-                        .font(.system(size: 12))
-                        .foregroundStyle(toneForeground)
+                    if entry.isPlaceholder {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: entry.kind.icon)
+                            .font(.system(size: 12))
+                            .foregroundStyle(toneForeground)
+                    }
                 }
                 .frame(width: 26, height: 26)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(entry.toolName)
                         .scarfStyle(.body)
-                        .foregroundStyle(ScarfColor.foregroundPrimary)
+                        .foregroundStyle(entry.isPlaceholder ? ScarfColor.foregroundMuted : ScarfColor.foregroundPrimary)
                         .lineLimit(1)
                     Group {
-                        if entry.summary.isEmpty {
+                        if entry.isPlaceholder {
+                            Text("Tool calls hydrating in the background…")
+                        } else if entry.summary.isEmpty {
                             Text(entry.kind.displayName)
                         } else {
                             Text(entry.summary)
@@ -345,16 +414,20 @@ private struct ActivityRow: View {
                     .truncationMode(.middle)
                 }
                 Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11))
-                    .foregroundStyle(ScarfColor.foregroundFaint)
+                if !entry.isPlaceholder {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11))
+                        .foregroundStyle(ScarfColor.foregroundFaint)
+                }
             }
             .padding(.horizontal, ScarfSpace.s4)
             .padding(.vertical, ScarfSpace.s3 - 2)
-            .background(hover ? ScarfColor.backgroundTertiary.opacity(0.6) : Color.clear)
+            .background(hover && !entry.isPlaceholder ? ScarfColor.backgroundTertiary.opacity(0.6) : Color.clear)
+            .opacity(entry.isPlaceholder ? 0.65 : 1.0)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(entry.isPlaceholder)
         .onHover { hover = $0 }
     }
 

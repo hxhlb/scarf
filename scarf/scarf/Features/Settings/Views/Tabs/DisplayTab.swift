@@ -26,6 +26,14 @@ struct DisplayTab: View {
     /// users new to Scarf get the async-aware UX out of the box.
     @AppStorage(ChatNotificationService.toggleKey)
     private var notifyOnComplete: Bool = true
+    /// v2.8 — opt-in tool-result content load when resuming past
+    /// chats. Default off so slow remotes don't blow past the SSH
+    /// timeout on chats with multi-page tool output. Tool call cards
+    /// still render either way; only the inspector's "Output"
+    /// section is empty until the user opens a card (lazy-fetched
+    /// per-call).
+    @AppStorage(ChatDensityKeys.loadHistoricalToolResults)
+    private var loadHistoricalToolResults: Bool = false
 
     var body: some View {
         SettingsSection(title: "Chat density", icon: "rectangle.compress.vertical") {
@@ -42,6 +50,14 @@ struct DisplayTab: View {
             FontScaleRow(scale: $fontScale)
             ToggleRow(label: "Sessions list", isOn: showSessionsList) { showSessionsList = $0 }
             ToggleRow(label: "Tool inspector", isOn: showInspector) { showInspector = $0 }
+            ToggleRow(
+                label: "Load tool results in past chats",
+                isOn: loadHistoricalToolResults
+            ) { loadHistoricalToolResults = $0 }
+            Text("Off (default) keeps past chat resumes fast on slow remotes — tool call cards still render, but the inspector lazy-loads each result when you open it.")
+                .scarfStyle(.footnote)
+                .foregroundStyle(ScarfColor.foregroundMuted)
+                .padding(.leading, 168)
             DensityFootnote()
         }
 

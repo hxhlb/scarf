@@ -64,6 +64,23 @@ public final class RichChatViewModel {
     public var messages: [HermesMessage] = []
     public var currentSession: HermesSession?
     public var messageGroups: [MessageGroup] = []
+    /// True while the v2.8 two-phase loader's background hydration
+    /// (tool_calls JSON + tool result rows) is in flight. Chat header
+    /// shows "Loading tool details…" so the user knows the bare
+    /// transcript they're looking at will fill in. Cleared once both
+    /// hydration passes finish or the session-id changes underneath.
+    public var isHydratingTools: Bool = false
+    @ObservationIgnored
+    private var hydrationTask: Task<Void, Never>?
+
+    /// UserDefaults key controlling whether the chat resume path
+    /// auto-fetches the CONTENT of tool result rows (`role='tool'`) for
+    /// past messages. Defaults false — a single tool result blob
+    /// (file dump, stack trace) can be hundreds of KB; bulk-fetching
+    /// all of them during chat resume on a slow remote can blow past
+    /// the 30s SSH timeout. The Mac Settings → Display tab exposes
+    /// the toggle (mirror string in `ChatDensityKeys`).
+    public static let loadHistoricalToolResultsKey = "scarf.chat.loadHistoricalToolResults"
     /// True from the moment the user sends a prompt until the ACP
     /// `promptComplete` event arrives. Covers the whole round-trip
     /// including auxiliary post-processing (title generation, usage
@@ -423,6 +440,9 @@ public final class RichChatViewModel {
 
     public func reset() {
         debounceTask?.cancel()
+        hydrationTask?.cancel()
+        hydrationTask = nil
+        isHydratingTools = false
         stopActivePolling()
         Task { await dataService.close() }
         messages = []
@@ -1064,8 +1084,17 @@ public final class RichChatViewModel {
             return
         }
 
+        // v2.8 two-phase loader. Phase 1 — skeleton: user + assistant
+        // rows only, no tool_calls JSON, no reasoning, no
+        // reasoning_content. Wire payload bounded by conversational
+        // text alone so chats with multi-page tool result blobs (the
+        // 30s-timeout case) come up in seconds. Phase 2 (kicked off
+        // below in a Task.detached) fills tool calls + tool results in
+        // the background — the chat is usable while it runs.
         let pageSize = HistoryPageSize.initial
-        var allMessages = await dataService.fetchMessages(sessionId: sessionId, limit: pageSize)
+        let originOutcome = await dataService.fetchSkeletonMessages(sessionId: sessionId, limit: pageSize)
+        var allMessages = originOutcome.messages
+        var transportFailure: String? = originOutcome.transportError
         // Race-check #2: session id may have changed during the
         // long fetch (the most common race — a 30s timeout on a
         // big session lets the user switch to a small one and back).
@@ -1084,16 +1113,19 @@ public final class RichChatViewModel {
         if let acpId = acpSessionId, acpId != sessionId {
             originSessionId = sessionId
             self.sessionId = acpId
-            let acpMessages = await dataService.fetchMessages(sessionId: acpId, limit: pageSize)
+            let acpOutcome = await dataService.fetchSkeletonMessages(sessionId: acpId, limit: pageSize)
             // Race-check #3: same guard, after the second fetch.
             guard self.sessionId == acpId else {
                 ScarfMon.event(.sessionLoad, "mac.hydrateMessages.dropped", count: 1)
                 return
             }
-            if !acpMessages.isEmpty {
-                allMessages.append(contentsOf: acpMessages)
+            if let acpErr = acpOutcome.transportError, transportFailure == nil {
+                transportFailure = acpErr
+            }
+            if !acpOutcome.messages.isEmpty {
+                allMessages.append(contentsOf: acpOutcome.messages)
                 allMessages.sort { ($0.timestamp ?? .distantPast) < ($1.timestamp ?? .distantPast) }
-                moreHistory = moreHistory || acpMessages.count >= pageSize
+                moreHistory = moreHistory || acpOutcome.messages.count >= pageSize
             }
         }
 
@@ -1152,7 +1184,180 @@ public final class RichChatViewModel {
         hasMoreHistory = moreHistory
         ScarfMon.event(.sessionLoad, "mac.hydrateMessages.rows", count: messages.count)
         buildMessageGroups()
+
+        // Partial-result detection — if a fetch tripped a transport
+        // failure (SSH timeout / ControlMaster drop) the user is now
+        // looking at zero or near-zero messages with no idea why. The
+        // pre-v2.8 behavior was a silent empty transcript. Surface a
+        // banner via the existing acpError triplet so the user sees
+        // "couldn't load full history — connection slow." We assume
+        // more history exists (so the "Load earlier" affordance is
+        // honest about the gap) — caller can retry by reopening the
+        // session.
+        if let reason = transportFailure {
+            acpError = "Couldn't load full chat history — the connection to \(dataService.context.displayName) timed out."
+            acpErrorHint = "Reopen the session to retry, or check the SSH link if this keeps happening."
+            acpErrorDetails = reason
+            acpErrorOAuthProvider = nil
+            hasMoreHistory = true
+        } else {
+            // v2.8 — kick off background hydration of tool_calls JSON
+            // and tool result rows for the just-loaded skeleton.
+            // Non-blocking on the main load path (chat is usable).
+            startToolHydration(loadingForSession: self.sessionId ?? sessionId)
+        }
         } // end measureAsync(.sessionLoad, "mac.hydrateMessages")
+    }
+
+    /// Phase 2 of the two-phase chat loader. Pulls `tool_calls` JSON
+    /// for the loaded assistant rows, then fetches `role='tool'` rows
+    /// in the loaded id range and splices both into `messages` /
+    /// `messageGroups` without disturbing what the user is already
+    /// reading. Cancellable — restarting (a session switch, a
+    /// `reset()`) drops any in-flight pass.
+    ///
+    /// Tool calls go in first because they live ON the existing
+    /// assistant message and surface the most-visible UI affordance
+    /// (the tool card chips). Tool result content rows go in second
+    /// because they're the heaviest payload and the UI degrades
+    /// gracefully without them (the cards still show "running" /
+    /// "complete" state; only the result body is missing).
+    private func startToolHydration(loadingForSession: String) {
+        hydrationTask?.cancel()
+        let sessionForLoad = loadingForSession
+        let dataService = self.dataService
+        hydrationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.isHydratingTools = true
+            defer { self.isHydratingTools = false }
+
+            // Snapshot the assistant ids + id range from the messages
+            // we just loaded. Doing this on MainActor keeps us in step
+            // with the observable view of `messages`; the actual
+            // SQL calls happen in `await` slots that release the actor.
+            let assistantIds = self.messages
+                .filter { $0.isAssistant && $0.id > 0 }
+                .map(\.id)
+            guard let minId = self.messages.map(\.id).min(),
+                  let maxId = self.messages.map(\.id).max(),
+                  !assistantIds.isEmpty || minId < maxId else {
+                return
+            }
+
+            // Phase 2a — tool_calls JSON. Splice parsed values into
+            // each assistant message that has them.
+            let toolCallMap = await dataService.hydrateAssistantToolCalls(messageIds: assistantIds)
+            if Task.isCancelled || self.sessionId != sessionForLoad {
+                ScarfMon.event(.sessionLoad, "mac.hydrateTools.dropped", count: 1)
+                return
+            }
+            if !toolCallMap.isEmpty {
+                self.messages = self.messages.map { msg in
+                    guard msg.isAssistant, let calls = toolCallMap[msg.id] else { return msg }
+                    return msg.withToolCalls(calls)
+                }
+                self.buildMessageGroups()
+            }
+
+            // Phase 2b — tool result rows. Default OFF (v2.8). A
+            // single tool result blob (file dump, stack trace) can run
+            // hundreds of KB; bulk-fetching all of them during chat
+            // resume on a slow remote was the cause of the 30s timeout
+            // observed in 2026-05-05 dogfooding. Users can opt in via
+            // Settings → Display → "Load tool results in past chats"
+            // when bandwidth is plentiful. Tool call CARDS still
+            // render either way (`tool_calls` JSON loads in Phase 2a);
+            // only the inspector pane's "Output" section is empty
+            // until the user opens a card, at which point a per-call
+            // lazy fetch fills it in.
+            let loadResults = UserDefaults.standard.bool(
+                forKey: Self.loadHistoricalToolResultsKey
+            )
+            guard loadResults else {
+                ScarfMon.event(.sessionLoad, "mac.hydrateTools.skippedToolResults", count: 1)
+                return
+            }
+            let toolResults = await dataService.fetchToolResultsInRange(
+                sessionId: sessionForLoad,
+                minId: minId,
+                maxId: maxId
+            )
+            if Task.isCancelled || self.sessionId != sessionForLoad {
+                ScarfMon.event(.sessionLoad, "mac.hydrateTools.dropped", count: 1)
+                return
+            }
+            if !toolResults.isEmpty {
+                var merged = self.messages
+                let existingIds = Set(merged.map(\.id))
+                for tr in toolResults where !existingIds.contains(tr.id) {
+                    merged.append(tr)
+                }
+                merged.sort { lhs, rhs in
+                    let lt = lhs.timestamp ?? .distantPast
+                    let rt = rhs.timestamp ?? .distantPast
+                    if lt != rt { return lt < rt }
+                    return lhs.id < rhs.id
+                }
+                self.messages = merged
+                self.buildMessageGroups()
+            }
+            ScarfMon.event(.sessionLoad, "mac.hydrateTools.complete", count: 1)
+        }
+    }
+
+    /// Lazy-load the content of a single tool result by call id and
+    /// splice it into `messages` / `messageGroups` as a synthetic
+    /// `role='tool'` row. Used by `ChatInspectorPane` when the user
+    /// opens a tool call card whose result hasn't been hydrated yet
+    /// (auto-hydrate is opt-in via `loadHistoricalToolResultsKey`).
+    /// No-op when the result is already present in the transcript or
+    /// the session id has changed underneath us.
+    @MainActor
+    public func loadToolResultIfMissing(callId: String) async {
+        guard let sessionForLoad = sessionId else { return }
+        // Already in the transcript? Done.
+        if messages.contains(where: { $0.toolCallId == callId && $0.isToolResult }) {
+            return
+        }
+        guard let content = await dataService.fetchToolResult(callId: callId) else {
+            return
+        }
+        guard self.sessionId == sessionForLoad else { return }
+        // Build a synthetic tool result row. We don't have the original
+        // row id (would need a second SELECT) so we use a negative
+        // local id that won't collide with persisted rows. The bubble
+        // and inspector both key on `toolCallId`, not `id`, for tool
+        // results — so this is enough to render correctly.
+        let placeholderId = nextLocalId
+        nextLocalId -= 1
+        let synthetic = HermesMessage(
+            id: placeholderId,
+            sessionId: sessionForLoad,
+            role: "tool",
+            content: content,
+            toolCallId: callId,
+            toolCalls: [],
+            toolName: nil,
+            timestamp: Date(),
+            tokenCount: nil,
+            finishReason: nil,
+            reasoning: nil,
+            reasoningContent: nil
+        )
+        messages.append(synthetic)
+        // Re-sort so the tool result lands next to its assistant
+        // parent. ID-based ordering preserves the chronological order
+        // of all the persisted rows; the synthetic placeholder uses a
+        // negative id so it slots in last — fine for inspector display
+        // since the inspector keys on toolCallId.
+        messages.sort { lhs, rhs in
+            let lt = lhs.timestamp ?? .distantPast
+            let rt = rhs.timestamp ?? .distantPast
+            if lt != rt { return lt < rt }
+            return lhs.id < rhs.id
+        }
+        buildMessageGroups()
+        ScarfMon.event(.sessionLoad, "mac.lazyToolResult.fetched", count: 1)
     }
 
     // MARK: - Load Earlier (pagination)

@@ -25,6 +25,30 @@ import Foundation
 /// callers can treat both uniformly.
 public enum SSHScriptRunner {
 
+    /// Thread-safe boolean flag used to bridge parent-task cancellation
+    /// into the detached `Task` body that owns the ssh subprocess.
+    /// `Task.detached { ... }` does NOT inherit cancellation from the
+    /// awaiting parent; without this flag, cancelling a chat-load /
+    /// hydration / activity-fetch Task only throws `CancellationError`
+    /// at the chat layer while the ssh subprocess keeps running until
+    /// its 30s timeout fires — pinning a remote sqlite query (and a
+    /// ControlMaster session slot) for the full deadline. v2.8 fix
+    /// observed in 2026-05-05 dogfooding: rapid chat-switching left a
+    /// chain of stale 30s ssh subprocesses behind, blocking the
+    /// dashboard's queryBatch and producing a "spinning" load.
+    private final class CancelFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _cancelled = false
+        var isCancelled: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return _cancelled
+        }
+        func cancel() {
+            lock.lock(); defer { lock.unlock() }
+            _cancelled = true
+        }
+    }
+
     public enum Outcome: Sendable {
         /// Couldn't even reach the remote (process spawn failed,
         /// timeout before any output, network refused). Carries the
@@ -47,23 +71,37 @@ public enum SSHScriptRunner {
     /// the file compiles everywhere.
     public static func run(script: String, context: ServerContext, timeout: TimeInterval = 30) async -> Outcome {
         await ScarfMon.measureAsync(.transport, "ssh.run") {
-            #if os(macOS)
-            switch context.kind {
-            case .local:
-                return await runLocally(script: script, timeout: timeout)
-            case .ssh(let config):
-                return await runOverSSH(script: script, config: config, timeout: timeout)
-            }
-            #else
-            return .connectFailure("SSHScriptRunner is only available on macOS")
-            #endif
+            // Bridge parent cancellation into the detached subprocess
+            // task. Without this, killing a chat-hydration Task on a
+            // session switch only unwinds Swift state — the ssh
+            // subprocess keeps holding a remote sqlite query + a
+            // ControlMaster session for the full 30s timeout. v2.8.
+            let cancelFlag = CancelFlag()
+            return await withTaskCancellationHandler(
+                operation: {
+                    #if os(macOS)
+                    switch context.kind {
+                    case .local:
+                        return await runLocally(script: script, timeout: timeout, cancelFlag: cancelFlag)
+                    case .ssh(let config):
+                        return await runOverSSH(script: script, config: config, timeout: timeout, cancelFlag: cancelFlag)
+                    }
+                    #else
+                    return .connectFailure("SSHScriptRunner is only available on macOS")
+                    #endif
+                },
+                onCancel: {
+                    cancelFlag.cancel()
+                    ScarfMon.event(.transport, "ssh.cancelled", count: 1)
+                }
+            )
         }
     }
 
     // MARK: - SSH path
 
     #if os(macOS)
-    private static func runOverSSH(script: String, config: SSHConfig, timeout: TimeInterval) async -> Outcome {
+    private static func runOverSSH(script: String, config: SSHConfig, timeout: TimeInterval, cancelFlag: CancelFlag) async -> Outcome {
         var sshArgv: [String] = [
             "-o", "ControlMaster=auto",
             "-o", "ControlPath=\(SSHTransport.controlDirPath())/%C",
@@ -126,7 +164,13 @@ public enum SSHScriptRunner {
 
             let deadline = Date().addingTimeInterval(timeout)
             while proc.isRunning && Date() < deadline {
-                if Task.isCancelled {
+                // Honor BOTH the detached-task's own cancellation flag
+                // (set by the parent's `withTaskCancellationHandler`)
+                // and the legacy `Task.isCancelled` check in case the
+                // detached body gets cancelled directly. The flag is
+                // the load-bearing path; Task.isCancelled is harmless
+                // belt-and-suspenders.
+                if cancelFlag.isCancelled || Task.isCancelled {
                     proc.terminate()
                     try? stdoutPipe.fileHandleForReading.close()
                     try? stderrPipe.fileHandleForReading.close()
@@ -159,7 +203,7 @@ public enum SSHScriptRunner {
 
     // MARK: - Local path
 
-    private static func runLocally(script: String, timeout: TimeInterval) async -> Outcome {
+    private static func runLocally(script: String, timeout: TimeInterval, cancelFlag: CancelFlag) async -> Outcome {
         return await Task.detached { () -> Outcome in
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -176,7 +220,7 @@ public enum SSHScriptRunner {
             }
             let deadline = Date().addingTimeInterval(timeout)
             while proc.isRunning && Date() < deadline {
-                if Task.isCancelled {
+                if cancelFlag.isCancelled || Task.isCancelled {
                     proc.terminate()
                     try? stdoutPipe.fileHandleForReading.close()
                     try? stderrPipe.fileHandleForReading.close()

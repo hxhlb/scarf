@@ -93,6 +93,7 @@ final class TemplateConfigEditorViewModel {
         stage = .saving
         let service = configService
         let project = project
+        let context = context
         Task.detached { [weak self] in
             do {
                 try service.save(
@@ -100,6 +101,19 @@ final class TemplateConfigEditorViewModel {
                     templateId: manifest.id,
                     values: values
                 )
+                // Re-mirror the project's resolved Keychain values into
+                // ~/.hermes/.env. Catches secret rotations: when the user
+                // updates an API token in the Configuration sheet, the
+                // new value lands in the Keychain via the form's commit
+                // step, then this re-runs the splice so the cron-side
+                // env var picks up the rotated value on Hermes's next
+                // tick. Non-fatal on failure — the config save itself
+                // succeeded.
+                do {
+                    try KeychainEnvMirror(context: context).mirror(project: project)
+                } catch {
+                    Self.logger.warning("config save couldn't mirror secrets: \(error.localizedDescription, privacy: .public)")
+                }
                 await MainActor.run { [weak self] in
                     self?.stage = .succeeded
                 }

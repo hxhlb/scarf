@@ -36,6 +36,7 @@ struct ProjectsView: View {
     @Environment(HermesFileWatcher.self) private var fileWatcher
     @Environment(\.serverContext) private var serverContext
     @State private var showingAddSheet = false
+    @State private var showingNewProjectSheet = false
     @State private var showingInstallSheet = false
     @State private var exportSheetProject: ProjectEntry?
     @State private var showingInstallURLPrompt = false
@@ -129,6 +130,28 @@ struct ProjectsView: View {
                 fileWatcher.updateProjectWatches(dashboardPaths: viewModel.dashboardPaths, scarfDirs: viewModel.projectScarfDirs)
             }
         }
+        .sheet(isPresented: $showingNewProjectSheet) {
+            NewProjectSheet(
+                viewModel: NewProjectViewModel(context: serverContext)
+            ) { entry in
+                // Reload the registry so the new project shows in the
+                // sidebar, then select it. The chat handoff is staged
+                // by `NewProjectSheet.runCommit` (it sets
+                // `coordinator.pendingProjectChat` + `pendingInitialPrompt`
+                // and switches `selectedSection` to `.chat`), so when
+                // the user comes back to Projects later, the project
+                // is already there.
+                viewModel.load()
+                coordinator.selectedProjectName = entry.name
+                if let project = viewModel.projects.first(where: { $0.name == entry.name }) {
+                    viewModel.selectProject(project)
+                }
+                fileWatcher.updateProjectWatches(
+                    dashboardPaths: viewModel.dashboardPaths,
+                    scarfDirs: viewModel.projectScarfDirs
+                )
+            }
+        }
         .sheet(item: $exportSheetProject) { project in
             TemplateExportSheet(
                 viewModel: TemplateExporterViewModel(context: serverContext, project: project)
@@ -183,6 +206,17 @@ struct ProjectsView: View {
             presenting: pendingRemoveFromList
         ) { project in
             Button("Remove from List") {
+                // Strip the project's secrets block from ~/.hermes/.env
+                // BEFORE removing it from the registry — the env-mirror
+                // resolves slug via the cached manifest, which still
+                // exists at this point. Failure is non-fatal: a stale
+                // block in .env is benign (just unreachable env vars).
+                do {
+                    try KeychainEnvMirror(context: serverContext).unmirror(project: project)
+                } catch {
+                    // Silent: the mirror's own logger has already
+                    // recorded the failure.
+                }
                 viewModel.removeProject(project)
                 if coordinator.selectedProjectName == project.name {
                     coordinator.selectedProjectName = nil
@@ -214,6 +248,11 @@ struct ProjectsView: View {
     private var templatesToolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Menu {
+                Button("New Project from Scratch…", systemImage: "sparkles") {
+                    showingNewProjectSheet = true
+                }
+                .accessibilityIdentifier("templates.newProject")
+                Divider()
                 Button("Browse Catalog…", systemImage: "books.vertical") {
                     showingCatalogSheet = true
                 }

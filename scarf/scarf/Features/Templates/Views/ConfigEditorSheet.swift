@@ -25,18 +25,18 @@ struct ConfigEditorSheet: View {
     }
 
     var body: some View {
-        Group {
+        // Single outer frame for every stage. Per-case frames used to
+        // shrink the sheet from 480pt (editing) to 280pt (succeeded /
+        // notConfigurable / failed) on stage transition, which forced
+        // AppKit to relayout the sheet container mid-flight and
+        // produced `_NSDetectedLayoutRecursion` on macOS — issue #75.
+        // Stabilizing the size at the largest stage's intrinsic
+        // (560 x 480, matching `TemplateConfigSheet`) means stage
+        // transitions only change content, never container geometry.
+        VStack(spacing: 0) {
             switch viewModel.stage {
             case .idle, .loading:
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Loading configuration…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(minWidth: 560, minHeight: 320)
-                .padding()
+                centeredMessage("Loading configuration…", showSpinner: true)
             case .editing:
                 if let form = viewModel.formViewModel,
                    let manifest = viewModel.manifest {
@@ -57,15 +57,7 @@ struct ConfigEditorSheet: View {
                     unexpectedState
                 }
             case .saving:
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Saving…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(minWidth: 560, minHeight: 320)
-                .padding()
+                centeredMessage("Saving…", showSpinner: true)
             case .succeeded:
                 VStack(spacing: 16) {
                     Image(systemName: "checkmark.circle.fill")
@@ -77,7 +69,6 @@ struct ConfigEditorSheet: View {
                         .buttonStyle(ScarfPrimaryButton())
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(minWidth: 560, minHeight: 280)
                 .padding()
             case .failed(let message):
                 VStack(spacing: 16) {
@@ -93,7 +84,6 @@ struct ConfigEditorSheet: View {
                         .keyboardShortcut(.defaultAction)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(minWidth: 560, minHeight: 280)
                 .padding()
             case .notConfigurable:
                 VStack(spacing: 16) {
@@ -110,11 +100,23 @@ struct ConfigEditorSheet: View {
                         .keyboardShortcut(.defaultAction)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(minWidth: 560, minHeight: 280)
                 .padding()
             }
         }
+        .frame(minWidth: 560, minHeight: 480)
         .task { viewModel.begin() }
+    }
+
+    @ViewBuilder
+    private func centeredMessage(_ text: String, showSpinner: Bool) -> some View {
+        VStack(spacing: 12) {
+            if showSpinner { ProgressView() }
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
     }
 
     private var unexpectedState: some View {

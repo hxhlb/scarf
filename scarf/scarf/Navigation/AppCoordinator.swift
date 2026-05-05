@@ -109,6 +109,16 @@ final class AppCoordinator {
     /// yet have an id for.
     var pendingProjectChat: String?
 
+    /// Optional first message to send automatically once a
+    /// `pendingProjectChat` session has connected. Set alongside
+    /// `pendingProjectChat` by the "New Project from Scratch" wizard
+    /// (v2.8) so the agent receives a kickoff prompt that activates
+    /// the `scarf-template-author` skill without the user having to
+    /// type one. Sister slot to `pendingProjectChat`: ChatView consumes
+    /// both in lockstep and clears them. Nil for plain "open project
+    /// chat" handoffs (the Sessions tab's "New Chat" button).
+    var pendingInitialPrompt: String?
+
     /// Lowercase OAuth provider name to re-authenticate. Set by the
     /// chat error banner's "Re-authenticate" button, consumed by
     /// CredentialPoolsView, which auto-presents the OAuth sheet seeded

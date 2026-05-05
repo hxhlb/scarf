@@ -29,6 +29,20 @@ struct ProjectTemplateInstaller: Sendable {
         let cronJobNames = try createCronJobs(plan: plan)
         let entry = try registerProject(plan: plan)
         try writeLockFile(plan: plan, cronJobNames: cronJobNames)
+
+        // Mirror resolved Keychain secrets into ~/.hermes/.env so the
+        // template's cron jobs (and any other agent process Hermes
+        // spawns) can use them via $SCARF_<SLUG>_<FIELD>. Hermes
+        // reloads .env fresh on every cron tick, so this takes effect
+        // without a restart. Failure is non-fatal — the install
+        // itself succeeded; the launch-time reconciler retries on
+        // next app start.
+        do {
+            try KeychainEnvMirror(context: context).mirror(project: entry)
+        } catch {
+            Self.logger.warning("install couldn't mirror secrets to ~/.hermes/.env: \(error.localizedDescription, privacy: .public)")
+        }
+
         Self.logger.info("installed template \(plan.manifest.id, privacy: .public) v\(plan.manifest.version, privacy: .public) into \(plan.projectDir, privacy: .public)")
         return entry
     }

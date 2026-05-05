@@ -1,5 +1,6 @@
 import SwiftUI
 import ScarfCore
+import os
 
 @main
 struct ScarfApp: App {
@@ -62,6 +63,36 @@ struct ScarfApp: App {
         // static let is already populated by the time any UI needs it.
         Task.detached(priority: .utility) {
             _ = HermesFileService.enrichedEnvironment()
+        }
+
+        // Bootstrap built-in skills shipped inside the app bundle into
+        // `~/.hermes/skills/`. Today this is just `scarf-template-author`,
+        // which the "New Project from Scratch" wizard hands off to. The
+        // service is idempotent + version-gated; failures log and don't
+        // block launch — worst case is the wizard still works but the
+        // agent doesn't have the skill loaded for that session.
+        Task.detached(priority: .utility) {
+            do {
+                try SkillBootstrapService(context: .local).ensureBundledSkillsInstalled()
+            } catch {
+                Logger(subsystem: "com.scarf", category: "scarfApp")
+                    .warning("skill bootstrap failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // Reconcile every registered project's secrets-env block in
+        // ~/.hermes/.env. Catches users upgrading from a pre-mirror
+        // Scarf version (existing projects' Keychain values weren't
+        // mirrored before) and any drift between the Keychain state
+        // and the env file. Idempotent — projects whose blocks are
+        // already current produce no write.
+        Task.detached(priority: .utility) {
+            do {
+                try KeychainEnvMirror(context: .local).reconcileAll()
+            } catch {
+                Logger(subsystem: "com.scarf", category: "scarfApp")
+                    .warning("env-mirror reconcile failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         // Test-mode launch-URL handoff. When XCUITest passes

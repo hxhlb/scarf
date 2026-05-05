@@ -141,6 +141,21 @@ struct ProjectTemplateUninstaller: Sendable {
     nonisolated func uninstall(plan: TemplateUninstallPlan) throws {
         let transport = context.makeTransport()
 
+        // 0. Strip the project's block from ~/.hermes/.env BEFORE we
+        // delete project files — KeychainEnvMirror.unmirror reads the
+        // cached manifest at <project>/.scarf/manifest.json to recover
+        // the slug. After step 1 deletes that file the slug is only
+        // recoverable by name, which is fine but more brittle. Run
+        // first while the cached manifest is still around. Failure is
+        // non-fatal: a stale block in .env is benign (env vars
+        // referencing a deleted project just sit there) and a fresh
+        // install at the same slug will overwrite it.
+        do {
+            try KeychainEnvMirror(context: context).unmirror(project: plan.project)
+        } catch {
+            Self.logger.warning("uninstall couldn't strip secrets block from ~/.hermes/.env: \(error.localizedDescription, privacy: .public)")
+        }
+
         // 1. Project files (tracked only — user additions untouched).
         for file in plan.projectFilesToRemove {
             do {

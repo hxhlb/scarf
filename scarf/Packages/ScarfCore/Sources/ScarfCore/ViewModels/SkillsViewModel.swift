@@ -49,6 +49,18 @@ public final class SkillsViewModel {
     public var hubMessage: String?
     public var hubSource: String = "all"
 
+    /// Last successful `browseHub` payload, kept around so that the
+    /// "All Sources" search path can filter client-side (issue #79).
+    /// `hermes skills search` with no `--source` flag routes through
+    /// the centralized `hermes-index` source which can miss skills
+    /// that are visible in browse — we'd rather give the user the
+    /// canonical "type-to-filter" UX than chase Hermes's index gaps.
+    /// Source-specific searches still shell out to the CLI for full
+    /// upstream semantics. Setter is `internal` so the in-tree test
+    /// suite can seed the cache without invoking the live CLI;
+    /// out-of-module callers can still only read.
+    public internal(set) var lastBrowseResults: [HermesHubSkill] = []
+
     public let hubSources = ["all", "official", "skills-sh", "well-known", "github", "clawhub", "lobehub"]
 
     public var filteredCategories: [HermesSkillCategory] {
@@ -260,14 +272,34 @@ public final class SkillsViewModel {
             browseHub()
             return
         }
+        let source = hubSource
+        let query = hubQuery
+        // Issue #79 — for "All Sources", filter the cached browse list
+        // client-side instead of shelling out. Hermes's all-source
+        // search routes through its centralized index which can miss
+        // skills (e.g. honcho) that browse surfaces from non-indexed
+        // registries. Specific-source searches keep the CLI path so
+        // power users still get full upstream search semantics.
+        if source == "all" {
+            if lastBrowseResults.isEmpty {
+                // No cache yet — kick off a browse, then filter on
+                // completion. The chained call lets the user type a
+                // query before ever clicking Browse.
+                browseHubThenFilter(query: query)
+            } else {
+                // Pure in-memory filter — runs synchronously on the
+                // calling actor (UI invocations are already on
+                // MainActor) so the user sees the narrowed list
+                // without a render-tick gap.
+                applyClientSideFilter(query: query, against: lastBrowseResults)
+            }
+            return
+        }
         isHubLoading = true
         let bin = context.paths.hermesBinary
         let xport = transport
-        let source = hubSource
-        let query = hubQuery
         Task.detached { [weak self] in
-            var args = ["skills", "search", query, "--limit", "40"]
-            if source != "all" { args += ["--source", source] }
+            let args = ["skills", "search", query, "--limit", "40", "--source", source]
             let result = Self.runHermes(executable: bin, args: args, transport: xport, timeout: 30)
             let parsed = HermesSkillsHubParser.parseHubList(result.output)
             await self?.finishBrowse(
@@ -277,6 +309,66 @@ public final class SkillsViewModel {
                 isSearch: true
             )
         }
+    }
+
+    /// Run a browse fetch and then immediately apply a client-side
+    /// filter. Used by `searchHub` when the user types into search
+    /// before any browse has cached results.
+    private func browseHubThenFilter(query: String) {
+        isHubLoading = true
+        let bin = context.paths.hermesBinary
+        let xport = transport
+        Task.detached { [weak self] in
+            let args = ["skills", "browse", "--size", "40"]
+            let result = Self.runHermes(executable: bin, args: args, transport: xport, timeout: 30)
+            let parsed = HermesSkillsHubParser.parseHubList(result.output)
+            await self?.finishBrowseThenFilter(
+                browseResults: parsed,
+                query: query,
+                exitCode: result.exitCode,
+                rawOutput: result.output
+            )
+        }
+    }
+
+    @MainActor
+    private func finishBrowseThenFilter(
+        browseResults: [HermesHubSkill],
+        query: String,
+        exitCode: Int32,
+        rawOutput: String
+    ) async {
+        if exitCode == 0 {
+            lastBrowseResults = browseResults
+            applyClientSideFilter(query: query, against: browseResults)
+        } else {
+            // Surface the underlying browse failure rather than a
+            // blank "no matches" state — the user typed a query, not
+            // a browse request, but the cache was empty so we tried.
+            isHubLoading = false
+            hubResults = []
+            let detail = Self.firstSignificantLine(rawOutput)
+            hubMessage = detail.isEmpty
+                ? "Search failed (exit \(exitCode))"
+                : "Search failed: \(detail)"
+        }
+    }
+
+    private func applyClientSideFilter(query: String, against pool: [HermesHubSkill]) {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        let matches: [HermesHubSkill]
+        if needle.isEmpty {
+            matches = pool
+        } else {
+            matches = pool.filter { skill in
+                skill.name.localizedCaseInsensitiveContains(needle)
+                    || skill.description.localizedCaseInsensitiveContains(needle)
+                    || skill.identifier.localizedCaseInsensitiveContains(needle)
+            }
+        }
+        isHubLoading = false
+        hubResults = matches
+        hubMessage = matches.isEmpty ? "No matches" : nil
     }
 
     public func installHubSkill(_ skill: HermesHubSkill) {
@@ -421,6 +513,13 @@ public final class SkillsViewModel {
     ) async {
         isHubLoading = false
         hubResults = results
+        // Cache the fresh browse payload so the "All Sources" search
+        // path can filter client-side (issue #79). Search results are
+        // not cached — they're already filtered by the user's query
+        // and would poison the filter pool.
+        if !isSearch && exitCode == 0 {
+            lastBrowseResults = results
+        }
         if results.isEmpty {
             if exitCode == 0 {
                 hubMessage = isSearch ? "No matches" : "No results"

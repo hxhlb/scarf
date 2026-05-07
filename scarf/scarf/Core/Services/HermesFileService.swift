@@ -1233,14 +1233,25 @@ struct HermesFileService: Sendable {
     }
 
     /// Error-surfacing variant. `.success(nil)` means `pgrep` ran successfully
-    /// and found no hermes process (Hermes is genuinely not running).
+    /// and found no Hermes gateway process (Hermes is genuinely not running).
     /// `.failure` means we couldn't probe at all (pgrep missing, connection
     /// down, permission issue) — a *different* UX from "not running".
+    ///
+    /// The regex narrows the match to the gateway daemon shape so unrelated
+    /// commands that happen to contain "hermes" — `hermes acp` chat sessions,
+    /// `hermes -z` one-shots, log tails, README readers — don't get flagged
+    /// as "Hermes is running" in the dashboard banner. Two alternations cover
+    /// both invocation forms: the python-module path (`python -m
+    /// hermes_cli.main gateway run …`) and the script-path form
+    /// (`/usr/local/bin/hermes gateway run …`). All callers semantically
+    /// want the gateway PID specifically — `stopHermes()` issues
+    /// `hermes gateway stop` first and only falls back to killing this
+    /// PID, and the dashboard health probe only cares about the gateway.
     nonisolated func hermesPIDResult() -> Result<pid_t?, Error> {
         do {
             let result = try transport.runProcess(
                 executable: "/usr/bin/pgrep",
-                args: ["-f", "hermes"],
+                args: ["-f", #"(^|[[:space:]])-m[[:space:]]+hermes_cli\.main[[:space:]]+gateway[[:space:]]+run([[:space:]]|$)|(^|[[:space:]/])hermes[[:space:]]+gateway[[:space:]]+run([[:space:]]|$)"#],
                 stdin: nil,
                 timeout: 5
             )

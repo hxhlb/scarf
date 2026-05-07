@@ -8,8 +8,8 @@ Scarf is a native macOS app built with Xcode. For contributor builds, use the lo
 
 Requirements:
 
-- macOS 26.2 or newer (the app's deployment target)
-- Xcode 26.2 or newer, selected by `xcode-select`
+- macOS 14.6 (Sonoma) or newer at runtime — that's the app's `MACOSX_DEPLOYMENT_TARGET`. Sonoma support is intentional and load-bearing; do not raise this without an explicit decision to drop Sonoma users
+- Xcode 16.0 or newer, selected by `xcode-select` (needed for Swift 6 strict-concurrency features the project uses)
 - Metal toolchain installed
 - Hermes installed at `~/.hermes/` (see the project README for setup)
 

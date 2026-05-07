@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import ScarfCore
 #if canImport(AppKit)
 import AppKit
@@ -592,8 +593,10 @@ final class HealthViewModel {
     }
 
     /// Stop the dashboard. If Scarf spawned it, send SIGTERM directly. If an
-    /// external instance is running, fall back to `pkill -f "hermes dashboard"`
-    /// so the Stop button works regardless of who launched it.
+    /// external instance is running, find the PID listening on the dashboard
+    /// port via `lsof` and signal that one process — never broadcast a
+    /// `pkill -f "hermes dashboard"` that could match shell history, log
+    /// tails, or any unrelated argv containing the substring.
     func stopDashboard() {
         guard !context.isRemote else { return }
         dashboardStatus = WebDashboardStatus(
@@ -606,13 +609,11 @@ final class HealthViewModel {
         if let proc = dashboardProcess, proc.isRunning {
             proc.terminate()
             dashboardProcess = nil
-        } else {
-            // External instance — best-effort pkill.
-            let kill = Process()
-            kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-            kill.arguments = ["-f", "hermes dashboard"]
-            _ = try? kill.run()
-            kill.waitUntilExit()
+        } else if let pid = Self.dashboardListenerPID(port: dashboardStatus.port) {
+            // External instance — signal only the process actually
+            // bound to our dashboard port, not anything that happens
+            // to mention "hermes dashboard" in its argv.
+            _ = Darwin.kill(pid, SIGTERM)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
@@ -628,6 +629,44 @@ final class HealthViewModel {
                     self.actionMessage = nil
                 }
             }
+        }
+    }
+
+    /// Resolve the PID currently listening on the dashboard port via
+    /// `lsof -tiTCP:<port> -sTCP:LISTEN`. Returns nil when nothing is
+    /// bound or lsof fails. Trusting the port is correct here: Scarf
+    /// owns the configured port, and stopping the listener is exactly
+    /// the user-visible "Stop Dashboard" intent. We deliberately skip
+    /// `lsof -c hermes` — Hermes installs as a Python shebang script,
+    /// so the process COMM is `python` / `python3` and a `-c hermes`
+    /// filter silently misses every standard install.
+    private static func dashboardListenerPID(port: Int) -> pid_t? {
+        let lsof = Process()
+        lsof.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        lsof.arguments = ["-tiTCP:\(port)", "-sTCP:LISTEN"]
+
+        let output = Pipe()
+        lsof.standardOutput = output
+        lsof.standardError = FileHandle.nullDevice
+
+        do {
+            try lsof.run()
+            lsof.waitUntilExit()
+            // lsof exits 1 when nothing matches — that's "no listener",
+            // not an error. Anything else is something we can't recover
+            // from in this code path; log and bail.
+            guard lsof.terminationStatus == 0 else { return nil }
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            return text
+                .split(whereSeparator: \.isNewline)
+                .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+                .first
+        } catch {
+            Self.dashboardLogger.warning(
+                "Failed to locate dashboard listener: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
         }
     }
 

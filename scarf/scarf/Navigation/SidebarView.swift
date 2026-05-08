@@ -37,18 +37,23 @@ struct SidebarView: View {
         }
         interact.append(.skills)
 
-        var manage: [SidebarSection] = [.tools, .mcpServers, .gateway, .cron]
+        // Kanban moved from Manage → Monitor in v2.7.5: it's runtime
+        // work-in-progress, not configuration. Sits between Activity
+        // and the remaining Manage entries so users see "what's
+        // happening right now" at a glance.
+        var monitor: [SidebarSection] = [.dashboard, .insights, .sessions, .activity]
         if caps?.hasKanban ?? false {
-            manage.append(.kanban)
+            monitor.append(.kanban)
         }
-        manage.append(contentsOf: [.health, .logs, .settings])
+
+        let manage: [SidebarSection] = [.tools, .mcpServers, .gateway, .cron, .health, .logs, .settings]
 
         return [
             // Projects sits first now — promoting it to a first-class
             // entry point reflects how users actually open Scarf
             // (start with a project, not the dashboard).
             Section(title: "Projects", items: [.projects]),
-            Section(title: "Monitor",  items: [.dashboard, .insights, .sessions, .activity]),
+            Section(title: "Monitor",  items: monitor),
             Section(title: "Interact", items: interact),
             Section(title: "Configure", items: [.platforms, .personalities, .quickCommands, .credentialPools, .plugins, .webhooks, .profiles]),
             Section(title: "Manage",   items: manage),

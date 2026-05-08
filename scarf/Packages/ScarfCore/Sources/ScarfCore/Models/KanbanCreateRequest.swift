@@ -1,0 +1,120 @@
+import Foundation
+
+/// Swift-side parameter struct that maps 1:1 onto `hermes kanban create`
+/// flags. Constructing one then handing it to `KanbanService.create`
+/// keeps the CLI argv assembly in one place — VMs build a `KanbanCreateRequest`
+/// from form state and never assemble argv directly.
+public struct KanbanCreateRequest: Sendable, Equatable {
+    public var title: String
+    public var body: String?
+    public var assignee: String?
+    public var parentIds: [String]
+    public var workspace: KanbanWorkspaceSpec?
+    public var tenant: String?
+    public var priority: Int?
+    public var triage: Bool
+    public var idempotencyKey: String?
+    public var maxRuntimeSeconds: Int?
+    public var createdBy: String?
+    public var skills: [String]
+
+    public init(
+        title: String,
+        body: String? = nil,
+        assignee: String? = nil,
+        parentIds: [String] = [],
+        workspace: KanbanWorkspaceSpec? = nil,
+        tenant: String? = nil,
+        priority: Int? = nil,
+        triage: Bool = false,
+        idempotencyKey: String? = nil,
+        maxRuntimeSeconds: Int? = nil,
+        createdBy: String? = nil,
+        skills: [String] = []
+    ) {
+        self.title = title
+        self.body = body
+        self.assignee = assignee
+        self.parentIds = parentIds
+        self.workspace = workspace
+        self.tenant = tenant
+        self.priority = priority
+        self.triage = triage
+        self.idempotencyKey = idempotencyKey
+        self.maxRuntimeSeconds = maxRuntimeSeconds
+        self.createdBy = createdBy
+        self.skills = skills
+    }
+
+    /// Build the argv suffix this request maps to (everything after
+    /// `["kanban", "create"]`). Public for tests; consumers should
+    /// call `KanbanService.create` instead of building argv directly.
+    public func argv() -> [String] {
+        var args: [String] = []
+        if let body, !body.isEmpty {
+            args.append(contentsOf: ["--body", body])
+        }
+        if let assignee, !assignee.isEmpty {
+            args.append(contentsOf: ["--assignee", assignee])
+        }
+        for parent in parentIds {
+            args.append(contentsOf: ["--parent", parent])
+        }
+        if let workspace {
+            args.append(contentsOf: ["--workspace", workspace.cliValue])
+        }
+        if let tenant, !tenant.isEmpty {
+            args.append(contentsOf: ["--tenant", tenant])
+        }
+        if let priority {
+            args.append(contentsOf: ["--priority", String(priority)])
+        }
+        if triage {
+            args.append("--triage")
+        }
+        if let idempotencyKey, !idempotencyKey.isEmpty {
+            args.append(contentsOf: ["--idempotency-key", idempotencyKey])
+        }
+        if let maxRuntimeSeconds {
+            args.append(contentsOf: ["--max-runtime", "\(maxRuntimeSeconds)s"])
+        }
+        if let createdBy, !createdBy.isEmpty {
+            args.append(contentsOf: ["--created-by", createdBy])
+        }
+        for skill in skills {
+            args.append(contentsOf: ["--skill", skill])
+        }
+        args.append("--json")
+        // Title is the positional argument — appended last so flags
+        // can't be confused for it.
+        args.append(title)
+        return args
+    }
+}
+
+/// Typed mirror of Hermes's `--workspace` flag. `scratch` and `worktree`
+/// are bare strings on the wire; `dir:<absolute path>` is a colon-prefixed
+/// path. We keep them typed in Swift so callers can't typo "scrach".
+public enum KanbanWorkspaceSpec: Sendable, Equatable {
+    case scratch
+    case worktree
+    case directory(String)
+
+    public var cliValue: String {
+        switch self {
+        case .scratch:           return "scratch"
+        case .worktree:          return "worktree"
+        case .directory(let p):  return "dir:\(p)"
+        }
+    }
+
+    /// "scratch" / "worktree" / "dir" — the kind segment, suitable
+    /// for badge labels.
+    public var displayKind: String {
+        switch self {
+        case .scratch:    return "scratch"
+        case .worktree:   return "worktree"
+        case .directory:  return "dir"
+        }
+    }
+}

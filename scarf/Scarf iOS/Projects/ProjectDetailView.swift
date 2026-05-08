@@ -19,6 +19,7 @@ struct ProjectDetailView: View {
     let config: IOSServerConfig
 
     @Environment(\.scarfGoCoordinator) private var coordinator
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
 
     private static let sharedContextID: ServerID = ServerID(
         uuidString: "00000000-0000-0000-0000-0000000000A2"
@@ -35,7 +36,7 @@ struct ProjectDetailView: View {
     @State private var lastDashboardMtime: Date?
 
     enum DetailTab: Hashable {
-        case dashboard, site, sessions
+        case dashboard, site, sessions, kanban
     }
 
     private var serverContext: ServerContext {
@@ -55,6 +56,9 @@ struct ProjectDetailView: View {
         var tabs: [DetailTab] = [.dashboard]
         if siteWidget != nil { tabs.append(.site) }
         tabs.append(.sessions)
+        if capabilitiesStore?.capabilities.hasKanban ?? false {
+            tabs.append(.kanban)
+        }
         return tabs
     }
 
@@ -111,6 +115,7 @@ struct ProjectDetailView: View {
         case .dashboard: return "Dashboard"
         case .site: return "Site"
         case .sessions: return "Sessions"
+        case .kanban: return "Kanban"
         }
     }
 
@@ -129,6 +134,8 @@ struct ProjectDetailView: View {
             }
         case .sessions:
             ProjectSessionsView_iOS(project: project)
+        case .kanban:
+            ScarfGoKanbanView(project: project, context: serverContext)
         }
     }
 

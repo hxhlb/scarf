@@ -31,6 +31,16 @@ struct ProjectTemplateManifest: Codable, Sendable, Equatable {
     /// optional-field decoding keeps them working unchanged.
     let config: TemplateConfigSchema?
 
+    /// Per-project Kanban tenant slug (manifest schemaVersion 3+, v2.7.5).
+    /// Minted by `KanbanTenantResolver` on first kanban interaction
+    /// inside this project. Templates never set this — it's
+    /// user-machine-scoped state — but Codable's optional decoding
+    /// means template manifests stay valid alongside user-minted ones.
+    /// Once minted, immutable across renames so existing tasks stay
+    /// attributable to the project. Read by `ProjectAgentContextService`
+    /// to surface the tenant to the agent in the AGENTS.md block.
+    var kanbanTenant: String? = nil
+
     /// Filesystem-safe slug derived from `id` (`"owner/name"` → `"owner-name"`).
     /// Used for the install directory name, skills namespace, and cron-job tag.
     nonisolated var slug: String {

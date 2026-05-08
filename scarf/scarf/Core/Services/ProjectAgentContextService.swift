@@ -130,6 +130,7 @@ struct ProjectAgentContextService: Sendable {
         let configFieldsLine = renderConfigFieldsLine(for: project)
         let cronLines = renderCronLines(for: project, templateId: templateInfo?.id)
         let slashCommandNames = readSlashCommandNames(for: project)
+        let kanbanTenant = readKanbanTenant(for: project)
         let lockFilePresent = context.makeTransport().fileExists(
             project.path + "/.scarf/template.lock.json"
         )
@@ -162,6 +163,10 @@ struct ProjectAgentContextService: Sendable {
         if !slashCommandNames.isEmpty {
             let formatted = slashCommandNames.sorted().map { "`/\($0)`" }.joined(separator: ", ")
             lines.append("- **Project slash commands:** \(formatted). The user invokes these via the chat slash menu; you'll see the expanded prompt as a normal user message preceded by `<!-- scarf-slash:<name> -->`.")
+        }
+
+        if let tenant = kanbanTenant, !tenant.isEmpty {
+            lines.append("- **Kanban tenant:** `\(tenant)` — when creating Hermes Kanban tasks for this project, always pass `--tenant \(tenant)` to `hermes kanban create` so the tasks land on this project's board instead of the global \"Untagged\" pile.")
         }
 
         if lockFilePresent {
@@ -202,7 +207,29 @@ struct ProjectAgentContextService: Sendable {
         guard transport.fileExists(manifestPath) else { return nil }
         guard let data = try? transport.readFile(manifestPath) else { return nil }
         guard let manifest = try? JSONDecoder().decode(ProjectTemplateManifest.self, from: data) else { return nil }
+        // Bare-project manifests minted by KanbanTenantResolver carry
+        // a sentinel id of "scarf/<project-id>" and version "0.0.0".
+        // Don't surface those as a template — the template line is
+        // for actual installed templates only.
+        if manifest.id.hasPrefix("scarf/") && manifest.version == "0.0.0" {
+            return nil
+        }
         return (id: manifest.id, version: manifest.version)
+    }
+
+    /// Read `<project>/.scarf/manifest.json` for the Scarf-minted Kanban
+    /// tenant. Nil when no tenant has been minted yet (no kanban
+    /// interaction has happened for this project).
+    nonisolated private func readKanbanTenant(for project: ProjectEntry) -> String? {
+        let manifestPath = project.path + "/.scarf/manifest.json"
+        let transport = context.makeTransport()
+        guard transport.fileExists(manifestPath),
+              let data = try? transport.readFile(manifestPath),
+              let manifest = try? JSONDecoder().decode(ProjectTemplateManifest.self, from: data)
+        else {
+            return nil
+        }
+        return manifest.kanbanTenant
     }
 
     /// Build the "Configuration fields" bullet's tail. Returns a

@@ -73,6 +73,12 @@
       "since": "v2.7",
       "required": ["title", "cells"],
       "optional": ["columns"]
+    },
+    "kanban_summary": {
+      "description": "Compact mini-list of the top in-progress / blocked / todo Kanban tasks for this project's tenant, plus a glance string footer (\"12 todo · 3 running · 5 blocked\"). Pulls from `hermes kanban list` filtered by the project's `kanbanTenant` from manifest.json. Use `value` to set max_rows (default 3).",
+      "since": "v2.7.5",
+      "required": ["title"],
+      "optional": ["value"]
     }
   }
 }

@@ -81,6 +81,7 @@
         case "markdown_file": return renderMarkdownFile(widget);
         case "image":       return renderImage(widget);
         case "status_grid": return renderStatusGrid(widget);
+        case "kanban_summary": return renderKanbanSummary(widget);
         default:         return renderUnknown(widget);
       }
     } catch (e) {
@@ -533,6 +534,27 @@
       grid.appendChild(square);
     }
     card.appendChild(grid);
+    return card;
+  }
+
+  // ---------------------------------------------------------------------
+  // Kanban summary (catalog preview — no live kanban data)
+  // ---------------------------------------------------------------------
+
+  function renderKanbanSummary(widget) {
+    const card = elt("div", "widget widget-kanban-summary");
+    const head = elt("div", "widget-cron-head");
+    const icon = elt("span", "widget-cron-icon", "▤");
+    head.appendChild(icon);
+    head.appendChild(elt("span", "widget-title", widget.title || "Kanban"));
+    card.appendChild(head);
+    card.appendChild(elt("div", "widget-cron-meta",
+      "Live Kanban summary appears in Scarf after install."));
+    const maxRows = (widget.value && typeof widget.value === "number")
+      ? Math.max(1, Math.floor(widget.value))
+      : 3;
+    card.appendChild(elt("div", "widget-cron-hint",
+      `Shows up to ${maxRows} top in-progress / blocked / todo tasks for the project's Kanban tenant.`));
     return card;
   }
 

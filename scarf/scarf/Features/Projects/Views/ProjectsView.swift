@@ -7,6 +7,7 @@ private enum DashboardTab: String, CaseIterable {
     case dashboard = "Dashboard"
     case site = "Site"
     case sessions = "Sessions"
+    case kanban = "Kanban"
     case slashCommands = "Slash"
 
     var displayName: LocalizedStringResource {
@@ -14,6 +15,7 @@ private enum DashboardTab: String, CaseIterable {
         case .dashboard: return "Dashboard"
         case .site: return "Site"
         case .sessions: return "Sessions"
+        case .kanban: return "Kanban"
         case .slashCommands: return "Slash Commands"
         }
     }
@@ -23,6 +25,7 @@ private enum DashboardTab: String, CaseIterable {
         case .dashboard: return "square.grid.2x2"
         case .site: return "globe"
         case .sessions: return "bubble.left.and.bubble.right"
+        case .kanban: return "rectangle.split.3x1"
         case .slashCommands: return "slash.circle"
         }
     }
@@ -35,6 +38,7 @@ struct ProjectsView: View {
     @Environment(AppCoordinator.self) private var coordinator
     @Environment(HermesFileWatcher.self) private var fileWatcher
     @Environment(\.serverContext) private var serverContext
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
     @State private var showingAddSheet = false
     @State private var showingNewProjectSheet = false
     @State private var showingInstallSheet = false
@@ -444,6 +448,12 @@ struct ProjectsView: View {
                     } else {
                         ContentUnavailableView("No project selected", systemImage: "bubble.left.and.bubble.right")
                     }
+                case .kanban:
+                    if let project = viewModel.selectedProject {
+                        ProjectKanbanTab(project: project)
+                    } else {
+                        ContentUnavailableView("No project selected", systemImage: "rectangle.split.3x1")
+                    }
                 case .slashCommands:
                     if let project = viewModel.selectedProject {
                         ProjectSlashCommandsView(project: project)
@@ -488,9 +498,16 @@ struct ProjectsView: View {
     /// Tabs that should appear for the current project. `.site` is
     /// gated on the dashboard actually containing a webview widget,
     /// per v2.2 behavior — the Site tab is meaningless without one.
+    /// `.kanban` is gated on `HermesCapabilities.hasKanban` so
+    /// pre-v0.12 hosts don't see a broken destination.
     private var visibleTabs: [DashboardTab] {
-        DashboardTab.allCases.filter { tab in
-            tab != .site || siteWidget != nil
+        let caps = capabilitiesStore?.capabilities
+        return DashboardTab.allCases.filter { tab in
+            switch tab {
+            case .site:    return siteWidget != nil
+            case .kanban:  return caps?.hasKanban ?? false
+            default:       return true
+            }
         }
     }
 
@@ -656,6 +673,8 @@ struct WidgetView: View {
                 ImageWidgetView(widget: widget)
             case "status_grid":
                 StatusGridWidgetView(widget: widget)
+            case "kanban_summary":
+                KanbanSummaryWidgetView(widget: widget)
             default:
                 WidgetErrorCard(
                     title: widget.title,

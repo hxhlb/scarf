@@ -667,6 +667,27 @@ public struct HermesConfig: Sendable {
     /// useful for cost auditing and screen-recording demos.
     public var runtimeMetadataFooter: Bool
 
+    // -- Hermes v0.13 additions ----------------------------------------
+
+    /// `image_gen.model` (v0.13+) — overrides the per-provider default
+    /// image-gen model. Empty string means "let Hermes pick the
+    /// provider default". Hermes v0.12 advertised this key but ignored
+    /// it; Scarf's `AuxiliaryTab` only renders the picker when
+    /// `HermesCapabilities.hasImageGenModel` is `true`.
+    public var imageGenModel: String
+
+    /// `openrouter.response_cache.enabled` (v0.13+) — when true, Hermes
+    /// asks OpenRouter to cache responses for repeat prompts within a
+    /// session. Off by default in Scarf's parser per WS-6 plan
+    /// recommendation. UI gated on
+    /// `HermesCapabilities.hasOpenRouterResponseCache`.
+    // TODO(WS-6-Q1): the exact YAML key shape is provisional. Verify
+    // against a v0.13 host's `hermes config check` output before
+    // shipping (see WS-6-plan §Open Questions #1). Candidate alternative
+    // shapes: `providers.openrouter.response_cache_enabled` or
+    // `prompt_caching.openrouter.enabled`.
+    public var openrouterResponseCacheEnabled: Bool
+
     // Grouped blocks
     public var display: DisplaySettings
     public var terminal: TerminalSettings
@@ -747,11 +768,15 @@ public struct HermesConfig: Sendable {
         homeAssistant: HomeAssistantSettings,
         cacheTTL: String = "5m",
         redactionEnabled: Bool = false,
-        runtimeMetadataFooter: Bool = false
+        runtimeMetadataFooter: Bool = false,
+        imageGenModel: String = "",
+        openrouterResponseCacheEnabled: Bool = false
     ) {
         self.cacheTTL = cacheTTL
         self.redactionEnabled = redactionEnabled
         self.runtimeMetadataFooter = runtimeMetadataFooter
+        self.imageGenModel = imageGenModel
+        self.openrouterResponseCacheEnabled = openrouterResponseCacheEnabled
         self.model = model
         self.provider = provider
         self.maxTurns = maxTurns

@@ -195,6 +195,24 @@ final class SettingsViewModel {
         setSetting("auxiliary.\(task).timeout", value: String(value))
     }
 
+    // MARK: - Image generation (v0.13+)
+
+    /// `image_gen.model` — overrides the per-provider default image
+    /// model (Hermes v0.13+). Empty string clears the override.
+    /// Capability-gated in `AuxiliaryTab` so pre-v0.13 hosts never
+    /// invoke this setter.
+    func setImageGenModel(_ value: String) { setSetting("image_gen.model", value: value) }
+
+    /// `openrouter.response_cache.enabled` — toggles OpenRouter
+    /// response caching for repeat prompts (Hermes v0.13+).
+    /// Capability-gated in `AuxiliaryTab` so pre-v0.13 hosts never
+    /// invoke this setter.
+    // TODO(WS-6-Q1): the YAML key path is provisional — keep in lockstep
+    // with `HermesConfig+YAML.swift`'s parser line.
+    func setOpenRouterResponseCache(_ value: Bool) {
+        setSetting("openrouter.response_cache.enabled", value: value ? "true" : "false")
+    }
+
     // MARK: - Security / Privacy
 
     func setRedactSecrets(_ value: Bool) { setSetting("security.redact_secrets", value: value ? "true" : "false") }

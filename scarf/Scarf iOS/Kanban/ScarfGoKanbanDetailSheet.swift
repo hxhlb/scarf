@@ -15,18 +15,27 @@ struct ScarfGoKanbanDetailSheet: View {
     let context: ServerContext
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
 
     @State private var detail: HermesKanbanTaskDetail?
     @State private var runs: [HermesKanbanRun] = []
     @State private var isLoading = true
     @State private var error: String?
     @State private var selectedTab: DetailTab = .comments
+    @State private var selectedDiagnostic: HermesKanbanDiagnostic?
 
     enum DetailTab: String, CaseIterable, Identifiable {
         case comments = "Comments"
         case events = "Events"
         case runs = "Runs"
         var id: String { rawValue }
+    }
+
+    /// v0.13 capability gate. Defensive default `false` when no
+    /// capabilities store is present (preview / smoke harness) so the
+    /// sheet renders the v2.7.5 layout unchanged.
+    private var diagnosticsAvailable: Bool {
+        capabilitiesStore?.capabilities.hasKanbanDiagnostics ?? false
     }
 
     var body: some View {
@@ -41,6 +50,9 @@ struct ScarfGoKanbanDetailSheet: View {
                 }
         }
         .task(id: taskId) { await load() }
+        .sheet(item: $selectedDiagnostic) { diag in
+            DiagnosticDetailSheet(diagnostic: diag)
+        }
     }
 
     @ViewBuilder
@@ -62,6 +74,8 @@ struct ScarfGoKanbanDetailSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     headerCard(detail.task)
+                    hallucinationBadge(detail.task)
+                    autoBlockedBanner(detail.task)
                     if let body = detail.task.body, !body.isEmpty {
                         if let attributed = try? AttributedString(markdown: body) {
                             Text(attributed)
@@ -70,6 +84,9 @@ struct ScarfGoKanbanDetailSheet: View {
                             Text(body)
                                 .font(.body)
                         }
+                    }
+                    if diagnosticsAvailable, !detail.task.diagnostics.isEmpty {
+                        diagnosticsBlock(detail.task.diagnostics, label: "Diagnostics")
                     }
                     Picker("Section", selection: $selectedTab) {
                         ForEach(DetailTab.allCases) { tab in
@@ -90,7 +107,9 @@ struct ScarfGoKanbanDetailSheet: View {
 
     private func headerCard(_ task: HermesKanbanTask) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+            // Wrap chips in FlowLayout so the new v0.13 `retries` chip
+            // doesn't push the row over the iPhone-portrait width budget.
+            FlowLayout(spacing: 6) {
                 ScarfBadge(task.status.lowercased(), kind: badgeKind(for: task.status))
                 if let assignee = task.assignee, !assignee.isEmpty {
                     ScarfBadge(assignee, kind: .neutral)
@@ -101,12 +120,110 @@ struct ScarfGoKanbanDetailSheet: View {
                 if let tenant = task.tenant, !tenant.isEmpty {
                     ScarfBadge(tenant, kind: .brand)
                 }
+                if diagnosticsAvailable, let maxRetries = task.maxRetries {
+                    ScarfBadge("retries: \(maxRetries)", kind: .neutral)
+                        .accessibilityLabel("Max retries \(maxRetries)")
+                }
             }
             if let priority = task.priority {
                 Text("Priority \(priority)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// v0.13 hallucination gate. Worker-created cards land in the
+    /// `pending` state until a human verifies — Mac surfaces a Verify /
+    /// Reject button pair; iOS in v2.8.0 stays read-only and points
+    /// the user to the Mac app via the badge copy.
+    @ViewBuilder
+    private func hallucinationBadge(_ task: HermesKanbanTask) -> some View {
+        if diagnosticsAvailable,
+           KanbanHallucinationGate.from(task.hallucinationGateStatus) == .pending {
+            HStack(spacing: 6) {
+                Image(systemName: "questionmark.diamond.fill")
+                    .foregroundStyle(ScarfColor.warning)
+                Text("Worker-created — verify on Mac")
+                    .font(.subheadline)
+                    .foregroundStyle(ScarfColor.warning)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                ScarfColor.warning.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: ScarfRadius.md, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: ScarfRadius.md, style: .continuous)
+                    .strokeBorder(ScarfColor.warning.opacity(0.4), lineWidth: 1)
+            )
+            .accessibilityHint("Open this task on the Mac app to verify or reject the worker's claim.")
+        }
+    }
+
+    /// v0.13 auto-blocked banner. Surfaces `auto_blocked_reason` verbatim
+    /// when Hermes auto-blocks a task (retry cap hit, repeated tool
+    /// errors, etc.). Server-supplied copy — render verbatim.
+    @ViewBuilder
+    private func autoBlockedBanner(_ task: HermesKanbanTask) -> some View {
+        if diagnosticsAvailable,
+           KanbanStatus.from(task.status) == .blocked,
+           let reason = task.autoBlockedReason, !reason.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .foregroundStyle(ScarfColor.danger)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Auto-blocked")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(ScarfColor.danger)
+                    Text(reason)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                ScarfColor.danger.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: ScarfRadius.md, style: .continuous)
+            )
+        }
+    }
+
+    /// Tap-target diagnostic chip list. iOS substitute for the Mac
+    /// inspector's `.help()` tooltip — chips are tappable, tap presents
+    /// `DiagnosticDetailSheet` with the full message + timestamp.
+    @ViewBuilder
+    private func diagnosticsBlock(_ diags: [HermesKanbanDiagnostic], label: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            FlowLayout(spacing: 6) {
+                ForEach(diags) { diag in
+                    Button {
+                        selectedDiagnostic = diag
+                    } label: {
+                        ScarfBadge(diag.kind, kind: diagnosticBadgeKind(diag))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(diag.message ?? diag.kind)
+                    .accessibilityHint("Tap to see the full diagnostic message and timestamp.")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Maps the typed `KanbanDiagnosticKind.severity` enum into the
+    /// `ScarfBadgeKind` palette. Mirrors the Mac inspector's
+    /// `diagnosticBadge` helper so the two surfaces tint identically.
+    private func diagnosticBadgeKind(_ diag: HermesKanbanDiagnostic) -> ScarfBadgeKind {
+        switch KanbanDiagnosticKind.from(diag.kind).severity {
+        case .danger:  return .danger
+        case .warning: return .warning
+        case .neutral: return .neutral
         }
     }
 
@@ -193,6 +310,10 @@ struct ScarfGoKanbanDetailSheet: View {
                             Text(err)
                                 .font(.caption)
                                 .foregroundStyle(.red)
+                        }
+                        if diagnosticsAvailable, !run.diagnostics.isEmpty {
+                            diagnosticsBlock(run.diagnostics, label: "Run diagnostics")
+                                .padding(.top, 4)
                         }
                     }
                     .padding(8)

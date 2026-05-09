@@ -44,6 +44,19 @@ struct ChatView: View {
     private var supportsImagePrompts: Bool {
         capabilitiesStore?.capabilities.hasACPImagePrompts ?? false
     }
+
+    /// v0.13 `/goal` capability — drives the goal pill in `projectContextBar`.
+    /// Read-only on iOS in v2.8.0; users send `/goal` from the Mac. The pill
+    /// drops automatically when `vm.activeGoal` clears.
+    private var supportsActiveGoal: Bool {
+        capabilitiesStore?.capabilities.hasGoals ?? false
+    }
+
+    /// v0.13 ACP `/queue` capability — drives the queue-count chip. Tap is a
+    /// no-op in v2.8.0 (no popover); previews live on the Mac app.
+    private var supportsACPQueue: Bool {
+        capabilitiesStore?.capabilities.hasACPQueue ?? false
+    }
     /// Drives the composer's keyboard. Bound to the TextField via
     /// `.focused(...)`; cleared by the scroll-to-dismiss gesture on
     /// the message list AND by an explicit keyboard-toolbar button.
@@ -841,37 +854,47 @@ struct ChatView: View {
     /// informational.
     @ViewBuilder
     private var projectContextBar: some View {
-        if let projectName = controller.currentProjectName,
-           !projectName.isEmpty
-        {
+        // v2.8.0 (WS-9): the bar is no longer project-only — a non-empty
+        // active goal OR a non-empty queue mirror also light it up. Project
+        // chip, goal pill, and queue chip render independently and the bar
+        // shows when ANY of them is present.
+        let projectName = controller.currentProjectName ?? ""
+        let hasProject = !projectName.isEmpty
+        let hasGoal = supportsActiveGoal && controller.vm.activeGoal != nil
+        let hasQueue = supportsACPQueue && !controller.vm.queuedPrompts.isEmpty
+        if hasProject || hasGoal || hasQueue {
             HStack(spacing: 8) {
-                Image(systemName: "folder.fill")
-                    .foregroundStyle(.tint)
-                    .font(.caption)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Project chat")
-                        .font(.caption2)
-                        .foregroundStyle(ScarfColor.foregroundMuted)
-                    HStack(spacing: 6) {
-                        Text(projectName)
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        if let branch = controller.currentGitBranch, !branch.isEmpty {
-                            Label(branch, systemImage: "arrow.triangle.branch")
-                                .font(.caption2)
-                                .foregroundStyle(.tint)
-                                .labelStyle(.titleAndIcon)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(.tint.opacity(0.15), in: Capsule())
+                if hasProject {
+                    Image(systemName: "folder.fill")
+                        .foregroundStyle(.tint)
+                        .font(.caption)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Project chat")
+                            .font(.caption2)
+                            .foregroundStyle(ScarfColor.foregroundMuted)
+                        HStack(spacing: 6) {
+                            Text(projectName)
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(.primary)
                                 .lineLimit(1)
+                                .truncationMode(.tail)
+                            if let branch = controller.currentGitBranch, !branch.isEmpty {
+                                Label(branch, systemImage: "arrow.triangle.branch")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tint)
+                                    .labelStyle(.titleAndIcon)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(.tint.opacity(0.15), in: Capsule())
+                                    .lineLimit(1)
+                            }
                         }
                     }
                 }
+                if hasGoal { goalChip }
+                if hasQueue { queueChip }
                 Spacer()
-                if !controller.vm.projectScopedCommands.isEmpty {
+                if hasProject && !controller.vm.projectScopedCommands.isEmpty {
                     Button {
                         showSlashCommandsSheet = true
                     } label: {
@@ -893,6 +916,8 @@ struct ChatView: View {
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.tint.opacity(0.1))
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: hasGoal)
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: hasQueue)
             .sheet(isPresented: $showSlashCommandsSheet) {
                 ProjectSlashCommandsBrowser(
                     projectName: projectName,
@@ -900,6 +925,55 @@ struct ChatView: View {
                 )
             }
         }
+    }
+
+    /// v0.13 goal pill — purely informational mirror of the agent's
+    /// currently-locked `/goal`. Read-only on iOS; `/goal --clear` lives on
+    /// the Mac app and the pill drops on the next VM update. Semantic
+    /// `.subheadline` font so the goal text scales with Dynamic Type
+    /// (it's content the user reads, not chrome). VoiceOver gets the full
+    /// untruncated text via the accessibility label.
+    @ViewBuilder
+    private var goalChip: some View {
+        if let goal = controller.vm.activeGoal {
+            Label(truncatedGoalText(goal.text), systemImage: "scope")
+                .labelStyle(.titleAndIcon)
+                .font(.subheadline)
+                .foregroundStyle(ScarfColor.info)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(ScarfColor.info.opacity(0.16), in: Capsule())
+                .lineLimit(1)
+                .accessibilityLabel("Goal locked: \(goal.text)")
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+        }
+    }
+
+    /// v0.13 queue chip — read-only count of prompts queued via `/queue`.
+    /// Tap is a no-op in v2.8.0 (no popover); the source of truth lives on
+    /// the Mac app. Defaults to one fixed pill regardless of count.
+    @ViewBuilder
+    private var queueChip: some View {
+        let count = controller.vm.queuedPrompts.count
+        if count > 0 {
+            Label("\(count) queued", systemImage: "tray.full")
+                .labelStyle(.titleAndIcon)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.tint)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.tint.opacity(0.18), in: Capsule())
+                .lineLimit(1)
+                .accessibilityLabel("\(count) prompt\(count == 1 ? "" : "s") queued — manage on the Mac app")
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+        }
+    }
+
+    /// Trim long goal text to fit a chip beside the project name on iPhone
+    /// portrait. The full text rides VoiceOver via the chip's accessibility
+    /// label.
+    private func truncatedGoalText(_ text: String) -> String {
+        text.count <= 28 ? text : String(text.prefix(25)) + "…"
     }
 
     /// Shown while we're opening the SSH exec channel + spawning

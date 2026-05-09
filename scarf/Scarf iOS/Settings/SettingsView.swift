@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var vm: IOSSettingsViewModel
     @State private var showRawYAML = false
     @State private var editingSpec: SettingSpec?
+    @State private var showV013FeaturesSheet = false
     /// v2.7 — Scarf-local opt-in to bulk-fetch tool result CONTENT
     /// when resuming past chats. Default off; the shared
     /// `RichChatViewModel` reads this same UserDefaults key on
@@ -20,6 +21,16 @@ struct SettingsView: View {
     /// behavior as Mac.
     @AppStorage(RichChatViewModel.loadHistoricalToolResultsKey)
     private var loadHistoricalToolResults: Bool = false
+
+    /// Drives v0.13 read-only surfaces (features-active badge,
+    /// platforms-section additions). Defensive `?? .empty` resolves
+    /// every gate to `false` outside `ContextBoundRoot` (preview /
+    /// smoke harness) so the v2.7.5 layout is the unconditional
+    /// fallback.
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
+    private var caps: HermesCapabilities {
+        capabilitiesStore?.capabilities ?? .empty
+    }
 
     private static let sharedContextID: ServerID = ServerID(
         uuidString: "00000000-0000-0000-0000-0000000000A1"
@@ -38,6 +49,10 @@ struct SettingsView: View {
                     Label(err, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(ScarfColor.warning)
                 }
+            }
+
+            if caps.isV013OrLater {
+                v013ActiveBadgeSection
             }
 
             if !vm.isLoading || vm.config.model != "unknown" {
@@ -79,6 +94,35 @@ struct SettingsView: View {
                 onDismiss: {}
             )
         }
+        .sheet(isPresented: $showV013FeaturesSheet) {
+            V013FeaturesSheet()
+        }
+    }
+
+    /// v0.13 features-active badge. Only shown when the connected host
+    /// is on the v0.13 line; tap presents `V013FeaturesSheet`. Read-only
+    /// — there's no settings change behind the badge, just a
+    /// what's-new affordance.
+    @ViewBuilder
+    private var v013ActiveBadgeSection: some View {
+        Section {
+            Button {
+                showV013FeaturesSheet = true
+            } label: {
+                HStack(spacing: 8) {
+                    ScarfBadge("v0.13 features active", kind: .success)
+                    Spacer()
+                    Text("Learn more")
+                        .font(.caption)
+                        .foregroundStyle(.tint)
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .listRowBackground(ScarfColor.success.opacity(0.06))
     }
 
     @ViewBuilder
@@ -284,7 +328,117 @@ struct SettingsView: View {
             yesNoRow("Telegram: require mention", vm.config.telegram.requireMention)
             LabeledContent("Slack: reply mode", value: vm.config.slack.replyToMode)
             yesNoRow("Matrix: require mention", vm.config.matrix.requireMention)
+
+            // v0.13 additions: each is independently capability-gated
+            // and read-only on iOS in v2.8.0. Editing lives on Mac.
+            if caps.hasGoogleChatPlatform {
+                LabeledContent("Google Chat", value: googleChatStatusLabel)
+            }
+            if caps.hasGatewayBusyAckToggle {
+                gatewayBusyAckRow
+            }
+            if caps.hasGatewayRestartNotification {
+                gatewayRestartNotificationRow
+            }
+            if caps.hasGatewayAllowlists {
+                gatewayAllowlistsRows
+            }
         }
+    }
+
+    /// v0.13 Google Chat status. Whether the platform shows up at all
+    /// is driven by whether `gateway.platforms.google-chat.*` exists in
+    /// config.yaml on the remote — if absent, we render "Not configured".
+    /// Hermes accepts either `google-chat` or `googlechat` as the
+    /// identifier; check both spellings defensively.
+    private var googleChatStatusLabel: String {
+        if vm.config.gatewayPlatforms["google-chat"] != nil
+            || vm.config.gatewayPlatforms["googlechat"] != nil {
+            return "configured"
+        }
+        return "not configured"
+    }
+
+    /// v0.13 cross-platform busy-ack toggle. We summarize per platform
+    /// so users on iOS get a faithful read of the per-platform flag —
+    /// "off on slack, on elsewhere" is a real configuration shape.
+    /// Empty `gatewayPlatforms` shows "default".
+    @ViewBuilder
+    private var gatewayBusyAckRow: some View {
+        let value = summariseGatewayBool(\GatewayPlatformSettings.busyAckEnabled, defaultLabel: "on")
+        LabeledContent("Gateway: busy ack", value: value)
+    }
+
+    @ViewBuilder
+    private var gatewayRestartNotificationRow: some View {
+        let value = summariseGatewayBool(\GatewayPlatformSettings.gatewayRestartNotification, defaultLabel: "off")
+        LabeledContent("Gateway: restart notification", value: value)
+    }
+
+    /// Render a per-key summary across `gatewayPlatforms`. When all
+    /// configured platforms agree on the same value we show a single
+    /// "yes" / "no". When they disagree we show "mixed (N platforms)"
+    /// to nudge the user to the Mac app for the per-platform detail.
+    private func summariseGatewayBool(
+        _ keyPath: KeyPath<GatewayPlatformSettings, Bool>,
+        defaultLabel: String
+    ) -> String {
+        let values = vm.config.gatewayPlatforms.values.map { $0[keyPath: keyPath] }
+        guard !values.isEmpty else { return defaultLabel + " (default)" }
+        let allTrue = values.allSatisfy { $0 }
+        let allFalse = values.allSatisfy { !$0 }
+        if allTrue { return "yes" }
+        if allFalse { return "no" }
+        return "mixed (\(values.count) platforms)"
+    }
+
+    /// v0.13 cross-platform allowlist summaries. Each kind
+    /// (channels / chats / rooms) renders as a DisclosureGroup with the
+    /// total count in the label and a flat list of "platform: id" rows
+    /// when expanded. iPhone-friendly: collapsed by default so the
+    /// section stays compact.
+    @ViewBuilder
+    private var gatewayAllowlistsRows: some View {
+        gatewayAllowlistDisclosure(kind: .channels)
+        gatewayAllowlistDisclosure(kind: .chats)
+        gatewayAllowlistDisclosure(kind: .rooms)
+    }
+
+    @ViewBuilder
+    private func gatewayAllowlistDisclosure(kind: GatewayAllowlistKind) -> some View {
+        let entries = gatewayAllowlistEntries(kind: kind)
+        if !entries.isEmpty {
+            DisclosureGroup {
+                ForEach(entries, id: \.self) { entry in
+                    Text(entry)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            } label: {
+                LabeledContent("Allowed \(kind.pluralNoun)") {
+                    Text("\(entries.count)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    /// Flatten the per-platform allowlists for `kind` across every
+    /// configured platform. Each entry is rendered as
+    /// `"platformName: id"` so the user sees which platform the id
+    /// belongs to without an extra DisclosureGroup level.
+    private func gatewayAllowlistEntries(kind: GatewayAllowlistKind) -> [String] {
+        var out: [String] = []
+        for (platform, settings) in vm.config.gatewayPlatforms.sorted(by: { $0.key < $1.key }) {
+            guard GatewayAllowlistKind.kind(for: platform) == kind else { continue }
+            for item in settings.items(for: kind) where !item.isEmpty {
+                out.append("\(platform): \(item)")
+            }
+        }
+        return out
     }
 
     /// Diagnostics → Performance entry point. Hidden from the

@@ -15,6 +15,35 @@ final class HermesFileWatcher {
     /// the project list changes.
     private var remoteProjectPaths: [String] = []
 
+    /// Coalescing timer for `lastChangeDate` ticks. v0.13 Hermes writes to
+    /// `state.db-wal` and rotating logs at ~10 Hz during gateway activity;
+    /// every observing view (`DashboardView`, `ProjectsView`,
+    /// `ProjectSessionsView`, half a dozen widgets) re-fires its `.onChange`
+    /// or `.task(id:)` on every tick, which stacked concurrent dashboard
+    /// loads on v0.13 hosts and tripped sqlite contention on the read-only
+    /// state.db handle. We coalesce to at most one tick per
+    /// `coalesceWindow` so a burst of FSEvents collapses into one observable
+    /// state mutation.
+    ///
+    /// **Two limits, not one.** A pure trailing-debounce would starve under
+    /// sustained WAL writes — the timer would keep getting cancelled and
+    /// rescheduled, and a coincident `gateway_state.json` Start/Stop touch
+    /// would never propagate until WAL activity quieted down. So we publish
+    /// when EITHER (a) `coalesceWindow` of quiet has elapsed since the last
+    /// fire, OR (b) `maxWait` has elapsed since the first fire of the
+    /// current burst — whichever comes first. The max-wait guarantees a
+    /// floor of one observable mutation per `maxWait` even during sustained
+    /// activity. Numbers picked to keep the dashboard responsive on a
+    /// single `touch` while surviving v0.13's WAL-write storm.
+    private var pendingCoalesceTimer: DispatchWorkItem?
+    private var pendingTickDate: Date?
+    /// Wall-clock when the current burst began. Set on the first
+    /// `scheduleCoalescedTick` fire after a quiet window; cleared whenever
+    /// the timer fires. Drives the `maxWait` floor below.
+    private var burstStartDate: Date?
+    private static let coalesceWindow: TimeInterval = 0.5
+    private static let maxWait: TimeInterval = 1.5
+
     let context: ServerContext
     private let transport: any ServerTransport
 
@@ -92,10 +121,51 @@ final class HermesFileWatcher {
             for await _ in stream {
                 ScarfMon.event(.transport, "mac.fileWatcher.remoteDelta", count: 1)
                 await MainActor.run { [weak self] in
-                    self?.lastChangeDate = Date()
+                    self?.scheduleCoalescedTick()
                 }
             }
         }
+    }
+
+    /// Coalesce a burst of FSEvents (or remote-poll deltas) into a single
+    /// `lastChangeDate` mutation. Two limits decide when the publish fires,
+    /// whichever comes first:
+    ///
+    /// 1. **Quiet window**: `coalesceWindow` seconds have elapsed since the
+    ///    last fire. Each new fire pushes this out — pure debounce shape.
+    /// 2. **Max wait**: `maxWait` seconds have elapsed since the FIRST fire
+    ///    of the current burst. This bounds the latency floor under
+    ///    sustained activity (v0.13's ~10 Hz WAL-write storm) so a
+    ///    coincident `gateway_state.json` Start/Stop touch can't be starved
+    ///    indefinitely behind a continuously-rescheduling debounce timer.
+    ///
+    /// Runs on `.main` (the FSEvents queue and the remote-poll
+    /// MainActor.run) so observers see the publish on MainActor without a
+    /// hop. The work item self-clears `burstStartDate` when it fires so the
+    /// next burst starts a fresh max-wait window.
+    private func scheduleCoalescedTick() {
+        let now = Date()
+        pendingTickDate = now
+        if burstStartDate == nil {
+            burstStartDate = now
+        }
+        pendingCoalesceTimer?.cancel()
+        // Pick the deadline as the earlier of (a) `coalesceWindow` from now,
+        // and (b) `maxWait` from the burst start. The latter only matters
+        // when fires keep arriving faster than `coalesceWindow`; in the
+        // single-fire / quiet-burst case both reduce to the same value.
+        let quietDeadline = now.addingTimeInterval(Self.coalesceWindow)
+        let maxWaitDeadline = (burstStartDate ?? now).addingTimeInterval(Self.maxWait)
+        let firingDate = min(quietDeadline, maxWaitDeadline)
+        let delay = max(0, firingDate.timeIntervalSince(now))
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let date = self.pendingTickDate else { return }
+            self.pendingTickDate = nil
+            self.burstStartDate = nil
+            self.lastChangeDate = date
+        }
+        pendingCoalesceTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func stopWatching() {
@@ -108,6 +178,10 @@ final class HermesFileWatcher {
         timer = nil
         remotePollTask?.cancel()
         remotePollTask = nil
+        pendingCoalesceTimer?.cancel()
+        pendingCoalesceTimer = nil
+        pendingTickDate = nil
+        burstStartDate = nil
     }
 
     /// Watch each project's `dashboard.json` AND its enclosing `.scarf/`
@@ -162,7 +236,7 @@ final class HermesFileWatcher {
             // message persisted); high counts when nothing's happening
             // suggest a runaway watcher install.
             ScarfMon.event(.transport, "mac.fileWatcher.localFire", count: 1)
-            self?.lastChangeDate = Date()
+            self?.scheduleCoalescedTick()
         }
         source.setCancelHandler {
             Darwin.close(fd)

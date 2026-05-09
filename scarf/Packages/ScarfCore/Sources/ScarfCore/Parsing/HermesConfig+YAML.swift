@@ -337,7 +337,18 @@ public extension HermesConfig {
             cacheTTL: str("prompt_caching.cache_ttl", default: "5m"),
             redactionEnabled: bool("redaction.enabled", default: false),
             runtimeMetadataFooter: bool("agent.runtime_metadata_footer", default: false),
-            gatewayPlatforms: gatewayPlatforms
+            gatewayPlatforms: gatewayPlatforms,
+            // -- v0.13 additions -------------------------------------
+            // TODO(WS-6-Q1): the `openrouter.response_cache.enabled`
+            // key shape is provisional pending verification against a
+            // v0.13 `hermes config check`. If upstream uses a different
+            // path (e.g. `providers.openrouter.response_cache_enabled`
+            // or nested under `prompt_caching`), update this single
+            // line + the matching `setSetting` key in
+            // `SettingsViewModel.setOpenRouterResponseCache`. Default
+            // is `false` per WS-6-plan §Open Questions #2.
+            imageGenModel: str("image_gen.model", default: ""),
+            openrouterResponseCacheEnabled: bool("openrouter.response_cache.enabled", default: false)
         )
     }
 }

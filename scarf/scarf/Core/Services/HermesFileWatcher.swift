@@ -23,12 +23,26 @@ final class HermesFileWatcher {
     /// loads on v0.13 hosts and tripped sqlite contention on the read-only
     /// state.db handle. We coalesce to at most one tick per
     /// `coalesceWindow` so a burst of FSEvents collapses into one observable
-    /// state mutation. 500 ms picks the smallest window that still feels
-    /// responsive on a single keystroke `touch dashboard.json` while
-    /// surviving v0.13's WAL-write storm.
+    /// state mutation.
+    ///
+    /// **Two limits, not one.** A pure trailing-debounce would starve under
+    /// sustained WAL writes — the timer would keep getting cancelled and
+    /// rescheduled, and a coincident `gateway_state.json` Start/Stop touch
+    /// would never propagate until WAL activity quieted down. So we publish
+    /// when EITHER (a) `coalesceWindow` of quiet has elapsed since the last
+    /// fire, OR (b) `maxWait` has elapsed since the first fire of the
+    /// current burst — whichever comes first. The max-wait guarantees a
+    /// floor of one observable mutation per `maxWait` even during sustained
+    /// activity. Numbers picked to keep the dashboard responsive on a
+    /// single `touch` while surviving v0.13's WAL-write storm.
     private var pendingCoalesceTimer: DispatchWorkItem?
     private var pendingTickDate: Date?
+    /// Wall-clock when the current burst began. Set on the first
+    /// `scheduleCoalescedTick` fire after a quiet window; cleared whenever
+    /// the timer fires. Drives the `maxWait` floor below.
+    private var burstStartDate: Date?
     private static let coalesceWindow: TimeInterval = 0.5
+    private static let maxWait: TimeInterval = 1.5
 
     let context: ServerContext
     private let transport: any ServerTransport
@@ -114,23 +128,44 @@ final class HermesFileWatcher {
     }
 
     /// Coalesce a burst of FSEvents (or remote-poll deltas) into a single
-    /// `lastChangeDate` mutation after `coalesceWindow` seconds of quiet.
-    /// Each new fire records the latest event date and pushes the timer
-    /// out, so a 100-ms-spaced burst of 50 fires collapses to one observable
-    /// state mutation `coalesceWindow` ms after the LAST fire — same shape
-    /// as a debounce. Runs on `.main` (the FSEvents queue) so observers
-    /// see the publish on MainActor without a hop.
+    /// `lastChangeDate` mutation. Two limits decide when the publish fires,
+    /// whichever comes first:
+    ///
+    /// 1. **Quiet window**: `coalesceWindow` seconds have elapsed since the
+    ///    last fire. Each new fire pushes this out — pure debounce shape.
+    /// 2. **Max wait**: `maxWait` seconds have elapsed since the FIRST fire
+    ///    of the current burst. This bounds the latency floor under
+    ///    sustained activity (v0.13's ~10 Hz WAL-write storm) so a
+    ///    coincident `gateway_state.json` Start/Stop touch can't be starved
+    ///    indefinitely behind a continuously-rescheduling debounce timer.
+    ///
+    /// Runs on `.main` (the FSEvents queue and the remote-poll
+    /// MainActor.run) so observers see the publish on MainActor without a
+    /// hop. The work item self-clears `burstStartDate` when it fires so the
+    /// next burst starts a fresh max-wait window.
     private func scheduleCoalescedTick() {
         let now = Date()
         pendingTickDate = now
+        if burstStartDate == nil {
+            burstStartDate = now
+        }
         pendingCoalesceTimer?.cancel()
+        // Pick the deadline as the earlier of (a) `coalesceWindow` from now,
+        // and (b) `maxWait` from the burst start. The latter only matters
+        // when fires keep arriving faster than `coalesceWindow`; in the
+        // single-fire / quiet-burst case both reduce to the same value.
+        let quietDeadline = now.addingTimeInterval(Self.coalesceWindow)
+        let maxWaitDeadline = (burstStartDate ?? now).addingTimeInterval(Self.maxWait)
+        let firingDate = min(quietDeadline, maxWaitDeadline)
+        let delay = max(0, firingDate.timeIntervalSince(now))
         let work = DispatchWorkItem { [weak self] in
             guard let self, let date = self.pendingTickDate else { return }
             self.pendingTickDate = nil
+            self.burstStartDate = nil
             self.lastChangeDate = date
         }
         pendingCoalesceTimer = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.coalesceWindow, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func stopWatching() {
@@ -146,6 +181,7 @@ final class HermesFileWatcher {
         pendingCoalesceTimer?.cancel()
         pendingCoalesceTimer = nil
         pendingTickDate = nil
+        burstStartDate = nil
     }
 
     /// Watch each project's `dashboard.json` AND its enclosing `.scarf/`

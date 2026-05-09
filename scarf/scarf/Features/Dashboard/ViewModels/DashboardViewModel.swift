@@ -56,12 +56,12 @@ final class DashboardViewModel {
     func load() async {
         // Coalesce overlapping triggers: the `.task` first-appear and the
         // `.onChange(fileWatcher.lastChangeDate)` observer can both fire
-        // a load in the same tick. Without this guard a v0.13 host's
-        // WAL-write storm walked over the previous load mid-snapshot
-        // (see HermesFileWatcher.scheduleCoalescedTick + the v2.8 dogfood
-        // bug report). If a load is already running, await its
-        // completion and return — the caller already has a fresh snapshot
-        // by the time `await` returns.
+        // a load in the same tick. Without this guard a Hermes v0.13
+        // host's WAL-write storm walked over the previous load
+        // mid-snapshot (see `HermesFileWatcher.scheduleCoalescedTick`).
+        // If a load is already running, await its completion and return
+        // — the caller already has a fresh snapshot by the time `await`
+        // returns.
         if let existing = inFlightLoad {
             await existing.value
             return

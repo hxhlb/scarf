@@ -15,18 +15,15 @@ struct CuratorView: View {
     @State private var viewModel: CuratorViewModel
     @Environment(\.hermesCapabilities) private var capabilitiesStore
 
-    // TODO(WS-9): add a read-only "Archived" section mirroring the Mac
-    // surface (no per-row Restore/Prune mutations on iOS in this
-    // release). Gate on `capabilitiesStore?.capabilities.hasCuratorArchive`.
-
     init(context: ServerContext) {
         _viewModel = State(initialValue: CuratorViewModel(context: context))
     }
 
-    /// Whether the connected host runs curator synchronously. Threaded
-    /// into `runNow` so v0.13+ hosts block-with-spinner; pre-v0.13 fire
-    /// and forget. WS-9 will surface a richer iOS progress affordance
-    /// alongside the read-only Archived section.
+    /// v0.13 capability gate. Drives both the synchronous `runNow`
+    /// blocking-with-spinner behavior AND the read-only Archived
+    /// section. Pre-v0.13 hosts skip the archive load entirely so we
+    /// don't spam `hermes curator list-archived` against a binary that
+    /// would error out.
     private var archiveAvailable: Bool {
         capabilitiesStore?.capabilities.hasCuratorArchive ?? false
     }
@@ -91,18 +88,88 @@ struct CuratorView: View {
                         .textSelection(.enabled)
                 }
             }
+
+            if archiveAvailable {
+                archivedSection
+            }
         }
         .navigationTitle("Curator")
         .navigationBarTitleDisplayMode(.large)
         .refreshable {
             await viewModel.load()
+            if archiveAvailable {
+                await viewModel.loadArchive()
+            }
         }
         .overlay(alignment: .bottom) {
             if let toast = viewModel.transientMessage {
                 toastView(toast)
             }
         }
-        .task { await viewModel.load() }
+        .task {
+            await viewModel.load()
+            if archiveAvailable {
+                await viewModel.loadArchive()
+            }
+        }
+    }
+
+    /// v0.13 read-only Archived list. iOS doesn't expose Restore /
+    /// Prune-this / Prune-all — that's a Mac-only surface in v2.8.0.
+    /// The footer signposts the user to the Mac app when there are
+    /// rows to act on.
+    @ViewBuilder
+    private var archivedSection: some View {
+        Section {
+            if viewModel.archivedSkills.isEmpty {
+                Text("No archived skills — Curator will move stale skills here after the next review cycle.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(viewModel.archivedSkills) { skill in
+                    archivedRow(skill)
+                }
+            }
+        } header: {
+            Text("Archived")
+        } footer: {
+            if !viewModel.archivedSkills.isEmpty {
+                Text("Restore or prune archived skills from the Mac app.")
+                    .font(.caption)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func archivedRow(_ skill: HermesCuratorArchivedSkill) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(skill.name)
+                    .font(.body)
+                    .lineLimit(1)
+                Spacer()
+                if let category = skill.category, !category.isEmpty {
+                    ScarfBadge(category, kind: .neutral)
+                }
+            }
+            HStack(spacing: 6) {
+                if let reason = skill.reason, !reason.isEmpty {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Text(skill.archivedAtLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            if let size = skill.sizeBytes, size > 0 {
+                Text(skill.sizeLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 
     private var statusRow: some View {

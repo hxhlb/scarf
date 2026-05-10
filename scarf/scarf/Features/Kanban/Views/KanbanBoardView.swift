@@ -24,13 +24,19 @@ struct KanbanBoardView: View {
         context: ServerContext,
         tenantFilter: String? = nil,
         projectPath: String? = nil,
-        projectName: String? = nil
+        projectName: String? = nil,
+        sessionStartedAt: Date? = nil
     ) {
-        _viewModel = State(initialValue: KanbanBoardViewModel(
+        let vm = KanbanBoardViewModel(
             context: context,
             tenantFilter: tenantFilter,
             projectPath: projectPath
-        ))
+        )
+        vm.sessionStartedAt = sessionStartedAt
+        // Default the toggle on when the handoff seeded a baseline,
+        // off otherwise. The pill in the toolbar lets the user flip it.
+        vm.filterBySessionStart = sessionStartedAt != nil
+        _viewModel = State(initialValue: vm)
         self.projectName = projectName
     }
 
@@ -51,6 +57,13 @@ struct KanbanBoardView: View {
     @State private var completeSheetTaskId: String?
     @State private var completeSheetTitle: String = ""
 
+    /// Cached gating state — refreshed on appear + after a successful
+    /// `Enable now` click. `.disabled` triggers the toolset-off hint
+    /// above the board so a user staring at an empty board has a
+    /// clear next step. `.unknown` and `.enabled` suppress the hint.
+    @State private var toolsetState: KanbanToolsetState?
+    @State private var isEnablingToolset = false
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -60,6 +73,9 @@ struct KanbanBoardView: View {
             }
             if let notice = viewModel.transientNotice {
                 noticeBanner(notice)
+            }
+            if shouldShowToolsetDisabledHint {
+                toolsetDisabledBanner
             }
             HStack(spacing: 0) {
                 boardArea
@@ -75,6 +91,7 @@ struct KanbanBoardView: View {
         .onAppear {
             viewModel.startPolling()
             Task { await viewModel.refreshAssignees() }
+            Task { await refreshToolsetState() }
         }
         .onDisappear { viewModel.stopPolling() }
         .sheet(isPresented: $showingCreateSheet) {
@@ -122,6 +139,9 @@ struct KanbanBoardView: View {
         ) {
             HStack(spacing: ScarfSpace.s2) {
                 glanceText
+                if viewModel.sessionStartedAt != nil {
+                    sessionStartedFilterPill
+                }
                 if viewModel.tenantFilter == nil {
                     assigneeFilterMenu
                 }
@@ -144,6 +164,59 @@ struct KanbanBoardView: View {
                 .buttonStyle(ScarfPrimaryButton())
             }
         }
+    }
+
+    /// Toggle pill that appears only when the chat → Kanban hand-off
+    /// seeded a baseline timestamp. Tap to flip between "tasks
+    /// created since this chat opened" (filtered) and "all tasks for
+    /// this tenant" (unfiltered). The lens is approximate — Hermes
+    /// doesn't track per-session task linkage in this version, so
+    /// the time window is a best-effort proxy.
+    private var sessionStartedFilterPill: some View {
+        Button {
+            viewModel.filterBySessionStart.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: viewModel.filterBySessionStart
+                    ? "clock.fill" : "clock")
+                Text(sessionStartedPillLabel)
+                    .scarfStyle(.caption)
+            }
+            .padding(.horizontal, ScarfSpace.s2)
+            .padding(.vertical, 3)
+            .background(
+                Capsule().fill(
+                    (viewModel.filterBySessionStart
+                        ? ScarfColor.accent
+                        : ScarfColor.foregroundFaint).opacity(0.16)
+                )
+            )
+            .foregroundStyle(
+                viewModel.filterBySessionStart
+                    ? ScarfColor.accent
+                    : ScarfColor.foregroundMuted
+            )
+        }
+        .buttonStyle(.plain)
+        .help(sessionStartedPillHelp)
+    }
+
+    private var sessionStartedPillLabel: String {
+        guard let started = viewModel.sessionStartedAt else {
+            return "Since chat opened"
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return viewModel.filterBySessionStart
+            ? "Since \(formatter.string(from: started))"
+            : "All tasks"
+    }
+
+    private var sessionStartedPillHelp: String {
+        viewModel.filterBySessionStart
+            ? "Showing tasks created after the chat opened. Tap to show all tenant tasks."
+            : "Showing all tasks for this tenant. Tap to filter to tasks created after the chat opened."
     }
 
     private var subtitle: String {
@@ -335,6 +408,74 @@ struct KanbanBoardView: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(ScarfColor.warning.opacity(0.12))
+    }
+
+    /// Show the toolset-off banner only when the host genuinely lacks
+    /// the toolset AND there's reason to surface it (the user is
+    /// looking at an empty board, or has an empty per-project board).
+    /// We don't surface the banner on a board that already has tasks,
+    /// since the user can clearly see kanban activity is happening
+    /// somewhere — the gating is a teaching moment for the empty case.
+    private var shouldShowToolsetDisabledHint: Bool {
+        guard case .disabled = toolsetState else { return false }
+        return viewModel.tasks.isEmpty
+    }
+
+    private var toolsetDisabledBanner: some View {
+        HStack(spacing: ScarfSpace.s2) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(ScarfColor.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Agents in chat can't create Kanban tasks")
+                    .scarfStyle(.captionStrong)
+                    .foregroundStyle(ScarfColor.foregroundPrimary)
+                Text("The `kanban` toolset isn't enabled for the chat platform, so the agent has zero kanban tools in its schema.")
+                    .scarfStyle(.caption)
+                    .foregroundStyle(ScarfColor.foregroundMuted)
+            }
+            Spacer(minLength: ScarfSpace.s2)
+            Button {
+                Task { await enableToolsetFromBanner() }
+            } label: {
+                if isEnablingToolset {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Enable now").scarfStyle(.caption)
+                }
+            }
+            .buttonStyle(ScarfSecondaryButton())
+            .disabled(isEnablingToolset)
+        }
+        .padding(.horizontal, ScarfSpace.s3)
+        .padding(.vertical, ScarfSpace.s2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ScarfColor.warning.opacity(0.12))
+    }
+
+    private func refreshToolsetState() async {
+        let detector = KanbanToolsetDetector(context: viewModel.context)
+        let state = await detector.detect()
+        await MainActor.run {
+            self.toolsetState = state
+        }
+    }
+
+    private func enableToolsetFromBanner() async {
+        await MainActor.run { isEnablingToolset = true }
+        let enabler = KanbanToolsetEnabler(context: viewModel.context)
+        let result = await enabler.enable()
+        await MainActor.run {
+            isEnablingToolset = false
+            switch result {
+            case .enabled:
+                viewModel.transientNotice =
+                    "Kanban tools enabled. Start a new chat to pick this up."
+            case .failed(let message):
+                viewModel.transientNotice =
+                    "Couldn't enable: \(message)"
+            }
+        }
+        await refreshToolsetState()
     }
 
     private func noticeBanner(_ message: String) -> some View {

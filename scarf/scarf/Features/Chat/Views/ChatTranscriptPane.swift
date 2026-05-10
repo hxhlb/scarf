@@ -12,6 +12,13 @@ struct ChatTranscriptPane: View {
     var onSend: (String, [ChatImageAttachment]) -> Void
     var isEnabled: Bool
     @Environment(\.hermesCapabilities) private var capabilitiesStore
+    @Environment(AppCoordinator.self) private var coordinator
+
+    /// Live-count badge for the Kanban chip. Created lazily so the VM
+    /// is per-context (not per-window) and a re-rendered view doesn't
+    /// stack pollers.
+    @State private var kanbanBadgeViewModel: KanbanChatBadgeViewModel?
+    @State private var resolvedTenantForChat: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,7 +34,9 @@ struct ChatTranscriptPane: View {
                 activeGoal: richChat.activeGoal,
                 onClearGoal: { chatViewModel.sendText("/goal --clear") },
                 queuedPrompts: richChat.queuedPrompts,
-                capabilities: capabilitiesStore?.capabilities ?? .empty
+                capabilities: capabilitiesStore?.capabilities ?? .empty,
+                kanbanLiveCount: kanbanBadgeViewModel?.liveCount,
+                onOpenKanban: { handleOpenKanban() }
             )
             Divider()
 
@@ -70,6 +79,73 @@ struct ChatTranscriptPane: View {
             .id(richChat.sessionId ?? "scarf.chat.no-session")
         }
         .background(ScarfColor.backgroundPrimary)
+        .task(id: chatViewModel.currentProjectPath ?? "") {
+            // Resolve the project's tenant once per project change.
+            // Background — don't block the chat render on the disk
+            // read for the manifest. Nil for global chats.
+            await refreshResolvedTenant()
+        }
+        .task(id: kanbanBadgePollKey) {
+            // Long-running poller scoped to (capabilities, tenant,
+            // session). Restarts cleanly when any of the three change.
+            let caps = capabilitiesStore?.capabilities ?? .empty
+            guard caps.hasKanban, richChat.sessionId != nil else { return }
+            if kanbanBadgeViewModel == nil {
+                kanbanBadgeViewModel = KanbanChatBadgeViewModel(
+                    context: chatViewModel.context
+                )
+            }
+            await kanbanBadgeViewModel?.run(
+                tenant: resolvedTenantForChat,
+                capabilities: caps
+            )
+        }
+    }
+
+    /// Stable identity for the badge poller's `.task(id:)`. Includes
+    /// every input that should restart the poll loop: the chat session
+    /// (so a /new restarts polling for the new tenant), the resolved
+    /// tenant (so a project rebind restarts), and the capability flag
+    /// (so a host upgrade activates the chip without reload).
+    private var kanbanBadgePollKey: String {
+        let caps = capabilitiesStore?.capabilities ?? .empty
+        return [
+            caps.hasKanban ? "k" : "",
+            richChat.sessionId ?? "",
+            resolvedTenantForChat ?? ""
+        ].joined(separator: "|")
+    }
+
+    private func refreshResolvedTenant() async {
+        guard let path = chatViewModel.currentProjectPath,
+              let name = chatViewModel.currentProjectName else {
+            resolvedTenantForChat = nil
+            return
+        }
+        let entry = ProjectEntry(name: name, path: path)
+        let context = chatViewModel.context
+        let tenant: String? = await Task.detached {
+            let resolver = KanbanTenantResolver(context: context)
+            return try? resolver.resolveOrMint(for: entry)
+        }.value
+        await MainActor.run {
+            resolvedTenantForChat = tenant
+        }
+    }
+
+    /// Called from the SessionInfoBar Kanban chip. Builds the hand-off
+    /// snapshot, hands it to AppCoordinator, then flips the route to
+    /// the global Kanban surface — which drains the slot and renders
+    /// the board with tenant + sessionStartedAt pre-applied.
+    private func handleOpenKanban() {
+        let openedAt = richChat.sessionOpenedAt ?? Date()
+        coordinator.pendingKanbanHandoff = KanbanHandoff(
+            tenant: resolvedTenantForChat,
+            projectPath: chatViewModel.currentProjectPath,
+            projectName: chatViewModel.currentProjectName,
+            sessionOpenedAt: openedAt
+        )
+        coordinator.selectedSection = .kanban
     }
 
     /// Soft pill above the composer that confirms a non-interruptive

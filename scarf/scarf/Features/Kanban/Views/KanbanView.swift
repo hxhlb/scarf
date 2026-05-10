@@ -12,8 +12,16 @@ import ScarfDesign
 /// `HermesCapabilities.hasKanban` is true.
 struct KanbanView: View {
     let context: ServerContext
+    @Environment(AppCoordinator.self) private var coordinator
 
     @AppStorage("kanban.viewMode") private var rawMode: String = ViewMode.board.rawValue
+
+    /// Snapshot of the chat → Kanban hand-off, copied out of the
+    /// coordinator on first render and held locally so resetting the
+    /// coordinator slot doesn't tear down the in-flight `KanbanBoardView`.
+    /// Nil means a plain sidebar/route navigation; the board renders
+    /// without any pre-applied filter.
+    @State private var consumedHandoff: KanbanHandoff?
 
     enum ViewMode: String {
         case board
@@ -26,12 +34,58 @@ struct KanbanView: View {
             ScarfDivider()
             switch ViewMode(rawValue: rawMode) ?? .board {
             case .board:
-                KanbanBoardView(context: context)
+                KanbanBoardView(
+                    context: context,
+                    tenantFilter: consumedHandoff?.tenant,
+                    projectPath: consumedHandoff?.projectPath,
+                    projectName: consumedHandoff?.projectName,
+                    sessionStartedAt: consumedHandoff?.sessionOpenedAt
+                )
+                // Re-build the board view when a fresh hand-off lands so
+                // the new tenant + timestamp take effect even if the
+                // route was already on Kanban. Keying by `id` is enough —
+                // the AppCoordinator slot is a struct so equality maps
+                // cleanly.
+                .id(boardIdentity)
             case .list:
                 KanbanListView(context: context)
             }
         }
         .background(ScarfColor.backgroundPrimary)
+        .task(id: handoffIdentity) {
+            // Drain pending hand-off if any. Using `.task(id:)` instead
+            // of `.onAppear` so a coordinator update mid-session
+            // (chat → kanban without leaving the route) re-triggers.
+            if let pending = coordinator.pendingKanbanHandoff {
+                consumedHandoff = pending
+                coordinator.pendingKanbanHandoff = nil
+            }
+        }
+    }
+
+    /// Identity for the `.task(id:)` modifier — when the coordinator
+    /// slot flips from nil → handoff or handoff-A → handoff-B, the
+    /// drain task re-runs.
+    private var handoffIdentity: String {
+        guard let pending = coordinator.pendingKanbanHandoff else {
+            return "none"
+        }
+        return [
+            pending.tenant ?? "",
+            pending.projectPath ?? "",
+            ISO8601DateFormatter().string(from: pending.sessionOpenedAt)
+        ].joined(separator: "|")
+    }
+
+    private var boardIdentity: String {
+        guard let handoff = consumedHandoff else {
+            return "global"
+        }
+        return [
+            handoff.tenant ?? "",
+            handoff.projectPath ?? "",
+            ISO8601DateFormatter().string(from: handoff.sessionOpenedAt)
+        ].joined(separator: "|")
     }
 
     private var modeBar: some View {

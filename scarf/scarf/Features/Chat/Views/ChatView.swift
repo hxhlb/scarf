@@ -567,6 +567,31 @@ struct ChatView: View {
             )
             .environment(\.serverContext, viewModel.context)
         }
+        // Kanban toolset onboarding — fires on the user's first `/goal`
+        // against a host whose `cli` platform_toolsets list lacks
+        // `kanban`. ChatViewModel sets the trigger flag; this sheet
+        // explains the gating + offers one-click enable.
+        .sheet(isPresented: kanbanOnboardingBinding) {
+            ChatKanbanOnboardingSheet(
+                onEnable: {
+                    await viewModel.enableKanbanToolset()
+                },
+                onOpenTools: {
+                    viewModel.dismissKanbanToolsetOnboarding()
+                    coordinator.selectedSection = .tools
+                },
+                onSkip: {
+                    viewModel.dismissKanbanToolsetOnboarding()
+                }
+            )
+        }
+    }
+
+    private var kanbanOnboardingBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.showKanbanOnboardingSheet },
+            set: { viewModel.showKanbanOnboardingSheet = $0 }
+        )
     }
 
     private var permissionBinding: Binding<RichChatViewModel.PendingPermission?> {

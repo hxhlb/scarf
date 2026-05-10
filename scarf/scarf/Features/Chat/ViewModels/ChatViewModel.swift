@@ -144,6 +144,17 @@ final class ChatViewModel {
     /// registry (project was removed after the session was attributed).
     private(set) var currentProjectName: String?
 
+    /// True when the user just sent `/goal` against a host whose `cli`
+    /// platform_toolsets list lacks `kanban`. The view binds a `.sheet`
+    /// to this flag and surfaces the one-time onboarding explanation
+    /// + the one-click enable action. Cleared once dismissed (the
+    /// per-host suppression flag in `UserDefaults` prevents re-showing
+    /// on the next `/goal`). Distinct from a permanent state so an
+    /// internal `false → true → false` toggle re-triggers the sheet
+    /// after the user dismissed without enabling and the next host
+    /// is also disabled.
+    var showKanbanOnboardingSheet: Bool = false
+
     // ACP state
     private var acpClient: ACPClient?
     private var acpEventTask: Task<Void, Never>?
@@ -663,6 +674,7 @@ final class ChatViewModel {
             case .set(let goalText):
                 richChatViewModel.recordActiveGoal(text: goalText)
                 richChatViewModel.transientHint = "Goal locked: \(Self.truncatedToastGoal(goalText))"
+                maybeTriggerKanbanOnboarding()
             case .clear:
                 richChatViewModel.recordActiveGoal(text: nil)
                 richChatViewModel.transientHint = "Goal cleared."
@@ -1307,6 +1319,72 @@ final class ChatViewModel {
         if let title = session.title, !title.isEmpty { return title }
         if let preview = sessionPreviews[session.id], !preview.isEmpty { return preview }
         return session.id
+    }
+
+    // MARK: - Kanban toolset onboarding
+
+    /// Per-host UserDefaults key. Includes the context id so users with
+    /// multiple Hermes installations (local + SSH) get an independent
+    /// teaching moment per host — the kanban toolset is per-config and
+    /// won't necessarily be enabled on both.
+    private var kanbanOnboardingDismissedKey: String {
+        "scarf.kanbanOnboarding.dismissed.\(context.id.uuidString)"
+    }
+
+    /// Decide whether to surface the toolset-off teaching sheet after
+    /// the user just sent `/goal`. Skipped when:
+    /// - The host pre-dates v0.12 — kanban itself doesn't exist yet.
+    /// - The user has dismissed this sheet on this host before.
+    /// - The detector reports the toolset is already enabled (or the
+    ///   detector couldn't classify, in which case we silently skip
+    ///   rather than nag with a misleading banner).
+    private func maybeTriggerKanbanOnboarding() {
+        let dismissedKey = kanbanOnboardingDismissedKey
+        if UserDefaults.standard.bool(forKey: dismissedKey) {
+            return
+        }
+        let context = self.context
+        Task { [weak self] in
+            let detector = KanbanToolsetDetector(context: context)
+            let state = await detector.detect()
+            guard case .disabled = state else {
+                return
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.showKanbanOnboardingSheet = true
+            }
+        }
+    }
+
+    /// Called from the sheet's "Enable kanban tools" button. Runs the
+    /// `hermes tools enable kanban --platform cli` shellout and sets a
+    /// transient hint either way so the user gets a confirmation toast
+    /// without having to re-open the sheet.
+    func enableKanbanToolset() async {
+        UserDefaults.standard.set(true, forKey: kanbanOnboardingDismissedKey)
+        let enabler = KanbanToolsetEnabler(context: context)
+        let result = await enabler.enable()
+        await MainActor.run {
+            switch result {
+            case .enabled:
+                richChatViewModel.transientHint =
+                    "Kanban tools enabled. Start a new chat to pick this up."
+            case .failed(let message):
+                richChatViewModel.transientHint =
+                    "Couldn't enable kanban tools: \(message)"
+            }
+            scheduleHintClear()
+        }
+    }
+
+    /// Records the dismissal of the onboarding sheet (Skip /
+    /// Open Tools paths). Navigation to the Tools tab from the
+    /// "Open Tools…" button is the View's job (it has access to
+    /// `AppCoordinator` via `@Environment`); the VM only persists the
+    /// per-host suppression flag.
+    func dismissKanbanToolsetOnboarding() {
+        UserDefaults.standard.set(true, forKey: kanbanOnboardingDismissedKey)
     }
 
     // MARK: - Voice (terminal mode only)

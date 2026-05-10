@@ -126,4 +126,29 @@ final class AppCoordinator {
     /// of `pendingProjectChat` — a hand-off slot, not a long-lived
     /// state value.
     var pendingOAuthReauth: String?
+
+    /// Hand-off from the chat surface to the global Kanban surface.
+    /// Set by `SessionInfoBar`'s Kanban chip, consumed by `KanbanView`
+    /// on its next render, which builds a `KanbanBoardView` with the
+    /// tenant + project pre-applied AND seeds the "Since chat opened"
+    /// time filter from `sessionOpenedAt`. Cleared after consumption
+    /// so a sidebar return to the same Kanban surface doesn't re-apply
+    /// a stale filter.
+    var pendingKanbanHandoff: KanbanHandoff?
+}
+
+/// Snapshot of "where did this Kanban view come from?" passed across
+/// the AppCoordinator hand-off. The destination view consumes the
+/// fields at most once. `tenant` is the project's `scarf:<slug>` slug
+/// when the chat is project-scoped; nil for global chats. `projectPath`
+/// + `projectName` drive the create-sheet workspace defaults +
+/// subtitle. `sessionOpenedAt` seeds the optional client-side
+/// "Since chat opened" filter — it's a wall-clock time, not the
+/// underlying session's `created_at`, so resumed sessions still get
+/// a meaningful baseline.
+struct KanbanHandoff: Equatable {
+    let tenant: String?
+    let projectPath: String?
+    let projectName: String?
+    let sessionOpenedAt: Date
 }

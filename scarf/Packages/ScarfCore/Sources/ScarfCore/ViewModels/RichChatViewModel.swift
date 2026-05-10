@@ -43,6 +43,89 @@ public struct MessageGroup: Identifiable {
         }
         return counts
     }
+
+    /// Render-side coalescing of consecutive pure-text assistant
+    /// messages into a single bubble. A "pure-text" assistant has no
+    /// `toolCalls`; consecutive runs of those collapse into one
+    /// bubble so the user reads what was logically one reply as one
+    /// bubble — even when Hermes recorded it as multiple `assistant`
+    /// rows (a tool call may have run between them, or some thinking
+    /// models emit one turn as multiple messages).
+    ///
+    /// Invariants:
+    ///  - Tool-bearing assistants (any `toolCalls`) and tool-result
+    ///    rows always render as their own bubbles — they're meaningful
+    ///    boundaries, never merged.
+    ///  - The streaming bubble (`id == 0`) is never coalesced into
+    ///    its predecessors. Coalescing across the streaming boundary
+    ///    would let mid-stream `body` re-evals churn the merged
+    ///    content; keep it standalone until finalize, then the
+    ///    next render naturally folds it into the run.
+    ///  - The synthesized bubble inherits the LAST source message's
+    ///    id, timestamp, finishReason, and tokenCount so the
+    ///    metadata footer stays accurate and SwiftUI identity stays
+    ///    stable through finalize.
+    public var coalescedAssistantBubbles: [HermesMessage] {
+        var output: [HermesMessage] = []
+        var run: [HermesMessage] = []
+
+        func canCoalesce(_ msg: HermesMessage) -> Bool {
+            msg.isAssistant && msg.toolCalls.isEmpty && msg.id != 0
+        }
+
+        func flushRun() {
+            guard !run.isEmpty else { return }
+            if run.count == 1 {
+                output.append(run[0])
+            } else {
+                output.append(Self.merge(run))
+            }
+            run = []
+        }
+
+        for msg in assistantMessages {
+            if canCoalesce(msg) {
+                run.append(msg)
+            } else {
+                flushRun()
+                output.append(msg)
+            }
+        }
+        flushRun()
+        return output
+    }
+
+    /// Merge a run of pure-text assistant messages into one synthesized
+    /// `HermesMessage`. Content and reasoning channels are joined with
+    /// blank-line separators; structural fields take the last source's
+    /// values so the metadata footer reflects turn-end state.
+    private static func merge(_ run: [HermesMessage]) -> HermesMessage {
+        precondition(!run.isEmpty, "merge requires at least one message")
+        let last = run[run.count - 1]
+        let content = run.map(\.content).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let reasoning = run
+            .compactMap(\.reasoning)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        let reasoningContent = run
+            .compactMap(\.reasoningContent)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        return HermesMessage(
+            id: last.id,
+            sessionId: last.sessionId,
+            role: last.role,
+            content: content,
+            toolCallId: nil,
+            toolCalls: [],
+            toolName: nil,
+            timestamp: last.timestamp,
+            tokenCount: last.tokenCount,
+            finishReason: last.finishReason,
+            reasoning: reasoning.isEmpty ? nil : reasoning,
+            reasoningContent: reasoningContent.isEmpty ? nil : reasoningContent
+        )
+    }
 }
 
 @Observable
@@ -603,6 +686,14 @@ public final class RichChatViewModel {
     }
 
     public private(set) var sessionId: String?
+    /// Wall-clock timestamp of when this view model attached to its
+    /// current session — set on every `setSessionId(_:)` call (new
+    /// chat OR resume). Distinct from the underlying session's
+    /// `created_at`, which may be days old for resumed sessions; this
+    /// is the "when did I start watching?" baseline used by the
+    /// chat → Kanban hand-off to seed a "Since chat opened" filter.
+    /// Nil before the first session attaches.
+    public private(set) var sessionOpenedAt: Date?
     /// The original CLI session ID when resuming a CLI session via ACP.
     /// Used to combine old CLI messages with new ACP messages.
     public private(set) var originSessionId: String?
@@ -745,6 +836,11 @@ public final class RichChatViewModel {
     public func setSessionId(_ id: String?) {
         sessionId = id
         lastKnownFingerprint = nil
+        // Refresh the wall-clock baseline whenever the session changes —
+        // including the nil → real-id transition on first attach AND
+        // the id → different-id transition on session swap. Resetting
+        // for nil avoids stamping the gap with a stale timestamp.
+        sessionOpenedAt = (id == nil) ? nil : Date()
     }
 
     public func cleanup() async {

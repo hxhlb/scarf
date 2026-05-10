@@ -188,6 +188,16 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         f.formatOptions = [.withInternetDateTime]
         return f
     }()
+
+    /// `createdAt` parsed back into a `Date` for time-window filtering
+    /// (e.g. the "Since chat opened" lens on the project board). Nil
+    /// when the wire field is absent OR the string can't be parsed —
+    /// callers that filter by time treat unparseable rows as outside
+    /// the window rather than crashing.
+    public var createdAtDate: Date? {
+        guard let createdAt else { return nil }
+        return Self.isoFormatter.date(from: createdAt)
+    }
 }
 
 // MARK: - Status enum (typed view of the wire string)

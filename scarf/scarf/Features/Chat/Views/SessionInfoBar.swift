@@ -40,6 +40,17 @@ struct SessionInfoBar: View {
     /// pre-v0.13 hosts render the v2.7.5 layout unchanged. Coordinated
     /// with WS-2 — both WSes add `capabilities` to this view.
     var capabilities: HermesCapabilities = .empty
+    /// Live count of running + blocked tasks for the chat's tenant
+    /// scope (or global, for non-project chats). Polled by
+    /// `KanbanChatBadgeViewModel` every 5s. Nil while polling hasn't
+    /// produced a result yet (or the host pre-dates kanban) — chip
+    /// renders without a badge in that case. Zero renders without a
+    /// badge too, so an idle board doesn't render a "0" pill.
+    var kanbanLiveCount: Int? = nil
+    /// Tap handler for the Kanban chip — typically wired by
+    /// `ChatTranscriptPane` to resolve the project's tenant + post a
+    /// `KanbanHandoff` to `AppCoordinator`. Nil hides the chip.
+    var onOpenKanban: (() -> Void)? = nil
 
     /// Active Hermes profile name (issue #50). Resolved on each body
     /// re-evaluation; the resolver caches for 5s so this is cheap.
@@ -106,6 +117,38 @@ struct SessionInfoBar: View {
                             Button("Clear goal", role: .destructive, action: onClearGoal)
                         }
                     }
+                }
+
+                // Kanban chip — renders only when (a) the host supports
+                // kanban and (b) the host has a callback for the chip.
+                // Tap handler is owned upstream so it can resolve the
+                // project's tenant + post the handoff to AppCoordinator.
+                // The badge surfaces running + blocked task counts so
+                // the user sees agent activity at a glance without
+                // leaving chat.
+                if capabilities.hasKanban, let onOpenKanban {
+                    Button(action: onOpenKanban) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "rectangle.split.3x1")
+                            Text("Kanban")
+                            if let count = kanbanLiveCount, count > 0 {
+                                Text("\(count)")
+                                    .scarfStyle(.captionStrong)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(
+                                        Capsule().fill(ScarfColor.accent.opacity(0.22))
+                                    )
+                            }
+                        }
+                        .scarfStyle(.caption)
+                        .padding(.horizontal, ScarfSpace.s2)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(ScarfColor.accent.opacity(0.12)))
+                        .foregroundStyle(ScarfColor.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open the Kanban board for this chat")
                 }
 
                 // Queue chip (v2.8 / Hermes v0.13). Local mirror only —

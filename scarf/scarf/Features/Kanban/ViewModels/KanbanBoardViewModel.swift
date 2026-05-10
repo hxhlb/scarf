@@ -55,6 +55,20 @@ final class KanbanBoardViewModel {
     var assigneeFilter: String?       // nil = all assignees
     var showArchived: Bool = false
 
+    /// When set (seeded by the chat → Kanban hand-off), the board
+    /// applies a client-side `createdAt >= sessionOpenedAt` filter on
+    /// top of any tenant filter. Approximates "tasks this chat is
+    /// producing" — imperfect because Hermes itself doesn't track
+    /// per-session linkage in this Hermes version, but useful as a
+    /// time lens. The board renders a toggle pill when this is set so
+    /// the user can flip back to the full tenant view.
+    var sessionStartedAt: Date?
+    /// Whether the `sessionStartedAt` filter is currently applied.
+    /// Defaults true when the value is set; the toolbar pill toggles
+    /// it off without clearing the timestamp (so re-enabling restores
+    /// the same baseline).
+    var filterBySessionStart: Bool = true
+
     /// Optimistic in-flight overrides keyed by task id; cleared when the
     /// polled response confirms the new state.
     /// - Status side: drag-drop column moves.
@@ -138,9 +152,33 @@ final class KanbanBoardViewModel {
     /// Group tasks into the 5-column board layout. Triage column
     /// hides itself when empty; archived only appears when
     /// `showArchived` is on.
+    ///
+    /// The "Since chat opened" lens is applied client-side here when
+    /// the chat handoff seeded `sessionStartedAt` AND the toolbar
+    /// toggle is on. It's an approximation: Hermes doesn't record
+    /// which chat session created a task in this version, so we fall
+    /// back to a wall-clock cutoff. (The upstream PR adding
+    /// `session_id` makes this honest — when it lands the board can
+    /// pass `--session` to `KanbanService.list` instead.)
     func tasks(in column: KanbanBoardColumn) -> [HermesKanbanTask] {
-        let raw = tasks.filter { effectiveColumn($0) == column }
-        return sortColumn(raw)
+        let columnTasks = tasks.filter { effectiveColumn($0) == column }
+        let timeFiltered = applySessionStartFilter(columnTasks)
+        return sortColumn(timeFiltered)
+    }
+
+    private func applySessionStartFilter(
+        _ rows: [HermesKanbanTask]
+    ) -> [HermesKanbanTask] {
+        guard filterBySessionStart, let cutoff = sessionStartedAt else {
+            return rows
+        }
+        return rows.filter { row in
+            // Treat un-parseable createdAt as outside the window —
+            // safer than letting a malformed timestamp slip through
+            // unfiltered. Matches the contract on `createdAtDate`.
+            guard let date = row.createdAtDate else { return false }
+            return date >= cutoff
+        }
     }
 
     /// Visible columns for the current state. Triage hidden when

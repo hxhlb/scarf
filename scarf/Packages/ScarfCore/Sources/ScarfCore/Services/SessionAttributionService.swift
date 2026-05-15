@@ -30,9 +30,24 @@ public struct SessionAttributionService: Sendable {
 
     // MARK: - Read
 
-    /// Load the current sidecar contents. Missing file or unparseable
-    /// JSON returns an empty map — the sidecar is a convenience
-    /// index, not a source of truth for anything load-bearing.
+    /// Maximum sidecar size, in bytes, that we'll accept off disk /
+    /// SFTP. A legitimate `session_project_map.json` is in the tens
+    /// of kilobytes even on heavy multi-project setups (one mapping
+    /// per session id). Anything north of 1 MB is either corrupt,
+    /// truncated, or hostile — we treat it as "no attribution" so a
+    /// memory-pressured device doesn't OOM during decode on chat
+    /// resume. iOS background launches with only a few hundred MB
+    /// of available memory and the TestFlight crash reports
+    /// AJy1fD58 / AL8Hjm06 (Berlin, iOS 26.5, 2.87 GB free disk)
+    /// suggest memory pressure was implicated in the resume-time
+    /// crashes — bounding the read here removes one credible OOM
+    /// vector even when the file is legitimate-but-large.
+    public static let maxSidecarBytes = 1 * 1024 * 1024
+
+    /// Load the current sidecar contents. Missing file, oversize
+    /// file, or unparseable JSON returns an empty map — the sidecar
+    /// is a convenience index, not a source of truth for anything
+    /// load-bearing.
     public nonisolated func load() -> SessionProjectMap {
         let path = context.paths.sessionProjectMap
         let transport = context.makeTransport()
@@ -41,6 +56,12 @@ public struct SessionAttributionService: Sendable {
         }
         do {
             let data = try transport.readFile(path)
+            if data.count > Self.maxSidecarBytes {
+                #if canImport(os)
+                Self.logger.warning("session-project-map at \(path, privacy: .public) is \(data.count) bytes (cap \(Self.maxSidecarBytes)); treating as missing")
+                #endif
+                return SessionProjectMap()
+            }
             return try JSONDecoder().decode(SessionProjectMap.self, from: data)
         } catch {
             #if canImport(os)

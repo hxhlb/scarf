@@ -104,6 +104,54 @@ import ScarfCore
         #expect(svc.projectPath(for: "s") == nil)
     }
 
+    @Test func oversizeSidecarTreatedAsMissing() throws {
+        // Regression coverage for the iOS resume-time crash hypothesis
+        // in TestFlight feedback AJy1fD58 / AL8Hjm06 (Berlin, iOS 26.5,
+        // 2.87 GB free disk). A pathologically large sidecar — corrupt
+        // truncation, hostile content, or a runaway logger that
+        // appended to the wrong file — must not be decoded on a
+        // memory-pressured device.
+        let snapshot = Self.snapshot()
+        defer { Self.restore(snapshot) }
+        let path = ServerContext.local.paths.sessionProjectMap
+        try FileManager.default.createDirectory(
+            atPath: (path as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true
+        )
+        // Write just over the cap so the test stays fast.
+        let oversize = SessionAttributionService.maxSidecarBytes + 1
+        let blob = Data(repeating: 0x41, count: oversize) // ASCII 'A's
+        try blob.write(to: URL(fileURLWithPath: path))
+
+        let svc = SessionAttributionService(context: .local)
+        let map = svc.load()
+        #expect(map.mappings.isEmpty)
+        #expect(svc.projectPath(for: "anything") == nil)
+    }
+
+    @Test func sidecarAtMaxBytesStillAttemptsDecode() throws {
+        // The cap is "strictly greater than"; a file exactly at the
+        // limit should still be attempted (and will fail with a parse
+        // error since 1MB of ASCII isn't valid JSON, which is the same
+        // graceful path the corrupted-file test exercises). Pins the
+        // boundary so a future refactor doesn't accidentally tighten
+        // it to strict `>=`.
+        let snapshot = Self.snapshot()
+        defer { Self.restore(snapshot) }
+        let path = ServerContext.local.paths.sessionProjectMap
+        try FileManager.default.createDirectory(
+            atPath: (path as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true
+        )
+        let atCap = Data(repeating: 0x41, count: SessionAttributionService.maxSidecarBytes)
+        try atCap.write(to: URL(fileURLWithPath: path))
+
+        let svc = SessionAttributionService(context: .local)
+        let map = svc.load()
+        // Decode fails → empty map (same as corrupted-file path).
+        #expect(map.mappings.isEmpty)
+    }
+
     @Test func corruptedFileReturnsEmptyMap() throws {
         let snapshot = Self.snapshot()
         defer { Self.restore(snapshot) }

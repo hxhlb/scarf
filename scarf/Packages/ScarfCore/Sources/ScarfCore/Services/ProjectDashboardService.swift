@@ -4,6 +4,18 @@ import os
 public struct ProjectDashboardService: Sendable {
     private static let logger = Logger(subsystem: "com.scarf", category: "ProjectDashboardService")
 
+    /// Size ceiling for JSON files we read off SFTP/disk. Both the
+    /// registry and individual dashboards are tens-of-KB even on
+    /// heavy multi-project setups (one row per project; one widget
+    /// list per dashboard). Anything north of 4 MB is either
+    /// corrupt or hostile, and decoding it on a memory-pressured
+    /// device — the kind that produces the iOS resume-time crashes
+    /// in TestFlight feedback AJy1fD58 / AL8Hjm06 (Berlin, iOS 26.5,
+    /// 2.87 GB free disk) — risks an OOM kill before the
+    /// JSONDecoder can even bail. We treat oversize files as
+    /// "missing" so the caller's fallback path runs.
+    public static let maxJSONBytes = 4 * 1024 * 1024
+
     public let context: ServerContext
     public let transport: any ServerTransport
 
@@ -19,6 +31,12 @@ public struct ProjectDashboardService: Sendable {
         // (local file or SSH). Helps spot slow remote round-trips.
         ScarfMon.measure(.diskIO, "dashboard.loadRegistry") {
             guard let data = try? transport.readFile(context.paths.projectsRegistry) else {
+                return ProjectRegistry(projects: [])
+            }
+            if data.count > Self.maxJSONBytes {
+                Self.logger.warning(
+                    "Project registry at \(context.paths.projectsRegistry, privacy: .public) is \(data.count) bytes (cap \(Self.maxJSONBytes)); treating as missing"
+                )
                 return ProjectRegistry(projects: [])
             }
             do {
@@ -62,6 +80,12 @@ public struct ProjectDashboardService: Sendable {
 
     public func loadDashboard(for project: ProjectEntry) -> ProjectDashboard? {
         guard let data = try? transport.readFile(project.dashboardPath) else {
+            return nil
+        }
+        if data.count > Self.maxJSONBytes {
+            Self.logger.warning(
+                "Dashboard for \(project.name, privacy: .public) is \(data.count) bytes (cap \(Self.maxJSONBytes)); treating as missing"
+            )
             return nil
         }
         do {

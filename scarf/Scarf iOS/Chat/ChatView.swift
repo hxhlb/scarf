@@ -296,8 +296,26 @@ struct ChatView: View {
 
     @ViewBuilder
     private var messageList: some View {
+        // Plain `VStack`, NOT `LazyVStack`. LazyVStack virtualizes
+        // cells based on viewport, which collides with the
+        // identity-churning streaming pattern: the streaming bubble
+        // is appended at `id == 0`, then `finalizeStreamingMessage`
+        // (RichChatViewModel.swift:1581-1596) replaces it with a
+        // permanent id mid-ForEach. While the user is dragging,
+        // SwiftUI's gesture handler and LazyVStack's cell
+        // recycling race — observed by j@djinna.com 2026-05-12 as
+        // hard crashes within 4s of session start on iPhone 17 Pro
+        // Max / iOS 26.4.2. Plain VStack eagerly materializes the
+        // full list; cost is bounded because `HistoryPageSize.initial`
+        // caps initial load at 25 rows and `loadEarlier()` is a
+        // user-driven action. Mac switched for the same reason — see
+        // `RichChatMessageList.swift:26-42`.
+        //
+        // Follow-up: migrate iOS to `controller.vm.visibleGroups` so
+        // the `RenderWindow` budget (30 rows) bounds memory on long
+        // sessions. Requires an iOS-flavor `MessageGroupView`.
         ScrollView {
-            LazyVStack(spacing: 12) {
+            VStack(spacing: 12) {
                 if controller.vm.messages.isEmpty, controller.state == .ready {
                     if controller.vm.sessionId != nil {
                         // Resumed-session path: session ID is set but
@@ -348,12 +366,22 @@ struct ChatView: View {
             .padding(.vertical)
         }
         // iOS 17+ keeps the scroll pinned to the newest content at
-        // the bottom; iOS 18's `.sizeChanges` variant also tracks
-        // when a message grows (streaming chunks, Expand-all on a
-        // code block). Replaces the old manual proxy.scrollTo dance
-        // which fought with the user's own scroll gestures.
+        // the bottom on row insertion. Replaces the old manual
+        // proxy.scrollTo dance which fought with the user's own
+        // scroll gestures.
+        //
+        // The iOS 18 `.sizeChanges` variant was dropped — combined
+        // with plain VStack + per-chunk streaming mutations it
+        // re-anchored on every content-size delta, which was
+        // visible as a "jiggle" on long replies AND was the
+        // suspected co-conspirator in the LazyVStack scroll crashes
+        // (mid-drag re-anchor + identity churn). Plain `.bottom`
+        // is sufficient: on row insertion the anchor lands the new
+        // content at the bottom edge, and content growth on the
+        // last row (the streaming bubble expanding) naturally
+        // extends below the viewport — which is the right behavior
+        // when the user has scrolled away from the tail.
         .defaultScrollAnchor(.bottom)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
         // Drag the messages downward to interactively collapse the
         // keyboard — the standard iOS chat gesture. Without this the
         // keyboard could never be dismissed once it rose, hiding the
@@ -1714,7 +1742,31 @@ final class ChatController {
     func handleScenePhase(_ phase: ScenePhase) async {
         switch phase {
         case .background:
-            healthMonitorTask?.cancel(); healthMonitorTask = nil
+            // Tear down the live SSH/ACP loop so the OS doesn't kill
+            // us for running network IO during the ~30s background
+            // grace window. Citadel's NIO event loop + the ACP read
+            // task + the keepalive timer all keep heartbeating
+            // through `.background` otherwise; on weak networks
+            // (cellular, low battery) iOS escalates that into a
+            // jetsam / watchdog termination, which surfaces to the
+            // user as a crash on next launch. Reported by an
+            // Italian TestFlight tester on iPhone 16 Pro Max, mobile
+            // data, 15% battery (feedback AADa60kw, 2026-05-15).
+            //
+            // We KEEP `lastActiveSessionID` and `lastProjectPath`
+            // populated so `.active`'s `verifyAndResume` sees
+            // `client == nil` and routes through
+            // `handleConnectionDied` → `attemptReconnect`, which
+            // resumes the same session id via `session/resume` (or
+            // `session/load` as a fallback). VM state (messages,
+            // streaming text, capabilities) is preserved.
+            //
+            // Side-benefit: the stall-detection clock (`ACPClient.
+            // lastIncomingAt`) is primed fresh inside the reconnect
+            // path's `client.start()`, so the first health-monitor
+            // tick after resume can't false-positive on a
+            // long-background timestamp gap.
+            pauseInBackground()
         case .active:
             // No session worth verifying.
             guard let id = lastActiveSessionID else { return }
@@ -1726,6 +1778,30 @@ final class ChatController {
         @unknown default:
             break
         }
+    }
+
+    /// Background-time variant of `stop()` that tears down the live
+    /// network/IO surfaces but preserves the session-id memory and
+    /// VM state so `.active`'s `verifyAndResume` can transparently
+    /// reconnect. Distinct from `stop()` which is a user-initiated
+    /// teardown and clears `lastActiveSessionID` to disarm
+    /// auto-resume.
+    private func pauseInBackground() {
+        healthMonitorTask?.cancel(); healthMonitorTask = nil
+        eventTask?.cancel(); eventTask = nil
+        reconnectTask?.cancel(); reconnectTask = nil
+        // Capture any in-progress streaming text into a finalized
+        // bubble so the transcript isn't orphaned mid-chunk if the
+        // OS decides to terminate before we resume.
+        vm.finalizeOnDisconnect()
+        if let dead = client {
+            Task.detached { await dead.stop() }
+        }
+        client = nil
+        // The next `.active` cycle will route through
+        // verifyAndResume → handleConnectionDied → attemptReconnect.
+        // Reset the disconnect guard so that flow isn't blocked.
+        isHandlingDisconnect = false
     }
 
     /// Probe the existing client's health on resume. If alive,

@@ -9,7 +9,7 @@ Hermes v0.14.0 (v2026.5.16) — "Foundation Release" — catch-up. Adds support 
 - **`/yolo` slash command** — toggle YOLO mode (skip dangerous-command approvals) without leaving chat. Pairs with a new chat-header warning badge when YOLO is on.
 - **`/sessions` slash command** — browse and resume prior sessions from inside an active chat.
 - **`/codex-runtime` slash command** — toggle the Codex app-server runtime for OpenAI/Codex models.
-- **Per-turn file-mutation verifier footer** — turns that wrote files now render the verifier summary inline as a styled card so the user can see which files actually changed on disk.
+- **Per-turn file-mutation verifier** — v0.14 Hermes appends a verifier footer to assistant turns that wrote files (configurable via `file_mutation_verifier`). The footer flows through Scarf chat as plain agent output; bespoke card-style rendering is deferred until the upstream format stabilizes.
 - **YOLO mode warning banner** — chat-header badge when `agent.approval_mode = yolo`. Mirrors the warning Hermes itself surfaces in its banner.
 
 ### Providers

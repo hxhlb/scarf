@@ -256,6 +256,14 @@ final class ChatViewModel {
     /// at first prompt with no diagnostic.
     var modelProviderMismatch: ModelPreflight.Mismatch?
 
+    /// Hermes v0.14 — current `approvals.mode` from config.yaml.
+    /// Default `"manual"` matches Hermes's default. Refreshed off
+    /// MainActor alongside `modelProviderMismatch`. The chat header
+    /// reads this to decide whether to show the YOLO warning badge
+    /// (rendered when value is `"yolo"` and the host advertises
+    /// `hasYOLOWarning`).
+    var approvalMode: String = "manual"
+
     /// Set when chat-start is blocked because the active server's
     /// `config.yaml` has no `model.default` / `model.provider`. The chat
     /// view observes this and presents `ChatModelPreflightSheet`; on
@@ -297,8 +305,10 @@ final class ChatViewModel {
         Task.detached { [weak self] in
             let config = svc.loadConfig()
             let mismatch = ModelPreflight.detectMismatch(config)
+            let mode = config.approvalMode
             await MainActor.run { [weak self] in
                 self?.modelProviderMismatch = mismatch
+                self?.approvalMode = mode
             }
         }
     }

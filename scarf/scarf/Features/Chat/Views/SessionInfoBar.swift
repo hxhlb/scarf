@@ -38,6 +38,11 @@ struct SessionInfoBar: View {
     /// trailing count badge inside the pill with the full list in the
     /// tooltip. Optimistic mirror lives on `RichChatViewModel.activeSubgoals`.
     var activeSubgoals: [String] = []
+    /// Hermes config's `approvals.mode`. v0.14 surfaces a warning when
+    /// this is `"yolo"` so users notice they've opted out of dangerous-
+    /// command approvals. Pre-v0.14 hosts can still set the mode but
+    /// Scarf doesn't render the badge (no `hasYOLOWarning` flag).
+    var approvalMode: String = "manual"
     /// Local mirror of prompts queued via `/queue …` (Hermes v0.13).
     /// Empty list hides the chip.
     var queuedPrompts: [HermesQueuedPrompt] = []
@@ -120,6 +125,25 @@ struct SessionInfoBar: View {
                 // through the slash menu (it's filtered out in
                 // `availableCommands`), so the pill stays absent there
                 // by transitive impossibility.
+                // v0.14 — YOLO mode warning badge. Renders only when
+                // the user has explicitly opted in via
+                // `approvals.mode = yolo` AND the connected host is on
+                // v0.14+. Older Hermes versions also accept the mode
+                // but don't surface a warning of their own — Scarf
+                // matches v0.14's posture by gating on the flag.
+                if capabilities.hasYOLOWarning, approvalMode == "yolo" {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("YOLO")
+                    }
+                    .scarfStyle(.captionUppercase)
+                    .padding(.horizontal, ScarfSpace.s2)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(ScarfColor.warning.opacity(0.18)))
+                    .foregroundStyle(ScarfColor.warning)
+                    .help("YOLO mode is on — dangerous commands run without approval. Toggle via `/yolo` or change approvals.mode in Settings → Agent.")
+                }
+
                 if let activeGoal {
                     HStack(spacing: 4) {
                         Image(systemName: "scope")

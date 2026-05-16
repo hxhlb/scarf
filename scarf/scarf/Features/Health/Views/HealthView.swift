@@ -8,6 +8,12 @@ struct HealthView: View {
     @State private var selectedTab = 0
     @State private var showShareConfirm = false
     @State private var showDiagnostics = false
+    /// v0.14 — when running `hermes acp --setup-browser`, swap the
+    /// button copy + show a spinner so the user knows the long-running
+    /// chromium/playwright install is in flight.
+    @State private var isSettingUpBrowser = false
+    @State private var browserSetupMessage: String?
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
 
     init(context: ServerContext) {
         _viewModel = State(initialValue: HealthViewModel(context: context))
@@ -26,6 +32,23 @@ struct HealthView: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 300)
                 Spacer()
+                if capabilitiesStore?.capabilities.hasACPSetupBrowser == true {
+                    Button {
+                        runBrowserSetup()
+                    } label: {
+                        if isSettingUpBrowser {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Setting up…")
+                            }
+                        } else {
+                            Text("Set up browser tools")
+                        }
+                    }
+                    .buttonStyle(ScarfGhostButton())
+                    .disabled(isSettingUpBrowser)
+                    .help("Runs `hermes acp --setup-browser` to install Chromium and provision Playwright.")
+                }
                 Button("Run Dump") {
                     viewModel.runDump()
                     showDiagnostics = true
@@ -39,6 +62,14 @@ struct HealthView: View {
             }
             .padding(.horizontal, ScarfSpace.s6)
             .padding(.vertical, ScarfSpace.s2)
+            if let msg = browserSetupMessage {
+                Text(msg)
+                    .scarfStyle(.caption)
+                    .foregroundStyle(ScarfColor.foregroundMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, ScarfSpace.s6)
+                    .padding(.bottom, ScarfSpace.s2)
+            }
             if showDiagnostics && !viewModel.diagnosticsOutput.isEmpty {
                 Divider()
                 diagnosticsPanel
@@ -70,6 +101,34 @@ struct HealthView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This uploads logs, config (with secrets redacted), and system info to Nous Research support infrastructure. Review the output below before sharing the returned URL.")
+        }
+    }
+
+    /// Run `hermes acp --setup-browser --assume-yes` off MainActor.
+    /// Updates the inline message strip with success/failure so the
+    /// user gets feedback without an alert sheet. v0.14+.
+    private func runBrowserSetup() {
+        guard !isSettingUpBrowser else { return }
+        isSettingUpBrowser = true
+        browserSetupMessage = "Installing browser tools…"
+        let ctx = viewModel.context
+        Task.detached(priority: .userInitiated) {
+            // `--assume-yes` skips the interactive consent prompt that
+            // the setup verb pops without a TTY.
+            let result = HermesFileService(context: ctx).runHermesCLI(
+                args: ["acp", "--setup-browser", "--assume-yes"],
+                timeout: 600   // chromium download + playwright install can be slow
+            )
+            await MainActor.run {
+                isSettingUpBrowser = false
+                if result.exitCode == 0 {
+                    browserSetupMessage = "Browser tools ready."
+                } else {
+                    let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let tail = trimmed.split(separator: "\n").suffix(2).joined(separator: " · ")
+                    browserSetupMessage = "Browser setup failed (exit \(result.exitCode)). \(tail)"
+                }
+            }
         }
     }
 

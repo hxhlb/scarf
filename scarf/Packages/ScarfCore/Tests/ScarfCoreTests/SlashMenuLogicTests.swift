@@ -197,6 +197,11 @@ import Foundation
     @MainActor
     @Test func availableCommandsHidesGoalAndQueueOnPreV013() {
         let vm = RichChatViewModel(context: .local)
+        // /steer requires an active session to be in the menu —
+        // nudging an idle (no-session) VM is a no-op. Engage so the
+        // capability-vs-/steer check below assesses capability gating,
+        // not the session-present prereq.
+        vm.setSessionId("scratch-session")
         vm.publishCapabilities(
             HermesCapabilities(
                 versionLine: "0.12.0",
@@ -214,6 +219,7 @@ import Foundation
     @MainActor
     @Test func availableCommandsExposesGoalAndQueueOnV013() {
         let vm = RichChatViewModel(context: .local)
+        vm.setSessionId("scratch-session")
         vm.publishCapabilities(
             HermesCapabilities(
                 versionLine: "0.13.0",

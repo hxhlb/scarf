@@ -269,6 +269,10 @@ import Foundation
     @MainActor
     @Test func availableCommandsExposesAllThreeOnV013() {
         let vm = RichChatViewModel(context: .local)
+        // /steer is gated on having an active session — nudging an
+        // agent that isn't running has nothing to act on. Engage so
+        // the filter lets it through.
+        vm.setSessionId("scratch-session")
         let caps = HermesCapabilities.parseLine("Hermes Agent v0.13.0 (2026.5.7)")
         vm.publishCapabilities(caps)
         let names = vm.availableCommands.map(\.name)
@@ -280,6 +284,7 @@ import Foundation
     @MainActor
     @Test func availableCommandsExposesSteerButHidesV013OnV012() {
         let vm = RichChatViewModel(context: .local)
+        vm.setSessionId("scratch-session")
         let caps = HermesCapabilities.parseLine("Hermes Agent v0.12.0 (2026.4.30)")
         vm.publishCapabilities(caps)
         let names = vm.availableCommands.map(\.name)

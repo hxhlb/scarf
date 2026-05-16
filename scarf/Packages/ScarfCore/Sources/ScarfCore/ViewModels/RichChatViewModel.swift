@@ -622,7 +622,14 @@ public final class RichChatViewModel {
             case "goal":    return capabilitiesGate.hasGoals
             case "queue":   return capabilitiesGate.hasACPQueue
             case "subgoal": return capabilitiesGate.hasSubgoal
-            case "steer":   return true
+            // /steer requires an active session — nudging an agent that
+            // isn't running has nothing to act on. Hiding it pre-session
+            // keeps the slash menu honest (and matches what a fresh
+            // RichChatViewModel actually does: until the user opens a
+            // chat, there's no agent to steer). v0.13's hasACPSteerOnIdle
+            // controls whether /steer is valid when the active session
+            // is idle vs. mid-turn — orthogonal to the no-session case.
+            case "steer":   return sessionId != nil
             default:        return true
             }
         }

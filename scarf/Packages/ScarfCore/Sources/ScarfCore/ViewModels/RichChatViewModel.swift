@@ -398,6 +398,16 @@ public final class RichChatViewModel {
             description: "Queue a prompt to run after the current turn",
             argumentHint: "<text>",
             source: .acpNonInterruptive
+        ),
+        // v0.14 — extra criteria layered onto the active /goal loop.
+        // Hermes parses `/subgoal <text>`, `/subgoal remove N`, and
+        // `/subgoal clear` server-side; Scarf mirrors the active list
+        // in `activeSubgoals` for the pill render.
+        HermesSlashCommand(
+            name: "subgoal",
+            description: "Add or manage extra criteria on the active goal",
+            argumentHint: "<text | remove N | clear>",
+            source: .acpNonInterruptive
         )
     ]
 
@@ -480,6 +490,33 @@ public final class RichChatViewModel {
                 source: .alwaysAvailable
             )
         ])
+        // v0.14 — append optional commands when the connected host advertises
+        // them. Filtered here rather than in `availableCommands` so the
+        // capability-gating logic stays co-located with the command shape.
+        if capabilities.hasYOLOSlashCommand {
+            result.append(HermesSlashCommand(
+                name: "yolo",
+                description: "Toggle YOLO mode (skip all dangerous approvals)",
+                argumentHint: nil,
+                source: .alwaysAvailable
+            ))
+        }
+        if capabilities.hasSessionsSlashCommand {
+            result.append(HermesSlashCommand(
+                name: "sessions",
+                description: "Browse and resume previous sessions",
+                argumentHint: nil,
+                source: .alwaysAvailable
+            ))
+        }
+        if capabilities.hasCodexRuntimeSlashCommand {
+            result.append(HermesSlashCommand(
+                name: "codex-runtime",
+                description: "Toggle Codex app-server runtime for OpenAI/Codex models",
+                argumentHint: "[auto|codex_app_server]",
+                source: .alwaysAvailable
+            ))
+        }
         return result
     }
 
@@ -582,10 +619,11 @@ public final class RichChatViewModel {
         // the input bar's concern (it reads `hasACPSteerOnIdle`).
         let supported: [HermesSlashCommand] = Self.nonInterruptiveCommands.filter { cmd in
             switch cmd.name {
-            case "goal":  return capabilitiesGate.hasGoals
-            case "queue": return capabilitiesGate.hasACPQueue
-            case "steer": return true
-            default:      return true
+            case "goal":    return capabilitiesGate.hasGoals
+            case "queue":   return capabilitiesGate.hasACPQueue
+            case "subgoal": return capabilitiesGate.hasSubgoal
+            case "steer":   return true
+            default:        return true
             }
         }
         let nonInterruptive = supported.filter { !occupied.contains($0.name) }
@@ -640,6 +678,68 @@ public final class RichChatViewModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         queuedPrompts.append(HermesQueuedPrompt(text: trimmed))
+    }
+
+    /// Optimistic local mirror of subgoals layered onto the active goal
+    /// via `/subgoal <text>` (v0.14+). Order matches the order they were
+    /// added; `/subgoal remove N` drops the Nth (1-indexed) entry;
+    /// `/subgoal clear` empties the list. Hermes owns the authoritative
+    /// state server-side — this mirror just drives the trailing line of
+    /// the goal pill in `SessionInfoBar`.
+    public private(set) var activeSubgoals: [String] = []
+
+    /// Parse the argument slug from a `/subgoal …` invocation. Pure
+    /// function — exposed for unit tests. The chat dispatch uses the
+    /// result to apply the right optimistic mutation before the prompt
+    /// is sent verbatim to Hermes.
+    public enum SubgoalCommandArgument: Equatable {
+        case add(String)
+        case remove(Int)
+        case clear
+        /// User typed `/subgoal` with no argument — Hermes will reply
+        /// with usage; Scarf shows a neutral hint and doesn't touch
+        /// the local mirror.
+        case empty
+    }
+
+    public static func parseSubgoalArgument(_ raw: String) -> SubgoalCommandArgument {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return .empty }
+        let lowered = trimmed.lowercased()
+        if lowered == "clear" || lowered == "--clear" { return .clear }
+        // `remove N` form. Accept any whitespace-separated single integer
+        // following the verb; reject negatives or non-numeric inputs by
+        // falling through to .add (which is harmless — Hermes will
+        // reject server-side and the mirror won't move).
+        if lowered.hasPrefix("remove ") || lowered.hasPrefix("rm ") {
+            let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            if parts.count == 2, let idx = Int(parts[1]), idx > 0 {
+                return .remove(idx)
+            }
+        }
+        return .add(trimmed)
+    }
+
+    /// Append a subgoal to the local mirror. Optimistic — Hermes owns
+    /// the canonical list server-side. No-op for empty input.
+    public func recordSubgoalAdded(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        activeSubgoals.append(trimmed)
+    }
+
+    /// Drop the Nth subgoal (1-indexed) from the local mirror, matching
+    /// Hermes's `/subgoal remove N` semantics. Out-of-range indices are
+    /// silently ignored.
+    public func recordSubgoalRemoved(_ oneBasedIndex: Int) {
+        let zeroIdx = oneBasedIndex - 1
+        guard activeSubgoals.indices.contains(zeroIdx) else { return }
+        activeSubgoals.remove(at: zeroIdx)
+    }
+
+    /// Clear all subgoals from the local mirror.
+    public func recordSubgoalsCleared() {
+        activeSubgoals.removeAll()
     }
 
     /// Drain the next queued prompt off the local mirror, FIFO. Called
@@ -1013,6 +1113,7 @@ public final class RichChatViewModel {
         // that doesn't change with session boundaries.
         activeGoal = nil
         queuedPrompts = []
+        activeSubgoals = []
         loadQuickCommands()
     }
 

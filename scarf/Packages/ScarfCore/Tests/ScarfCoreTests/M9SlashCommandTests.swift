@@ -343,6 +343,109 @@ import Foundation
         #expect(vm.queuedPrompts.first?.text == "third")
     }
 
+    // MARK: - /subgoal (Hermes v0.14)
+
+    @Test func parseSubgoalArgumentRecognizesClear() {
+        #expect(RichChatViewModel.parseSubgoalArgument("clear") == .clear)
+        #expect(RichChatViewModel.parseSubgoalArgument("Clear") == .clear)
+        #expect(RichChatViewModel.parseSubgoalArgument("--clear") == .clear)
+        #expect(RichChatViewModel.parseSubgoalArgument("  --clear  ") == .clear)
+    }
+
+    @Test func parseSubgoalArgumentRecognizesRemoveN() {
+        #expect(RichChatViewModel.parseSubgoalArgument("remove 1") == .remove(1))
+        #expect(RichChatViewModel.parseSubgoalArgument("remove 12") == .remove(12))
+        #expect(RichChatViewModel.parseSubgoalArgument("rm 3") == .remove(3))
+        // Non-positive indices fall through to .add so Hermes can reject them.
+        #expect(RichChatViewModel.parseSubgoalArgument("remove 0") == .add("remove 0"))
+        #expect(RichChatViewModel.parseSubgoalArgument("remove -1") == .add("remove -1"))
+        #expect(RichChatViewModel.parseSubgoalArgument("remove abc") == .add("remove abc"))
+    }
+
+    @Test func parseSubgoalArgumentRecognizesEmpty() {
+        #expect(RichChatViewModel.parseSubgoalArgument("") == .empty)
+        #expect(RichChatViewModel.parseSubgoalArgument("   ") == .empty)
+    }
+
+    @Test func parseSubgoalArgumentDefaultIsAdd() {
+        #expect(
+            RichChatViewModel.parseSubgoalArgument("don't break the API")
+                == .add("don't break the API")
+        )
+        // Whitespace is trimmed.
+        #expect(
+            RichChatViewModel.parseSubgoalArgument("  no regressions  ")
+                == .add("no regressions")
+        )
+    }
+
+    @MainActor
+    @Test func recordSubgoalAddedAppends() {
+        let vm = RichChatViewModel(context: .local)
+        vm.recordSubgoalAdded("a")
+        vm.recordSubgoalAdded("b")
+        vm.recordSubgoalAdded("c")
+        #expect(vm.activeSubgoals == ["a", "b", "c"])
+        // Whitespace-only input is a no-op.
+        vm.recordSubgoalAdded("   ")
+        #expect(vm.activeSubgoals == ["a", "b", "c"])
+    }
+
+    @MainActor
+    @Test func recordSubgoalRemovedAtIndex() {
+        let vm = RichChatViewModel(context: .local)
+        vm.recordSubgoalAdded("a")
+        vm.recordSubgoalAdded("b")
+        vm.recordSubgoalAdded("c")
+        // 1-indexed: removing 2 drops "b".
+        vm.recordSubgoalRemoved(2)
+        #expect(vm.activeSubgoals == ["a", "c"])
+        // Out-of-range is a silent no-op.
+        vm.recordSubgoalRemoved(99)
+        vm.recordSubgoalRemoved(0)
+        #expect(vm.activeSubgoals == ["a", "c"])
+    }
+
+    @MainActor
+    @Test func recordSubgoalsClearedEmptiesList() {
+        let vm = RichChatViewModel(context: .local)
+        vm.recordSubgoalAdded("a")
+        vm.recordSubgoalAdded("b")
+        vm.recordSubgoalsCleared()
+        #expect(vm.activeSubgoals.isEmpty)
+    }
+
+    @MainActor
+    @Test func subgoalMenuRespectsCapabilityGate() {
+        let vm = RichChatViewModel(context: .local)
+        // No /subgoal on a v0.13 host.
+        vm.publishCapabilities(HermesCapabilities.parseLine("Hermes Agent v0.13.0 (2026.5.7)"))
+        var names = vm.availableCommands.map(\.name)
+        #expect(!names.contains("subgoal"))
+        // /subgoal shows up on a v0.14 host.
+        vm.publishCapabilities(HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.5.16)"))
+        names = vm.availableCommands.map(\.name)
+        #expect(names.contains("subgoal"))
+    }
+
+    @MainActor
+    @Test func v014ConfigCommandsRespectCapabilityGate() {
+        let vm = RichChatViewModel(context: .local)
+        vm.setSessionId("scratch-session")
+        // None of /yolo /sessions /codex-runtime on a v0.13 host.
+        vm.publishCapabilities(HermesCapabilities.parseLine("Hermes Agent v0.13.0 (2026.5.7)"))
+        var names = vm.availableCommands.map(\.name)
+        #expect(!names.contains("yolo"))
+        #expect(!names.contains("sessions"))
+        #expect(!names.contains("codex-runtime"))
+        // All three show up on a v0.14 host.
+        vm.publishCapabilities(HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.5.16)"))
+        names = vm.availableCommands.map(\.name)
+        #expect(names.contains("yolo"))
+        #expect(names.contains("sessions"))
+        #expect(names.contains("codex-runtime"))
+    }
+
     @MainActor
     @Test func recordQueuedPromptIgnoresBlank() {
         let vm = RichChatViewModel(context: .local)

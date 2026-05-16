@@ -217,6 +217,152 @@ public struct HermesCapabilities: Sendable, Equatable {
     /// hosts ignore the call and stay on the config.yaml default.
     public var hasACPSetSessionModel: Bool { atLeastSemver(0, 13, 0) }
 
+    // MARK: v0.14 (v2026.5.16) flags
+    //
+    // v0.14 is the Foundation Release — native Windows beta, PyPI install,
+    // cold-start performance wave, OpenAI-compatible local proxy, two new
+    // platforms (LINE + SimpleX Chat), two new providers (xAI OAuth +
+    // NovitaAI), two new web-search backends (brave-free + ddgs), `/subgoal`
+    // and a handful of new slash commands, per-turn file-mutation verifier,
+    // ACP `--setup-browser`, and the Alibaba → Qwen Cloud display rename.
+    //
+    // Note: the v0.14 `/handoff` slash command is `cli_only` in Hermes's
+    // command catalog (it hands the session off to a *messaging platform*,
+    // not to a different model), so Scarf doesn't surface it in the ACP
+    // chat menu. Model switching mid-chat remains the `session/set_model`
+    // path under `hasACPSetSessionModel` (v0.13).
+
+    /// `/subgoal` slash command — appends user-specified success criteria
+    /// to the active `/goal` loop. Argument forms: `<text>`, `remove N`,
+    /// `clear` (v0.14+). Available in ACP and gateway contexts. Scarf
+    /// renders the active subgoals as a trailing line under the goal pill
+    /// in `SessionInfoBar`.
+    public var hasSubgoal: Bool { atLeastSemver(0, 14, 0) }
+
+    /// `/yolo` slash command — toggles YOLO mode (skip all dangerous
+    /// command approvals) for the current session (v0.14+). Available
+    /// in ACP. Pairs with the YOLO warning banner driven by
+    /// `hasYOLOWarning`.
+    public var hasYOLOSlashCommand: Bool { atLeastSemver(0, 14, 0) }
+
+    /// `/sessions` slash command — browse and resume previous sessions
+    /// from inside an active chat (v0.14+). Scarf already exposes session
+    /// browse via the sidebar, but the literal slash command is a v0.14
+    /// addition surfaced in the slash menu for parity.
+    public var hasSessionsSlashCommand: Bool { atLeastSemver(0, 14, 0) }
+
+    /// `/codex-runtime` slash command — toggle Codex app-server runtime
+    /// for OpenAI/Codex models (v0.14+). Argument forms:
+    /// `[auto|codex_app_server]`. Forward-compat flag — Scarf surfaces it
+    /// in the slash menu so users on Codex models can flip the runtime
+    /// without leaving chat.
+    public var hasCodexRuntimeSlashCommand: Bool { atLeastSemver(0, 14, 0) }
+
+    /// xAI Grok OAuth (SuperGrok) provider — overlay-only, OAuth-external
+    /// auth, base URL `https://api.x.ai/v1` (v0.14+). Wire ID is
+    /// `xai-oauth` (canonical); `x-ai-oauth` / `grok-oauth` /
+    /// `xai-grok-oauth` are accepted aliases.
+    public var hasGrokOAuthProvider: Bool { atLeastSemver(0, 14, 0) }
+
+    /// NovitaAI inference provider (v0.14+). Overlay-only, API-key auth,
+    /// base URL `https://api.novita.ai/v3/openai`. Wire ID is `novita`
+    /// (canonical); `novita-ai` / `novitaai` are aliases.
+    public var hasNovitaProvider: Bool { atLeastSemver(0, 14, 0) }
+
+    /// LINE Messaging API — 21st gateway platform (v0.14+). Wire ID `line`.
+    public var hasLINEPlatform: Bool { atLeastSemver(0, 14, 0) }
+
+    /// SimpleX Chat — 22nd gateway platform (v0.14+). Wire ID `simplex`.
+    /// Requires a local `simplex-chat` daemon running in WebSocket mode.
+    public var hasSimpleXPlatform: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Brave Search (free tier) web-search backend (v0.14+). Wire ID
+    /// `brave-free`. Honors a `BRAVE_SEARCH_API_KEY` env var for premium
+    /// quotas; works anonymously for basic queries.
+    public var hasBraveFreeSearchBackend: Bool { atLeastSemver(0, 14, 0) }
+
+    /// DuckDuckGo (DDGS) web-search backend (v0.14+). Wire ID `ddgs`.
+    /// Anonymous; uses the `ddgs` Python package which Hermes installs
+    /// lazily on first use.
+    public var hasDDGSearchBackend: Bool { atLeastSemver(0, 14, 0) }
+
+    /// MCP servers can advertise `supports_parallel_tool_calls` so the
+    /// agent batches concurrent tool calls instead of serializing them
+    /// (v0.14+). Settings surface only — runtime behavior is server-side.
+    public var hasMCPParallelToolCalls: Bool { atLeastSemver(0, 14, 0) }
+
+    /// `docker_extra_args` config key — extra flags passed verbatim to
+    /// `docker run` for the docker-backed terminal backend (v0.14+).
+    /// Stored as a list of strings; default is empty list.
+    public var hasDockerExtraArgs: Bool { atLeastSemver(0, 14, 0) }
+
+    /// `display.timestamps` config toggle — show per-message timestamps in
+    /// chat output (v0.14+). Mac surface adds the toggle in Settings →
+    /// General.
+    public var hasDisplayTimestamps: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Cron jobs accept `deliver=all` for fan-out delivery to every
+    /// connected channel (v0.14+). Pre-v0.14 hosts only accepted a
+    /// specific platform string.
+    public var hasCronDeliverAll: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Discord plugin reads recent channel history when joining a thread
+    /// (default on in v0.14+). Scarf surfaces the toggle so users can
+    /// disable the backfill for noisy channels.
+    public var hasDiscordHistoryBackfill: Bool { atLeastSemver(0, 14, 0) }
+
+    /// OpenRouter Pareto Code router knob `openrouter.min_coding_score`
+    /// (0.0–1.0, default 0.65) — routes to the cheapest model meeting the
+    /// quality bar (v0.14+). Used together with the
+    /// `openrouter/pareto-code` model alias.
+    public var hasOpenRouterParetoCoder: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Custom provider `api_mode` field — explicit `chat_completions` /
+    /// `anthropic_messages` / etc. selection persisted per provider
+    /// (v0.14+). Pre-v0.14 hosts inferred from base URL.
+    public var hasCustomProviderAPIMode: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Plugin `tool_override` flag — plugins can replace built-in tools
+    /// (v0.14+). Scarf reads the manifest field to render a badge in
+    /// `PluginsView`.
+    public var hasPluginToolOverride: Bool { atLeastSemver(0, 14, 0) }
+
+    /// `hermes proxy` CLI verb — OpenAI-compatible local proxy that
+    /// attaches OAuth-authenticated provider credentials to outbound
+    /// requests (v0.14+). Default port 8645, default adapter `nous`.
+    /// Scarf wraps `hermes proxy start` / `status` / `providers` in a
+    /// dedicated sidebar destination.
+    public var hasHermesProxy: Bool { atLeastSemver(0, 14, 0) }
+
+    /// `hermes acp --setup-browser` flag — one-shot setup verb that
+    /// installs Chromium and provisions Playwright for browser tools
+    /// (v0.14+). Surfaced in the Health view as a "Run setup" button.
+    public var hasACPSetupBrowser: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Per-turn file-mutation verifier footer — Hermes appends a summary
+    /// of files written on disk to every assistant turn that mutated
+    /// files (v0.14+; default on via `file_mutation_verifier` config).
+    /// Scarf detects and styles the block in chat output.
+    public var hasFileMutationVerifier: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Hermes surfaces a YOLO mode warning in its banner + status bar
+    /// when `agent.approval_mode = yolo` (v0.14+). Scarf mirrors with
+    /// a chat-header warning badge when the user's config opts in.
+    public var hasYOLOWarning: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Alibaba Cloud display name has been renamed to "Qwen Cloud" in
+    /// Hermes's provider picker (v0.14+). Wire ID remains `alibaba`;
+    /// existing config keys still work. Scarf mirrors the display
+    /// rename in the catalog so users see consistent naming across
+    /// CLI and GUI.
+    public var hasQwenCloudDisplayName: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Cross-session 1-hour Claude prompt cache shared across sessions
+    /// on Anthropic / OpenRouter / Nous Portal (v0.14+). Server-side
+    /// behavior; Scarf surfaces it as a documentation note in Settings →
+    /// Prompt Caching when on a v0.14 host.
+    public var hasCrossSessionClaudeCache: Bool { atLeastSemver(0, 14, 0) }
+
     // MARK: Convenience predicates
 
     /// Whether the connected host is on the v0.13 line or newer. Convenience
@@ -226,6 +372,12 @@ public struct HermesCapabilities: Sendable, Equatable {
     /// v0.13 flag; prefer this when the call site isn't actually about a
     /// specific feature.
     public var isV013OrLater: Bool { atLeastSemver(0, 13, 0) }
+
+    /// Whether the connected host is on the v0.14 line or newer. Convenience
+    /// for UI copy that toggles on the v0.13 → v0.14 boundary without
+    /// proxying through a feature-specific flag (e.g. "v0.14 features"
+    /// badges, cross-session-cache hints in Settings).
+    public var isV014OrLater: Bool { atLeastSemver(0, 14, 0) }
 
     private func atLeastSemver(_ major: Int, _ minor: Int, _ patch: Int) -> Bool {
         guard let s = semver else { return false }

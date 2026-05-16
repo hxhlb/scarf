@@ -1554,6 +1554,25 @@ final class ChatController {
             }
             vm.transientHint = "Queued — runs after current turn."
             scheduleTransientHintClear(snapshot: vm.transientHint)
+        case "subgoal":
+            // v0.14 — mirror the Mac dispatch so iOS users who run
+            // `/subgoal …` see the same trailing-line pill update as
+            // Mac users on the same session.
+            let arg = RichChatViewModel.parseSubgoalArgument(parsedSlash.args)
+            switch arg {
+            case .add(let subText):
+                vm.recordSubgoalAdded(subText)
+                vm.transientHint = "Subgoal added."
+            case .remove(let idx):
+                vm.recordSubgoalRemoved(idx)
+                vm.transientHint = "Subgoal \(idx) removed."
+            case .clear:
+                vm.recordSubgoalsCleared()
+                vm.transientHint = "Subgoals cleared."
+            case .empty:
+                vm.transientHint = "Sent /subgoal — see the agent reply for current subgoals."
+            }
+            scheduleTransientHintClear(snapshot: vm.transientHint)
         case "steer" where vm.isNonInterruptiveSlash(text):
             vm.transientHint = "Guidance queued — applies after the next tool call."
             scheduleTransientHintClear(snapshot: vm.transientHint)

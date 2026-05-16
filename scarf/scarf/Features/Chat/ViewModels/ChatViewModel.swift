@@ -668,6 +668,28 @@ final class ChatViewModel {
             }
             richChatViewModel.transientHint = "Queued — runs after current turn."
             scheduleHintClear()
+        case "subgoal":
+            // v0.14 — /subgoal layers extra success criteria onto the
+            // active /goal loop. Same optimistic-mirror pattern as
+            // /goal: parse the arg, mutate the local mirror, surface a
+            // transient hint, then send the slash verbatim to Hermes.
+            // Hermes is the authoritative store; the mirror just
+            // drives the goal-pill trailing line in `SessionInfoBar`.
+            let arg = RichChatViewModel.parseSubgoalArgument(parsed.args)
+            switch arg {
+            case .add(let subText):
+                richChatViewModel.recordSubgoalAdded(subText)
+                richChatViewModel.transientHint = "Subgoal added."
+            case .remove(let idx):
+                richChatViewModel.recordSubgoalRemoved(idx)
+                richChatViewModel.transientHint = "Subgoal \(idx) removed."
+            case .clear:
+                richChatViewModel.recordSubgoalsCleared()
+                richChatViewModel.transientHint = "Subgoals cleared."
+            case .empty:
+                richChatViewModel.transientHint = "Sent /subgoal — see the agent reply for current subgoals."
+            }
+            scheduleHintClear()
         case "steer" where isNonInterruptive:
             richChatViewModel.transientHint = "Guidance queued — applies after the next tool call."
             scheduleHintClear()

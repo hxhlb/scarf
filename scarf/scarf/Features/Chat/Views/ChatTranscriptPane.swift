@@ -33,6 +33,7 @@ struct ChatTranscriptPane: View {
                 gitBranch: chatViewModel.currentGitBranch,
                 activeGoal: richChat.activeGoal,
                 onClearGoal: { chatViewModel.sendText("/goal --clear") },
+                activeSubgoals: richChat.activeSubgoals,
                 queuedPrompts: richChat.queuedPrompts,
                 capabilities: capabilitiesStore?.capabilities ?? .empty,
                 kanbanLiveCount: kanbanBadgeViewModel?.liveCount,

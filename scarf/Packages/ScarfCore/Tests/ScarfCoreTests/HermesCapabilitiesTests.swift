@@ -184,16 +184,89 @@ import Foundation
         #expect(!caps.detected)
     }
 
-    @Test func futureVersionRetainsCapabilities() {
-        // A v0.14 (hypothetical) should still see all v0.12 + v0.13 capabilities on.
-        let caps = HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.7.1)")
+    @Test func v014FlagsAllOn() {
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.5.16)")
+        // v0.12 + v0.13 surfaces remain on.
         #expect(caps.hasCurator)
         #expect(caps.hasACPImagePrompts)
         #expect(caps.hasGoals)
         #expect(caps.hasKanbanDiagnostics)
         #expect(caps.hasCuratorArchive)
-        // And flush_memories stays gone.
+        #expect(caps.hasACPSetSessionModel)
         #expect(!caps.hasFlushMemoriesAux)
+        // v0.14 slash commands.
+        #expect(caps.hasSubgoal)
+        #expect(caps.hasYOLOSlashCommand)
+        #expect(caps.hasSessionsSlashCommand)
+        #expect(caps.hasCodexRuntimeSlashCommand)
+        // v0.14 providers.
+        #expect(caps.hasGrokOAuthProvider)
+        #expect(caps.hasNovitaProvider)
+        // v0.14 platforms.
+        #expect(caps.hasLINEPlatform)
+        #expect(caps.hasSimpleXPlatform)
+        // v0.14 web-tool backends.
+        #expect(caps.hasBraveFreeSearchBackend)
+        #expect(caps.hasDDGSearchBackend)
+        // v0.14 config + plugin additions.
+        #expect(caps.hasMCPParallelToolCalls)
+        #expect(caps.hasDockerExtraArgs)
+        #expect(caps.hasDisplayTimestamps)
+        #expect(caps.hasCronDeliverAll)
+        #expect(caps.hasDiscordHistoryBackfill)
+        #expect(caps.hasOpenRouterParetoCoder)
+        #expect(caps.hasCustomProviderAPIMode)
+        #expect(caps.hasPluginToolOverride)
+        // v0.14 new feature surfaces.
+        #expect(caps.hasHermesProxy)
+        #expect(caps.hasACPSetupBrowser)
+        #expect(caps.hasFileMutationVerifier)
+        #expect(caps.hasYOLOWarning)
+        #expect(caps.hasQwenCloudDisplayName)
+        #expect(caps.hasCrossSessionClaudeCache)
+        // Convenience predicate.
+        #expect(caps.isV014OrLater)
+    }
+
+    @Test func v013HostHidesV014Flags() {
+        // Every v0.14 flag must stay off on a pristine v0.13 host so the
+        // UI degrades silently.
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.13.0 (2026.5.7)")
+        #expect(!caps.hasSubgoal)
+        #expect(!caps.hasYOLOSlashCommand)
+        #expect(!caps.hasSessionsSlashCommand)
+        #expect(!caps.hasCodexRuntimeSlashCommand)
+        #expect(!caps.hasGrokOAuthProvider)
+        #expect(!caps.hasNovitaProvider)
+        #expect(!caps.hasLINEPlatform)
+        #expect(!caps.hasSimpleXPlatform)
+        #expect(!caps.hasBraveFreeSearchBackend)
+        #expect(!caps.hasDDGSearchBackend)
+        #expect(!caps.hasMCPParallelToolCalls)
+        #expect(!caps.hasDockerExtraArgs)
+        #expect(!caps.hasDisplayTimestamps)
+        #expect(!caps.hasCronDeliverAll)
+        #expect(!caps.hasDiscordHistoryBackfill)
+        #expect(!caps.hasOpenRouterParetoCoder)
+        #expect(!caps.hasCustomProviderAPIMode)
+        #expect(!caps.hasPluginToolOverride)
+        #expect(!caps.hasHermesProxy)
+        #expect(!caps.hasACPSetupBrowser)
+        #expect(!caps.hasFileMutationVerifier)
+        #expect(!caps.hasYOLOWarning)
+        #expect(!caps.hasQwenCloudDisplayName)
+        #expect(!caps.hasCrossSessionClaudeCache)
+        #expect(!caps.isV014OrLater)
+    }
+
+    @Test func v014PatchReleaseStillEnablesAllFlags() {
+        // A v0.14.3 patch release should still enable every v0.14 flag.
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.14.3 (2026.6.20)")
+        #expect(caps.hasSubgoal)
+        #expect(caps.hasGrokOAuthProvider)
+        #expect(caps.hasLINEPlatform)
+        #expect(caps.hasHermesProxy)
+        #expect(caps.isV014OrLater)
     }
 
     @Test func v0_13_patchReleaseStillEnablesAllFlags() {
@@ -223,7 +296,24 @@ import Foundation
     }
 
     @Test func isV013OrLater_v014HostTrue() {
-        let caps = HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.7.1)")
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.5.16)")
         #expect(caps.isV013OrLater)
+    }
+
+    // MARK: - isV014OrLater convenience predicate
+
+    @Test func isV014OrLater_v014HostTrue() {
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.5.16)")
+        #expect(caps.isV014OrLater)
+    }
+
+    @Test func isV014OrLater_v013HostFalse() {
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.13.0 (2026.5.7)")
+        #expect(!caps.isV014OrLater)
+    }
+
+    @Test func isV014OrLater_emptyFalse() {
+        let caps = HermesCapabilities.empty
+        #expect(!caps.isV014OrLater)
     }
 }

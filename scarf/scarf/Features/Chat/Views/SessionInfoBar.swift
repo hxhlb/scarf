@@ -33,6 +33,11 @@ struct SessionInfoBar: View {
     /// context menu. Caller dispatches `/goal --clear` so the optimistic
     /// pill clear and the server-side authoritative state stay in sync.
     var onClearGoal: (() -> Void)? = nil
+    /// Active subgoals layered onto the goal via `/subgoal` (Hermes v0.14).
+    /// Empty list renders as just the goal pill; populated list adds a
+    /// trailing count badge inside the pill with the full list in the
+    /// tooltip. Optimistic mirror lives on `RichChatViewModel.activeSubgoals`.
+    var activeSubgoals: [String] = []
     /// Local mirror of prompts queued via `/queue …` (Hermes v0.13).
     /// Empty list hides the chip.
     var queuedPrompts: [HermesQueuedPrompt] = []
@@ -119,13 +124,23 @@ struct SessionInfoBar: View {
                     HStack(spacing: 4) {
                         Image(systemName: "scope")
                         Text(Self.truncatedGoal(activeGoal.text))
+                        if !activeSubgoals.isEmpty {
+                            // v0.14 — surface the active subgoal count as
+                            // a compact "+N" badge inside the goal pill.
+                            // Full list shows in the tooltip below so the
+                            // chrome stays one-line at chat-bar height.
+                            Text("+\(activeSubgoals.count)")
+                                .scarfStyle(.captionUppercase)
+                                .padding(.horizontal, 4)
+                                .background(Capsule().fill(ScarfColor.info.opacity(0.28)))
+                        }
                     }
                     .scarfStyle(.caption)
                     .padding(.horizontal, ScarfSpace.s2)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(ScarfColor.info.opacity(0.16)))
                     .foregroundStyle(ScarfColor.info)
-                    .help("Goal locked: \(activeGoal.text)")
+                    .help(Self.goalTooltip(goal: activeGoal.text, subgoals: activeSubgoals))
                     .contextMenu {
                         if let onClearGoal {
                             Button("Clear goal", role: .destructive, action: onClearGoal)
@@ -281,5 +296,14 @@ struct SessionInfoBar: View {
     /// available in the tooltip via `.help(...)`.
     static func truncatedGoal(_ text: String) -> String {
         text.count <= 36 ? text : String(text.prefix(33)) + "…"
+    }
+
+    /// Build the help-tooltip body for the goal pill. Includes the
+    /// goal text plus a numbered list of any active subgoals so the
+    /// user can hover-read the full state without opening a sheet.
+    static func goalTooltip(goal: String, subgoals: [String]) -> String {
+        if subgoals.isEmpty { return "Goal locked: \(goal)" }
+        let lines = subgoals.enumerated().map { idx, s in "  \(idx + 1). \(s)" }
+        return "Goal locked: \(goal)\nSubgoals:\n" + lines.joined(separator: "\n")
     }
 }

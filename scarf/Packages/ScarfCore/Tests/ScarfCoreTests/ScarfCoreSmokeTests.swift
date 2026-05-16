@@ -208,7 +208,16 @@ import Foundation
         // KnownPlatforms lookup — guards that the icon-map path didn't break.
         #expect(KnownPlatforms.icon(for: "discord") == "bubble.left.and.bubble.right")
         #expect(KnownPlatforms.icon(for: "unknown") == "bubble.left")
+        // 22 platforms after v0.14 (LINE + SimpleX), 20 in v0.13, 18 in v0.12.
+        // Keep the floor at the previous-version count so a v0.13 host's
+        // platform list still satisfies the assertion; raising the floor
+        // would create a test-vs-runtime version mismatch on older hosts.
         #expect(KnownPlatforms.all.count >= 13)
+        // Spot-check the two v0.14 additions resolve.
+        #expect(KnownPlatforms.icon(for: "line") == "bubble.left.and.text.bubble.right")
+        #expect(KnownPlatforms.icon(for: "simplex") == "lock.shield.fill")
+        #expect(KnownPlatforms.all.contains { $0.name == "line" })
+        #expect(KnownPlatforms.all.contains { $0.name == "simplex" })
     }
 
     @Test func acpRequestAndEvents() throws {

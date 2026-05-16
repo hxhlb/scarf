@@ -71,6 +71,13 @@ public enum KnownPlatforms {
         // `KnownPlatforms.icon(for:)` below. `GatewayAllowlistKind.kind(for:)`
         // already accepts both spellings defensively.
         HermesToolPlatform(name: "google-chat", displayName: "Google Chat", icon: "bubble.left.fill"),
+        // -- v0.14 additions ---------------------------------------------
+        // LINE Messaging API (21st platform, first-class native adapter)
+        // and SimpleX Chat (22nd platform, talks to a local
+        // `simplex-chat` daemon in WebSocket mode). Identifiers match
+        // Hermes's gateway platform names verbatim.
+        HermesToolPlatform(name: "line", displayName: "LINE", icon: "bubble.left.and.text.bubble.right"),
+        HermesToolPlatform(name: "simplex", displayName: "SimpleX Chat", icon: "lock.shield.fill"),
     ]
 
     public static func icon(for platform: String) -> String {
@@ -91,6 +98,8 @@ public enum KnownPlatforms {
         case "yuanbao": return "bubble.left.and.bubble.right.fill"
         case "microsoft-teams": return "person.2.fill"
         case "google-chat", "googlechat": return "bubble.left.fill"
+        case "line": return "bubble.left.and.text.bubble.right"
+        case "simplex": return "lock.shield.fill"
         default: return "bubble.left"
         }
     }

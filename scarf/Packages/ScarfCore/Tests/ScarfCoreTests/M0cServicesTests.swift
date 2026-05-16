@@ -222,6 +222,62 @@ import Foundation
         #expect(badProviders.allSatisfy { $0.isOverlay })
     }
 
+    @Test func v014OverlayProvidersAppearInLoadProviders() {
+        // No models.dev cache — only overlay providers should surface.
+        // xai-oauth + novita are the v0.14 additions and must be present
+        // (with the correct subscription-gated flags) so the picker can
+        // reach them without a network round-trip.
+        let svc = ModelCatalogService(path: "/tmp/scarf-nonexistent-\(UUID().uuidString).json")
+        let providers = svc.loadProviders()
+        let grok = providers.first { $0.providerID == "xai-oauth" }
+        #expect(grok != nil)
+        #expect(grok?.providerName == "xAI (SuperGrok)")
+        #expect(grok?.subscriptionGated == true)
+        #expect(grok?.isOverlay == true)
+
+        let novita = providers.first { $0.providerID == "novita" }
+        #expect(novita != nil)
+        #expect(novita?.providerName == "NovitaAI")
+        #expect(novita?.subscriptionGated == false)
+        #expect(novita?.isOverlay == true)
+    }
+
+    @Test func providerDisplayNameOverridesRenamesAlibaba() throws {
+        // Hermes v0.14 renamed Alibaba Cloud → Qwen Cloud in the picker
+        // without changing the wire ID. Scarf mirrors the rename via
+        // `providerDisplayNameOverrides` so `loadProviders()` returns
+        // "Qwen Cloud" even when the cached models.dev JSON still says
+        // "Alibaba".
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("scarf-catalog-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let json = #"""
+        {
+          "alibaba": {
+            "id": "alibaba",
+            "name": "Alibaba",
+            "models": {
+              "qwen-turbo": {"name": "Qwen Turbo"}
+            }
+          }
+        }
+        """#
+        try json.write(to: tmp, atomically: true, encoding: .utf8)
+        let svc = ModelCatalogService(path: tmp.path)
+
+        // Provider list reflects the rename.
+        let alibaba = svc.loadProviders().first { $0.providerID == "alibaba" }
+        #expect(alibaba?.providerName == "Qwen Cloud")
+
+        // Model rows under the renamed provider also see the rename, so
+        // any "Provider · Model" label in the picker is consistent.
+        let models = svc.loadModels(for: "alibaba")
+        #expect(models.count == 1)
+        #expect(models.first?.providerName == "Qwen Cloud")
+
+        // Wire ID stays `alibaba` — Hermes still accepts it.
+        #expect(svc.provider(for: "qwen-turbo")?.providerID == "alibaba")
+    }
+
     @Test func validateModelAcceptsCatalogHit() throws {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("scarf-catalog-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: tmp) }

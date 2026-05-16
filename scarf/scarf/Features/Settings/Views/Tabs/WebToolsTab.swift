@@ -16,25 +16,35 @@ struct WebToolsTab: View {
         capabilitiesStore?.capabilities.hasWebToolsBackendSplit ?? false
     }
 
-    // TODO(WS-7-Q6): Backend lists are curated inline based on the v0.13
-    // release notes ("SearXNG joined search-only"). The exact dispatch
-    // table lives in `~/.hermes/hermes-agent/hermes_cli/web_tools.py` —
-    // verify during integration. A wrong entry just produces a
-    // `hermes config set` failure on save (recoverable, not silent).
-    private static let searchBackends: [String] = [
-        "duckduckgo", "tavily", "brave", "exa", "you", "searxng"
+    // Wire-accurate against `tools/web_tools.py` in Hermes v2026.5.16
+    // (line 143/1364 in v0.14: the canonical set is exa, parallel,
+    // firecrawl, tavily, searxng, brave-free, ddgs). `brave-free` and
+    // `ddgs` are v0.14 additions — gated below so pre-v0.14 hosts only
+    // see the older five. Search-only entries (searxng / brave-free /
+    // ddgs) don't appear in the extract picker.
+    private static let v013SearchBackends: [String] = [
+        "exa", "parallel", "firecrawl", "tavily", "searxng"
+    ]
+    private static let v014SearchAdditions: [String] = [
+        "brave-free", "ddgs"
     ]
     private static let extractBackends: [String] = [
-        "reader", "browserless", "trafilatura", "firecrawl"
+        "exa", "parallel", "firecrawl", "tavily"
     ]
-    /// v0.12 combined-backend list — superset of the v0.13 search list
-    /// minus SearXNG (which only dispatches as search) plus the v0.13
-    /// extract-only entries that pre-v0.13 hosts handled under the
-    /// combined key.
+    /// v0.12 combined-backend list — pre-v0.13 hosts that haven't yet
+    /// split search/extract into per-capability keys. Conservative
+    /// superset: every backend that handles either capability.
     private static let combinedBackends: [String] = [
-        "duckduckgo", "tavily", "brave", "exa", "you",
-        "reader", "browserless", "trafilatura", "firecrawl"
+        "exa", "parallel", "firecrawl", "tavily", "searxng"
     ]
+
+    private var searchBackends: [String] {
+        let caps = capabilitiesStore?.capabilities ?? .empty
+        var list = Self.v013SearchBackends
+        if caps.hasBraveFreeSearchBackend { list.append("brave-free") }
+        if caps.hasDDGSearchBackend { list.append("ddgs") }
+        return list
+    }
 
     var body: some View {
         if split {
@@ -42,7 +52,7 @@ struct WebToolsTab: View {
                 PickerRow(
                     label: "Search backend",
                     selection: viewModel.config.webToolsSearchBackend,
-                    options: Self.searchBackends
+                    options: searchBackends
                 ) { viewModel.setWebToolsSearchBackend($0) }
                 PickerRow(
                     label: "Extract backend",
@@ -50,7 +60,17 @@ struct WebToolsTab: View {
                     options: Self.extractBackends
                 ) { viewModel.setWebToolsExtractBackend($0) }
             }
-            Text("SearXNG joined v0.13 as a search-only backend. Backend-specific tuning (host URLs, API keys) lives in the raw YAML editor for now.")
+            // Footer copy adapts to the connected host — v0.14 adds the
+            // two new free-tier search backends; older hosts see the
+            // SearXNG-joined-search-only line.
+            let caps = capabilitiesStore?.capabilities ?? .empty
+            let footerCopy: String = {
+                if caps.hasBraveFreeSearchBackend || caps.hasDDGSearchBackend {
+                    return "v0.14 added Brave Search (free tier; honors BRAVE_SEARCH_API_KEY) and DuckDuckGo (DDGS) as search-only backends. Backend-specific tuning lives in the raw YAML editor for now."
+                }
+                return "SearXNG is search-only. Backend-specific tuning (host URLs, API keys) lives in the raw YAML editor for now."
+            }()
+            Text(footerCopy)
                 .scarfStyle(.caption)
                 .foregroundStyle(ScarfColor.foregroundMuted)
                 .padding(.horizontal, ScarfSpace.s4)

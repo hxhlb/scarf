@@ -133,9 +133,10 @@ public struct ModelCatalogService: Sendable {
         let catalog = loadCatalog() ?? [:]
         var byID: [String: HermesProviderInfo] = [:]
         for (id, p) in catalog {
+            let resolvedName = Self.providerDisplayNameOverrides[id] ?? p.name ?? id
             byID[id] = HermesProviderInfo(
                 providerID: id,
-                providerName: p.name ?? id,
+                providerName: resolvedName,
                 envVars: p.env ?? [],
                 docURL: p.doc,
                 modelCount: p.models?.count ?? 0,
@@ -144,9 +145,10 @@ public struct ModelCatalogService: Sendable {
             )
         }
         for (id, overlay) in Self.overlayOnlyProviders where byID[id] == nil {
+            let resolvedName = Self.providerDisplayNameOverrides[id] ?? overlay.displayName
             byID[id] = HermesProviderInfo(
                 providerID: id,
-                providerName: overlay.displayName,
+                providerName: resolvedName,
                 envVars: [],
                 docURL: overlay.docURL,
                 modelCount: 0,
@@ -200,7 +202,9 @@ public struct ModelCatalogService: Sendable {
     /// Models for one provider, sorted by release date (newest first), then name.
     public func loadModels(for providerID: String) -> [HermesModelInfo] {
         guard let catalog = loadCatalog(), let provider = catalog[providerID] else { return [] }
-        let providerName = provider.name ?? providerID
+        let providerName = Self.providerDisplayNameOverrides[providerID]
+            ?? provider.name
+            ?? providerID
         let models = (provider.models ?? [:]).map { (id, m) in
             HermesModelInfo(
                 providerID: providerID,
@@ -628,6 +632,44 @@ public struct ModelCatalogService: Sendable {
             subscriptionGated: false,
             docURL: nil
         ),
+        // -- v0.14 additions ---------------------------------------------
+        // Hermes v2026.5.16 added two overlay-only providers:
+        // xAI Grok OAuth (SuperGrok subscription) and NovitaAI. Wire IDs
+        // match HERMES_OVERLAYS verbatim — `xai-oauth` is canonical
+        // (`x-ai-oauth` / `grok-oauth` / `xai-grok-oauth` are accepted
+        // aliases server-side, but Scarf only registers the canonical so
+        // the picker shows one row).
+        "xai-oauth": HermesProviderOverlay(
+            displayName: "xAI (SuperGrok)",
+            baseURL: "https://api.x.ai/v1",
+            authType: .oauthExternal,
+            subscriptionGated: true,
+            docURL: nil
+        ),
+        "novita": HermesProviderOverlay(
+            displayName: "NovitaAI",
+            baseURL: nil, // Resolved at runtime from NOVITA_BASE_URL.
+            authType: .apiKey,
+            subscriptionGated: false,
+            docURL: nil
+        ),
+    ]
+
+    /// Display-name overrides applied at `loadProviders()` time. Used
+    /// when Hermes renames a provider's display string without changing
+    /// the wire ID — `alibaba` → "Qwen Cloud" in v0.14 is the only
+    /// entry today. Keys are the provider's wire ID; values are the
+    /// preferred display name.
+    ///
+    /// **Why unconditional (no capability gate):** pre-v0.14 Hermes
+    /// hosts still accept the `alibaba` provider ID, so showing
+    /// "Qwen Cloud" cosmetically across all hosts matches what the
+    /// world calls it (per the v0.14 release notes) and avoids the
+    /// jarring "name changes when Hermes upgrades" UX. Mirror new
+    /// entries to `hermes_cli/models.py`'s `ProviderEntry` table on
+    /// Hermes version bumps so display drift stays minimal.
+    public static let providerDisplayNameOverrides: [String: String] = [
+        "alibaba": "Qwen Cloud",
     ]
 }
 

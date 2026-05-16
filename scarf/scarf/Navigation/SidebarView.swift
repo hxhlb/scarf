@@ -57,6 +57,12 @@ struct SidebarView: View {
         if caps?.hasACPSetSessionModel ?? false {
             configure.append(.models)
         }
+        // v0.14 — Hermes Proxy is the user-facing surface for the
+        // `hermes proxy` CLI. Gated on hasHermesProxy so pre-v0.14
+        // hosts don't see an entry that wouldn't launch.
+        if caps?.hasHermesProxy ?? false {
+            configure.append(.proxy)
+        }
 
         return [
             // Projects sits first now — promoting it to a first-class

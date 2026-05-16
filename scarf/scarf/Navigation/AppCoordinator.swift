@@ -22,6 +22,12 @@ enum SidebarSection: String, CaseIterable, Identifiable {
     case webhooks = "Webhooks"
     case profiles = "Profiles"
     case models = "Models"
+    /// Hermes v0.14 — OpenAI-compatible local proxy that forwards
+    /// requests with the user's OAuth-authed provider credentials.
+    /// Listed under Configure between Models and Profiles since it
+    /// configures how third-party tools (Codex, Aider, Cline) reach
+    /// the user's Hermes-managed subscription.
+    case proxy = "Proxy"
     // Manage
     case tools = "Tools"
     case mcpServers = "MCP Servers"
@@ -53,6 +59,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .webhooks: return "Webhooks"
         case .profiles: return "Profiles"
         case .models: return "Models"
+        case .proxy: return "Hermes Proxy"
         case .tools: return "Tools"
         case .mcpServers: return "MCP Servers"
         case .gateway: return "Messaging Gateway"
@@ -83,6 +90,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .webhooks: return "arrow.up.right.square"
         case .profiles: return "person.2.crop.square.stack"
         case .models: return "cpu"
+        case .proxy: return "shippingbox.and.arrow.backward"
         case .tools: return "wrench.and.screwdriver"
         case .mcpServers: return "puzzlepiece.extension"
         case .gateway: return "antenna.radiowaves.left.and.right"

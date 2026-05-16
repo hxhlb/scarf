@@ -71,6 +71,7 @@ struct ContentView: View {
         case .webhooks:         WebhooksView(context: serverContext)
         case .profiles:         ProfilesView(context: serverContext)
         case .models:           ModelPresetsView(context: serverContext)
+        case .proxy:            HermesProxyView(context: serverContext)
         case .tools:            ToolsView(context: serverContext)
         case .mcpServers:       MCPServersView(context: serverContext)
         case .gateway:          GatewayView(context: serverContext)

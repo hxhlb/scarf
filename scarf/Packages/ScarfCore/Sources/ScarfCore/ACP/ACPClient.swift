@@ -258,9 +258,26 @@ public actor ACPClient {
             "mcpServers": AnyCodable([Any]()),
         ]
         let result = try await sendRequest(method: "session/load", params: params)
-        // ACP returns {} on success (no sessionId echoed), or an error if
-        // not found. If we got here without throwing, the session was
-        // loaded — use the ID we sent.
+        // #99 — Hermes's `load_session` returns a `LoadSessionResponse`
+        // dict (e.g. `{"models": …}`) on success, but a JSON-RPC
+        // `result: null` — NOT an error — when the session can't be
+        // restored into the ACP runtime (`update_cwd` → `get_session` →
+        // `_restore` returned None, e.g. a session that isn't an
+        // ACP-persisted session). The old code treated any non-throwing
+        // response as success and fell through to `?? sessionId`,
+        // silently returning the requested id as if loaded — so the chat
+        // then ran against a phantom session and the user lost their
+        // context with no signal. Detect the null/non-dict result and
+        // throw so the caller's fallback (create a fresh session + replay
+        // the DB transcript) runs cleanly instead. A successful empty
+        // `{}` (older Hermes) is a non-nil dict, so it still counts as a
+        // load.
+        guard result?.dictValue != nil else {
+            #if canImport(os)
+            logger.warning("session/load returned null for \(sessionId) — not restorable; caller should fall back to a new session")
+            #endif
+            throw ACPClientError.invalidResponse("session/load returned null — session \(sessionId) is not restorable")
+        }
         let loadedId = (result?.dictValue?["sessionId"] as? String) ?? sessionId
         currentSessionId = loadedId
         statusMessage = "Session loaded"

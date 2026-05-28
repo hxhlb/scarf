@@ -329,6 +329,33 @@ extension ServerContext {
         makeTransport().fileExists(path)
     }
 
+    /// Whether the chat pre-flight should consider the Hermes binary
+    /// reachable enough to attempt an ACP session.
+    ///
+    /// For a **path-shaped** binary (absolute or relative — contains a
+    /// `/`), this is an accurate filesystem check via `fileExists`. For a
+    /// **bare command name** (e.g. `"hermes"` when no `binaryHint` is set
+    /// on a remote), `fileExists` would run `test -e hermes` against the
+    /// remote working directory and return false — a false negative,
+    /// because a bare name resolves via `$PATH` at launch time, not as a
+    /// file in cwd. The ACP spawn uses a login shell (`bash -lc`) which
+    /// IS the authoritative PATH resolver; if `hermes` is genuinely
+    /// missing, the spawn fails and `ACPErrorHint` surfaces a
+    /// "command not found" hint. So bare names are presumed resolvable
+    /// here and the real check is deferred to launch.
+    ///
+    /// Fixes #100 — remote Chat showed "Hermes Not Found" for servers
+    /// where `command -v hermes` works and Remote Diagnostics passed,
+    /// because the pre-flight gate was a literal `test -e hermes`.
+    public nonisolated func hermesBinaryProbablyResolvable() -> Bool {
+        let bin = paths.hermesBinary
+        if bin.contains("/") {
+            return fileExists(bin)
+        }
+        // Bare command name → resolved via PATH at launch, not a cwd file.
+        return true
+    }
+
     /// File modification timestamp, or `nil` if the file doesn't exist.
     public nonisolated func modificationDate(_ path: String) -> Date? {
         makeTransport().stat(path)?.mtime

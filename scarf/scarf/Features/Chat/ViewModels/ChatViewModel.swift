@@ -23,7 +23,14 @@ final class ChatViewModel {
         // chunk, which manifests as the chat screen flashing or going
         // blank during prompts.
         Task.detached(priority: .userInitiated) { [context] in
-            let exists = context.fileExists(context.paths.hermesBinary)
+            // #100 — use the PATH-aware probe, not a raw fileExists. For a
+            // remote server with no binaryHint, `paths.hermesBinary` is the
+            // bare name "hermes"; `fileExists` would `test -e hermes` in the
+            // remote cwd and report missing even when `command -v hermes`
+            // resolves it and the ACP login-shell launch works fine. The
+            // helper presumes bare names resolvable and defers the real
+            // check to launch (whose failure path surfaces a clear hint).
+            let exists = context.hermesBinaryProbablyResolvable()
             await MainActor.run { [weak self] in
                 self?.hermesBinaryExists = exists
             }

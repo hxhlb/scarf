@@ -243,6 +243,66 @@ import Foundation
         await client.stop()
     }
 
+    // MARK: - session/load null-result detection (issue #99)
+    //
+    // Hermes's `load_session` returns a `LoadSessionResponse` dict on a
+    // successful restore, but a JSON-RPC `result: null` (NOT an error)
+    // when the session can't be restored into the ACP runtime. The old
+    // loadSession treated any non-throwing response as success and
+    // silently returned the requested id — so the chat ran against a
+    // phantom session and the user lost context. loadSession must now
+    // throw on a null result so the caller falls back to a fresh session.
+
+    @Test @MainActor func loadSessionThrowsOnNullResult() async throws {
+        let (client, mock, startTask) = await buildClientWithMock()
+        try await waitFor { await mock.sent.count >= 1 }
+        let initId = await mock.lastSentRequestId() ?? 1
+        await mock.reply(with: #"{"jsonrpc":"2.0","id":\#(initId),"result":{}}"#)
+        try await startTask.value
+
+        let loadTask = Task {
+            try await client.loadSession(cwd: "/tmp", sessionId: "abc-123")
+        }
+        try await waitFor { await mock.sent.count >= 2 }
+        let loadId = await mock.lastSentRequestId() ?? 2
+        // Hermes returns `result: null` when the session isn't restorable.
+        await mock.reply(with: #"{"jsonrpc":"2.0","id":\#(loadId),"result":null}"#)
+
+        do {
+            _ = try await loadTask.value
+            Issue.record("expected loadSession to throw on null result")
+        } catch let error as ACPClientError {
+            if case .invalidResponse(let msg) = error {
+                #expect(msg.contains("abc-123"))
+            } else {
+                Issue.record("expected .invalidResponse, got \(error)")
+            }
+        }
+        await client.stop()
+    }
+
+    @Test @MainActor func loadSessionSucceedsOnDictResult() async throws {
+        let (client, mock, startTask) = await buildClientWithMock()
+        try await waitFor { await mock.sent.count >= 1 }
+        let initId = await mock.lastSentRequestId() ?? 1
+        await mock.reply(with: #"{"jsonrpc":"2.0","id":\#(initId),"result":{}}"#)
+        try await startTask.value
+
+        let loadTask = Task {
+            try await client.loadSession(cwd: "/tmp", sessionId: "abc-123")
+        }
+        try await waitFor { await mock.sent.count >= 2 }
+        let loadId = await mock.lastSentRequestId() ?? 2
+        // A restorable session returns a LoadSessionResponse dict (the
+        // models selector). loadSession returns the requested id since
+        // Hermes doesn't echo sessionId in the load response.
+        await mock.reply(with: #"{"jsonrpc":"2.0","id":\#(loadId),"result":{"models":{"current":"anthropic:claude"}}}"#)
+
+        let resolved = try await loadTask.value
+        #expect(resolved == "abc-123")
+        await client.stop()
+    }
+
     // MARK: - Read-side liveness (stall detection)
     //
     // Regression coverage for TestFlight feedback AObiv7 (2026-05-07):

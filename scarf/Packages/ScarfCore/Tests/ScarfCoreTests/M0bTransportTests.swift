@@ -76,6 +76,25 @@ import Foundation
         #expect(remoteDefault.paths.home == "~/.hermes")
     }
 
+    @Test func hermesBinaryProbablyResolvableForBareRemoteName() {
+        // #100 — a remote server with no binary hint resolves
+        // `paths.hermesBinary` to the bare command name "hermes".
+        // The pre-flight chat gate must NOT report this as missing:
+        // `fileExists("hermes")` would run `test -e hermes` in the
+        // remote cwd (a false negative), but the bare name resolves via
+        // PATH at launch. `hermesBinaryProbablyResolvable()` presumes
+        // bare names reachable and defers the real check to the ACP
+        // login-shell launch — so it returns true without any transport
+        // round-trip.
+        let remote = ServerContext(
+            id: UUID(),
+            displayName: "remote",
+            kind: .ssh(SSHConfig(host: "h", remoteHome: "/Users/Apple/.hermes"))
+        )
+        #expect(remote.paths.hermesBinary == "hermes")          // bare name
+        #expect(remote.hermesBinaryProbablyResolvable() == true) // not blocked
+    }
+
     @Test func serverContextMakeTransportDispatchesLocal() {
         // Only assert the .local path here. The .ssh → SSHTransport
         // default-factory assertion lives in the serialized

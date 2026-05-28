@@ -39,7 +39,7 @@ struct KanbanView: View {
                     tenantFilter: consumedHandoff?.tenant,
                     projectPath: consumedHandoff?.projectPath,
                     projectName: consumedHandoff?.projectName,
-                    sessionStartedAt: consumedHandoff?.sessionOpenedAt
+                    sessionScopeId: consumedHandoff?.sessionId
                 )
                 // Re-build the board view when a fresh hand-off lands so
                 // the new tenant + timestamp take effect even if the
@@ -73,7 +73,7 @@ struct KanbanView: View {
         return [
             pending.tenant ?? "",
             pending.projectPath ?? "",
-            ISO8601DateFormatter().string(from: pending.sessionOpenedAt)
+            pending.sessionId
         ].joined(separator: "|")
     }
 
@@ -84,7 +84,7 @@ struct KanbanView: View {
         return [
             handoff.tenant ?? "",
             handoff.projectPath ?? "",
-            ISO8601DateFormatter().string(from: handoff.sessionOpenedAt)
+            handoff.sessionId
         ].joined(separator: "|")
     }
 

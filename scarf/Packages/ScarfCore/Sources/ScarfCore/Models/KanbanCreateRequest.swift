@@ -17,6 +17,10 @@ public struct KanbanCreateRequest: Sendable, Equatable {
     public var maxRuntimeSeconds: Int?
     public var createdBy: String?
     public var skills: [String]
+    /// v0.15: git branch a worktree-workspace task should operate on,
+    /// passed verbatim as `--branch <name>`. Only meaningful with a
+    /// `.worktree` / `.worktreePath` workspace. `nil`/empty → omitted.
+    public var branch: String?
     /// v0.13: per-task retry budget. `--max-retries N` is write-once at
     /// create time — no `set_max_retries` verb. Pass `nil` to let Hermes
     /// pick its built-in default (3 as of v0.13.0). Capability-gated in
@@ -40,7 +44,8 @@ public struct KanbanCreateRequest: Sendable, Equatable {
         maxRuntimeSeconds: Int? = nil,
         createdBy: String? = nil,
         skills: [String] = [],
-        maxRetries: Int? = nil
+        maxRetries: Int? = nil,
+        branch: String? = nil
     ) {
         self.title = title
         self.body = body
@@ -55,6 +60,7 @@ public struct KanbanCreateRequest: Sendable, Equatable {
         self.createdBy = createdBy
         self.skills = skills
         self.maxRetries = maxRetries
+        self.branch = branch
     }
 
     /// Build the argv suffix this request maps to (everything after
@@ -73,6 +79,9 @@ public struct KanbanCreateRequest: Sendable, Equatable {
         }
         if let workspace {
             args.append(contentsOf: ["--workspace", workspace.cliValue])
+        }
+        if let branch, !branch.isEmpty {
+            args.append(contentsOf: ["--branch", branch])
         }
         if let tenant, !tenant.isEmpty {
             args.append(contentsOf: ["--tenant", tenant])
@@ -106,19 +115,24 @@ public struct KanbanCreateRequest: Sendable, Equatable {
     }
 }
 
-/// Typed mirror of Hermes's `--workspace` flag. `scratch` and `worktree`
-/// are bare strings on the wire; `dir:<absolute path>` is a colon-prefixed
-/// path. We keep them typed in Swift so callers can't typo "scrach".
+/// Typed mirror of Hermes's `--workspace` flag. Hermes accepts
+/// `scratch | worktree | worktree:<path> | dir:<path>`. `scratch` and
+/// `worktree` are bare strings on the wire; `worktree:<path>` and
+/// `dir:<absolute path>` are colon-prefixed paths. We keep them typed in
+/// Swift so callers can't typo "scrach".
 public enum KanbanWorkspaceSpec: Sendable, Equatable {
     case scratch
     case worktree
+    /// v0.15: a worktree rooted at an explicit path (`worktree:<path>`).
+    case worktreePath(String)
     case directory(String)
 
     public var cliValue: String {
         switch self {
-        case .scratch:           return "scratch"
-        case .worktree:          return "worktree"
-        case .directory(let p):  return "dir:\(p)"
+        case .scratch:              return "scratch"
+        case .worktree:             return "worktree"
+        case .worktreePath(let p):  return "worktree:\(p)"
+        case .directory(let p):     return "dir:\(p)"
         }
     }
 
@@ -126,9 +140,9 @@ public enum KanbanWorkspaceSpec: Sendable, Equatable {
     /// for badge labels.
     public var displayKind: String {
         switch self {
-        case .scratch:    return "scratch"
-        case .worktree:   return "worktree"
-        case .directory:  return "dir"
+        case .scratch:                  return "scratch"
+        case .worktree, .worktreePath:  return "worktree"
+        case .directory:                return "dir"
         }
     }
 }

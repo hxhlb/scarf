@@ -140,7 +140,10 @@ struct HermesFileService: Sendable {
             // shape (`<provider>.voice_id` + `<provider>.model`); v0.13
             // source might use `tts.xai.voice` or `tts.xai.model_id`.
             ttsXAIVoiceID: str("tts.xai.voice_id"),
-            ttsXAIModel: str("tts.xai.model")
+            ttsXAIModel: str("tts.xai.model"),
+            // v0.15: auto-insert speech-control tags. CRITICAL round-trip:
+            // the parser MUST read this back or the toggle won't persist.
+            ttsXAIAutoSpeechTags: bool("tts.xai.auto_speech_tags", default: false)
         )
 
         func aux(_ name: String) -> AuxiliaryModel {
@@ -211,12 +214,28 @@ struct HermesFileService: Sendable {
             requireMention: bool("discord.require_mention", default: true),
             freeResponseChannels: str("discord.free_response_channels"),
             autoThread: bool("discord.auto_thread", default: true),
-            reactions: bool("discord.reactions", default: true)
+            reactions: bool("discord.reactions", default: true),
+            historyBackfill: bool("discord.history_backfill", default: true),
+            allowAnyAttachment: bool("platforms.discord.extra.allow_any_attachment", default: false)
         )
 
         let telegram = TelegramSettings(
             requireMention: bool("telegram.require_mention", default: true),
-            reactions: bool("telegram.reactions", default: false)
+            reactions: bool("telegram.reactions", default: false),
+            disableTopicAutoRename: bool("telegram.disable_topic_auto_rename", default: false),
+            ignoreRootDM: bool("platforms.telegram.extra.ignore_root_dm", default: false)
+        )
+
+        let signal = SignalSettings(
+            requireMention: bool("platforms.signal.extra.require_mention", default: false)
+        )
+
+        let ntfy = NtfySettings(
+            topic: str("platforms.ntfy.extra.topic"),
+            server: str("platforms.ntfy.extra.server", default: "https://ntfy.sh"),
+            publishTopic: str("platforms.ntfy.extra.publish_topic"),
+            token: str("platforms.ntfy.extra.token"),
+            markdown: bool("platforms.ntfy.extra.markdown", default: false)
         )
 
         // Slack fields live under both `platforms.slack.*` (newer) and `slack.*`
@@ -364,7 +383,9 @@ struct HermesFileService: Sendable {
             cacheTTL: str("prompt_caching.cache_ttl", default: "5m"),
             redactionEnabled: bool("redaction.enabled", default: false),
             runtimeMetadataFooter: bool("agent.runtime_metadata_footer", default: false),
-            gatewayPlatforms: gatewayPlatforms
+            gatewayPlatforms: gatewayPlatforms,
+            ntfy: ntfy,
+            signal: signal
         )
     }
 

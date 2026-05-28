@@ -102,17 +102,19 @@ struct ChatTranscriptPane: View {
             await refreshResolvedTenant()
         }
         .task(id: kanbanBadgePollKey) {
-            // Long-running poller scoped to (capabilities, tenant,
-            // session). Restarts cleanly when any of the three change.
+            // Long-running poller scoped to (capabilities, chat session).
+            // Restarts cleanly when either changes. The badge counts
+            // tasks this chat produced, scoped by the ACP session id.
             let caps = capabilitiesStore?.capabilities ?? .empty
-            guard caps.hasKanban, richChat.sessionId != nil else { return }
+            guard caps.hasKanbanSessionFilter,
+                  let sid = richChat.sessionId else { return }
             if kanbanBadgeViewModel == nil {
                 kanbanBadgeViewModel = KanbanChatBadgeViewModel(
                     context: chatViewModel.context
                 )
             }
             await kanbanBadgeViewModel?.run(
-                tenant: resolvedTenantForChat,
+                sessionId: sid,
                 capabilities: caps
             )
         }
@@ -120,15 +122,14 @@ struct ChatTranscriptPane: View {
 
     /// Stable identity for the badge poller's `.task(id:)`. Includes
     /// every input that should restart the poll loop: the chat session
-    /// (so a /new restarts polling for the new tenant), the resolved
-    /// tenant (so a project rebind restarts), and the capability flag
-    /// (so a host upgrade activates the chip without reload).
+    /// (so a /new restarts polling for the new session) and the
+    /// capability flag (so a host upgrade activates the chip without
+    /// reload).
     private var kanbanBadgePollKey: String {
         let caps = capabilitiesStore?.capabilities ?? .empty
         return [
-            caps.hasKanban ? "k" : "",
-            richChat.sessionId ?? "",
-            resolvedTenantForChat ?? ""
+            caps.hasKanbanSessionFilter ? "k" : "",
+            richChat.sessionId ?? ""
         ].joined(separator: "|")
     }
 
@@ -152,14 +153,16 @@ struct ChatTranscriptPane: View {
     /// Called from the SessionInfoBar Kanban chip. Builds the hand-off
     /// snapshot, hands it to AppCoordinator, then flips the route to
     /// the global Kanban surface — which drains the slot and renders
-    /// the board with tenant + sessionStartedAt pre-applied.
+    /// the board scoped to this chat's ACP session id. The chip only
+    /// renders on v0.15+ hosts (gated on `hasKanbanSessionFilter`), so a
+    /// session id is always present here; bail defensively if it isn't.
     private func handleOpenKanban() {
-        let openedAt = richChat.sessionOpenedAt ?? Date()
+        guard let sessionId = richChat.sessionId else { return }
         coordinator.pendingKanbanHandoff = KanbanHandoff(
             tenant: resolvedTenantForChat,
             projectPath: chatViewModel.currentProjectPath,
             projectName: chatViewModel.currentProjectName,
-            sessionOpenedAt: openedAt
+            sessionId: sessionId
         )
         coordinator.selectedSection = .kanban
     }

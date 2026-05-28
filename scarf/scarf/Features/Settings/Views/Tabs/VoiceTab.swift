@@ -37,6 +37,10 @@ struct VoiceTab: View {
                 // see the input rows but no cloning advertisement.
                 EditableTextField(label: "Voice ID", value: viewModel.config.voice.ttsXAIVoiceID) { viewModel.setTTSXAIVoiceID($0) }
                 EditableTextField(label: "Model", value: viewModel.config.voice.ttsXAIModel) { viewModel.setTTSXAIModel($0) }
+                // v0.15: auto-insert speech-control tags — hidden on pre-v0.15 hosts.
+                if capabilitiesStore?.capabilities.hasXAITTSAutoSpeechTags == true {
+                    ToggleRow(label: "Auto speech tags", isOn: viewModel.config.voice.ttsXAIAutoSpeechTags) { viewModel.setTTSXAIAutoSpeechTags($0) }
+                }
                 if capabilitiesStore?.capabilities.hasXAIVoiceCloning == true {
                     xaiCloningBadge
                 }

@@ -34,12 +34,14 @@ final class KanbanBoardViewModel {
     init(
         context: ServerContext = .local,
         tenantFilter: String? = nil,
-        projectPath: String? = nil
+        projectPath: String? = nil,
+        sessionScopeId: String? = nil
     ) {
         self.context = context
         self.service = KanbanService(context: context)
         self.tenantFilter = tenantFilter
         self.projectPath = projectPath
+        self.sessionScopeId = sessionScopeId
     }
 
     // MARK: - State
@@ -54,20 +56,29 @@ final class KanbanBoardViewModel {
     /// Filters above the board.
     var assigneeFilter: String?       // nil = all assignees
     var showArchived: Bool = false
+    /// v0.15: server-side `--sort <key>` ordering. `nil` = Hermes default
+    /// (priority). Setting it re-polls so the new order takes effect
+    /// without waiting for the next 5s tick. Passed through verbatim
+    /// into `currentFilter`.
+    var sortKey: String? {
+        didSet {
+            guard sortKey != oldValue else { return }
+            Task { await refresh() }
+        }
+    }
 
-    /// When set (seeded by the chat → Kanban hand-off), the board
-    /// applies a client-side `createdAt >= sessionOpenedAt` filter on
-    /// top of any tenant filter. Approximates "tasks this chat is
-    /// producing" — imperfect because Hermes itself doesn't track
-    /// per-session linkage in this Hermes version, but useful as a
-    /// time lens. The board renders a toggle pill when this is set so
-    /// the user can flip back to the full tenant view.
-    var sessionStartedAt: Date?
-    /// Whether the `sessionStartedAt` filter is currently applied.
-    /// Defaults true when the value is set; the toolbar pill toggles
-    /// it off without clearing the timestamp (so re-enabling restores
-    /// the same baseline).
-    var filterBySessionStart: Bool = true
+    /// When non-nil (seeded by the chat → Kanban hand-off), the board is
+    /// chat-scoped: it filters server-side by this ACP session id via
+    /// `hermes kanban list --session <id>`, so it shows exactly the tasks
+    /// the originating chat produced. Precise — Hermes stamps the session
+    /// id on every task created inside the agent loop (v0.15+). The board
+    /// renders a scope pill when this is set (and a project tenant exists)
+    /// so the user can widen to the full project view.
+    let sessionScopeId: String?
+    /// Whether the board is currently scoped to `sessionScopeId` (the
+    /// "This chat" view). The scope pill flips this to show "All project
+    /// tasks" (tenant-scoped). No-op when `sessionScopeId` is nil.
+    var scopeToThisChat: Bool = true
 
     /// Optimistic in-flight overrides keyed by task id; cleared when the
     /// polled response confirms the new state.
@@ -109,6 +120,40 @@ final class KanbanBoardViewModel {
         pollTask = nil
     }
 
+    // MARK: - Scope
+
+    /// The list filter for the current scope. When the board is
+    /// chat-scoped and the "This chat" toggle is on, filter precisely by
+    /// the originating ACP session id (no tenant — `session_id` is
+    /// globally unique, and this also catches tasks the agent created
+    /// without tagging the project tenant). Otherwise fall back to the
+    /// tenant-scoped filter (the "All project tasks" view and the plain
+    /// global / per-project boards).
+    private var currentFilter: KanbanListFilter {
+        if let sessionScopeId, scopeToThisChat {
+            return KanbanListFilter(
+                assignee: assigneeFilter,
+                session: sessionScopeId,
+                includeArchived: showArchived,
+                sort: sortKey
+            )
+        }
+        return KanbanListFilter(
+            assignee: assigneeFilter,
+            tenant: tenantFilter,
+            includeArchived: showArchived,
+            sort: sortKey
+        )
+    }
+
+    /// Flip the chat-scope toggle and re-poll immediately so the board
+    /// reflects the new scope without waiting for the next 5s tick.
+    func setScopeToThisChat(_ value: Bool) {
+        guard scopeToThisChat != value else { return }
+        scopeToThisChat = value
+        Task { await refresh() }
+    }
+
     // MARK: - Loading
 
     /// One-shot refresh. Polling drives the auto-refresh; this is
@@ -118,12 +163,7 @@ final class KanbanBoardViewModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            let filter = KanbanListFilter(
-                assignee: assigneeFilter,
-                tenant: tenantFilter,
-                includeArchived: showArchived
-            )
-            let polled = try await service.list(filter)
+            let polled = try await service.list(currentFilter)
             mergePolledTasks(polled)
             lastPollAt = Date()
             lastError = nil
@@ -151,44 +191,31 @@ final class KanbanBoardViewModel {
 
     /// Group tasks into the 5-column board layout. Triage column
     /// hides itself when empty; archived only appears when
-    /// `showArchived` is on.
-    ///
-    /// The "Since chat opened" lens is applied client-side here when
-    /// the chat handoff seeded `sessionStartedAt` AND the toolbar
-    /// toggle is on. It's an approximation: Hermes doesn't record
-    /// which chat session created a task in this version, so we fall
-    /// back to a wall-clock cutoff. (The upstream PR adding
-    /// `session_id` makes this honest — when it lands the board can
-    /// pass `--session` to `KanbanService.list` instead.)
+    /// `showArchived` is on. Scope filtering (chat session vs. project
+    /// tenant) happens server-side in `currentFilter`, so this just
+    /// buckets + sorts the already-scoped rows.
     func tasks(in column: KanbanBoardColumn) -> [HermesKanbanTask] {
         let columnTasks = tasks.filter { effectiveColumn($0) == column }
-        let timeFiltered = applySessionStartFilter(columnTasks)
-        return sortColumn(timeFiltered)
+        return sortColumn(columnTasks)
     }
 
-    private func applySessionStartFilter(
-        _ rows: [HermesKanbanTask]
-    ) -> [HermesKanbanTask] {
-        guard filterBySessionStart, let cutoff = sessionStartedAt else {
-            return rows
-        }
-        return rows.filter { row in
-            // Treat un-parseable createdAt as outside the window —
-            // safer than letting a malformed timestamp slip through
-            // unfiltered. Matches the contract on `createdAtDate`.
-            guard let date = row.createdAtDate else { return false }
-            return date >= cutoff
-        }
-    }
-
-    /// Visible columns for the current state. Triage hidden when
-    /// empty; archived hidden unless toggle is on.
+    /// Visible columns for the current state. Triage, Scheduled, and
+    /// Review hide when empty; archived hidden unless toggle is on.
+    /// Scheduled sits before Up Next (pre-work); Review sits between
+    /// Running and Blocked (post-work, pre-done).
     var visibleColumns: [KanbanBoardColumn] {
         var cols: [KanbanBoardColumn] = []
         if !tasks(in: .triage).isEmpty {
             cols.append(.triage)
         }
-        cols.append(contentsOf: [.upNext, .running, .blocked, .done])
+        if !tasks(in: .scheduled).isEmpty {
+            cols.append(.scheduled)
+        }
+        cols.append(contentsOf: [.upNext, .running])
+        if !tasks(in: .review).isEmpty {
+            cols.append(.review)
+        }
+        cols.append(contentsOf: [.blocked, .done])
         if showArchived {
             cols.append(.archived)
         }
@@ -258,6 +285,66 @@ final class KanbanBoardViewModel {
         Task {
             do {
                 try await service.archive(taskIds: [taskId])
+                await refresh()
+            } catch let err as KanbanError {
+                lastError = err.errorDescription
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    // MARK: - v0.15 lifecycle actions (context menu)
+
+    /// Promote a `todo`/`triage`/`blocked` task to `ready` so the
+    /// dispatcher can pick it up — `hermes kanban promote`. Optimistically
+    /// flip the card into Up Next; the poll confirms `ready` (which maps
+    /// to the Up Next column).
+    func promote(_ taskId: String) {
+        var override = optimisticOverrides[taskId] ?? OptimisticOverride()
+        override.status = optimisticStatus(for: .upNext)
+        optimisticOverrides[taskId] = override
+        Task {
+            do {
+                try await service.promote(taskIds: [taskId], reason: nil, force: false, dryRun: false)
+                await refresh()
+            } catch let err as KanbanError {
+                clearStatusOverride(for: taskId)
+                lastError = err.errorDescription
+            } catch {
+                clearStatusOverride(for: taskId)
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Park a `todo`/`ready` task in `scheduled` — `hermes kanban
+    /// schedule`. Optimistically flip into the Scheduled column.
+    func schedule(_ taskId: String) {
+        var override = optimisticOverrides[taskId] ?? OptimisticOverride()
+        override.status = optimisticStatus(for: .scheduled)
+        optimisticOverrides[taskId] = override
+        Task {
+            do {
+                try await service.schedule(taskIds: [taskId], reason: nil)
+                await refresh()
+            } catch let err as KanbanError {
+                clearStatusOverride(for: taskId)
+                lastError = err.errorDescription
+            } catch {
+                clearStatusOverride(for: taskId)
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Permanently delete an already-archived task — `hermes kanban
+    /// archive --rm`. Destructive; no optimistic override since the card
+    /// simply vanishes on the next poll.
+    func purge(_ taskId: String) {
+        Task {
+            do {
+                try await service.purge(taskIds: [taskId])
                 await refresh()
             } catch let err as KanbanError {
                 lastError = err.errorDescription
@@ -457,12 +544,14 @@ final class KanbanBoardViewModel {
 
     private nonisolated func optimisticStatus(for column: KanbanBoardColumn) -> String {
         switch column {
-        case .triage:   return "triage"
-        case .upNext:   return "todo"
-        case .running:  return "running"
-        case .blocked:  return "blocked"
-        case .done:     return "done"
-        case .archived: return "archived"
+        case .triage:    return "triage"
+        case .scheduled: return "scheduled"
+        case .upNext:    return "todo"
+        case .running:   return "running"
+        case .review:    return "review"
+        case .blocked:   return "blocked"
+        case .done:      return "done"
+        case .archived:  return "archived"
         }
     }
 

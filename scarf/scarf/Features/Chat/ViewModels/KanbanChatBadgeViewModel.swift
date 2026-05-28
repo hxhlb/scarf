@@ -5,8 +5,9 @@ import os
 
 /// Drives the live count badge on `SessionInfoBar`'s Kanban chip.
 /// Polls `KanbanService.list` every 5 seconds while mounted, counts
-/// `running + blocked` tasks for the chat's tenant scope, and exposes
-/// the result for the chip to render.
+/// `running + blocked` tasks created by *this chat* (scoped precisely by
+/// the originating ACP `session_id`, v0.15+), and exposes the result for
+/// the chip to render.
 ///
 /// **Concurrency.** `@MainActor + @Observable`. The polling task runs
 /// on `Task.detached(priority: .utility)` per the project's Swift 6
@@ -14,9 +15,8 @@ import os
 /// flight is enforced so a slow CLI doesn't stack up calls behind it.
 ///
 /// **Lifecycle.** Hosts mount via `.task(id: …)`. The id should
-/// include the tenant string + the chat session id, so a tenant or
-/// session swap restarts polling cleanly. Cancellation is automatic
-/// when the view goes off-screen.
+/// include the chat session id, so a session swap restarts polling
+/// cleanly. Cancellation is automatic when the view goes off-screen.
 @Observable
 @MainActor
 final class KanbanChatBadgeViewModel {
@@ -55,13 +55,13 @@ final class KanbanChatBadgeViewModel {
 
     /// Start the long-running poller. Call from `.task(id: …)` — the
     /// task is automatically cancelled when the view leaves the tree.
-    /// `tenant` nil targets the global board (for chats without a
-    /// project context).
+    /// `sessionId` is the originating ACP chat session id; the badge
+    /// counts only tasks this chat produced.
     func run(
-        tenant: String?,
+        sessionId: String,
         capabilities: HermesCapabilities
     ) async {
-        guard capabilities.hasKanban else {
+        guard capabilities.hasKanbanSessionFilter else {
             shouldRender = false
             liveCount = nil
             return
@@ -70,7 +70,7 @@ final class KanbanChatBadgeViewModel {
         currentInterval = baseInterval
         // Tick immediately so the chip's first render has data, then
         // sleep + tick on the configured interval.
-        await poll(tenant: tenant)
+        await poll(sessionId: sessionId)
         while !Task.isCancelled {
             do {
                 try await Task.sleep(nanoseconds: UInt64(currentInterval * 1_000_000_000))
@@ -78,16 +78,16 @@ final class KanbanChatBadgeViewModel {
                 return
             }
             try? Task.checkCancellation()
-            await poll(tenant: tenant)
+            await poll(sessionId: sessionId)
         }
     }
 
-    private func poll(tenant: String?) async {
+    private func poll(sessionId: String) async {
         if isInflight { return }
         isInflight = true
         defer { isInflight = false }
 
-        let filter = KanbanListFilter(tenant: tenant)
+        let filter = KanbanListFilter(session: sessionId)
         do {
             let rows = try await service.list(filter)
             let count = rows.reduce(0) { acc, task in

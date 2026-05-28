@@ -140,11 +140,10 @@ final class AppCoordinator {
 
     /// Hand-off from the chat surface to the global Kanban surface.
     /// Set by `SessionInfoBar`'s Kanban chip, consumed by `KanbanView`
-    /// on its next render, which builds a `KanbanBoardView` with the
-    /// tenant + project pre-applied AND seeds the "Since chat opened"
-    /// time filter from `sessionOpenedAt`. Cleared after consumption
-    /// so a sidebar return to the same Kanban surface doesn't re-apply
-    /// a stale filter.
+    /// on its next render, which builds a `KanbanBoardView` scoped to the
+    /// chat's ACP `sessionId` (with the project tenant available for the
+    /// "All project tasks" toggle). Cleared after consumption so a sidebar
+    /// return to the same Kanban surface doesn't re-apply a stale scope.
     var pendingKanbanHandoff: KanbanHandoff?
 }
 
@@ -153,13 +152,15 @@ final class AppCoordinator {
 /// fields at most once. `tenant` is the project's `scarf:<slug>` slug
 /// when the chat is project-scoped; nil for global chats. `projectPath`
 /// + `projectName` drive the create-sheet workspace defaults +
-/// subtitle. `sessionOpenedAt` seeds the optional client-side
-/// "Since chat opened" filter — it's a wall-clock time, not the
-/// underlying session's `created_at`, so resumed sessions still get
-/// a meaningful baseline.
+/// subtitle, and `tenant` backs the board's "All project tasks" scope
+/// toggle. `sessionId` is the originating ACP chat session id — the
+/// board scopes precisely to it via `hermes kanban list --session`.
+/// Non-optional because the chat-header Kanban chip only renders on
+/// v0.15+ hosts (gated on `hasKanbanSessionFilter`), where a live
+/// session id is always present.
 struct KanbanHandoff: Equatable {
     let tenant: String?
     let projectPath: String?
     let projectName: String?
-    let sessionOpenedAt: Date
+    let sessionId: String
 }

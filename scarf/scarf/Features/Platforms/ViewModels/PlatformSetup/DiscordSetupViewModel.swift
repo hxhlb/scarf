@@ -28,6 +28,9 @@ final class DiscordSetupViewModel {
     /// Default is `true` to match Hermes's v0.14 server-side default.
     /// Capability-gated by the host UI on `hasDiscordHistoryBackfill`.
     var historyBackfill: Bool = true
+    /// Hermes v0.15 — `platforms.discord.extra.allow_any_attachment`.
+    /// When true, forward any attachment type (not just images) to the agent.
+    var allowAnyAttachment: Bool = false
 
     var message: String?
 
@@ -49,6 +52,7 @@ final class DiscordSetupViewModel {
         autoThread = cfg.autoThread
         reactions = cfg.reactions
         historyBackfill = cfg.historyBackfill
+        allowAnyAttachment = cfg.allowAnyAttachment
     }
 
     func save() {
@@ -65,7 +69,8 @@ final class DiscordSetupViewModel {
             "discord.free_response_channels": freeResponseChannels,
             "discord.auto_thread": PlatformSetupHelpers.envBool(autoThread),
             "discord.reactions": PlatformSetupHelpers.envBool(reactions),
-            "discord.history_backfill": PlatformSetupHelpers.envBool(historyBackfill)
+            "discord.history_backfill": PlatformSetupHelpers.envBool(historyBackfill),
+            "platforms.discord.extra.allow_any_attachment": PlatformSetupHelpers.envBool(allowAnyAttachment)
         ]
         message = PlatformSetupHelpers.saveForm(context: context, envPairs: envPairs, configKV: configKV)
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in

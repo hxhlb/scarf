@@ -78,6 +78,12 @@ public enum KnownPlatforms {
         // Hermes's gateway platform names verbatim.
         HermesToolPlatform(name: "line", displayName: "LINE", icon: "bubble.left.and.text.bubble.right"),
         HermesToolPlatform(name: "simplex", displayName: "SimpleX Chat", icon: "lock.shield.fill"),
+        // -- v0.15 additions ---------------------------------------------
+        // ntfy (23rd platform) — pub/sub push via an ntfy.sh-compatible
+        // server. Outbound-capable with an optional separate publish
+        // topic; auth is an optional bearer token or `user:pass` Basic.
+        // Identifier matches Hermes's gateway platform name verbatim.
+        HermesToolPlatform(name: "ntfy", displayName: "ntfy", icon: "bell.badge"),
     ]
 
     public static func icon(for platform: String) -> String {
@@ -100,6 +106,7 @@ public enum KnownPlatforms {
         case "google-chat", "googlechat": return "bubble.left.fill"
         case "line": return "bubble.left.and.text.bubble.right"
         case "simplex": return "lock.shield.fill"
+        case "ntfy": return "bell.badge"
         default: return "bubble.left"
         }
     }

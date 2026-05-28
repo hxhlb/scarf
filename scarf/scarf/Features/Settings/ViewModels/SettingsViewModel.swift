@@ -21,13 +21,11 @@ final class SettingsViewModel {
     var hermesRunning = false
     var rawConfigYAML = ""
     var personalities: [String] = []
-    // v0.12: terminal.backend gained `vercel` (Vercel Sandbox); tts.provider
-    // gained `piper` (native local TTS via the Piper engine). These show up
-    // unconditionally — Hermes silently ignores unknown values, so a v0.11
-    // host that picks "vercel" simply falls back to local. We don't gate
-    // either on `HermesCapabilities` because the cost of seeing an option
-    // that no-ops on older hosts is low compared to gating overhead.
-    var terminalBackends = ["local", "docker", "singularity", "modal", "daytona", "ssh", "vercel"]
+    // tts.provider gained `piper` (native local TTS via the Piper engine)
+    // in v0.12. Shows up unconditionally — Hermes silently ignores unknown
+    // values on older hosts. (Vercel Sandbox was removed as a terminal
+    // backend in v0.15 alongside the Vercel AI Gateway provider removal.)
+    var terminalBackends = ["local", "docker", "singularity", "modal", "daytona", "ssh"]
     var browserBackends = ["browseruse", "firecrawl", "local"]
     // v0.13: `xai` joins the TTS provider list. xAI shipped TTS earlier
     // (v0.12) but the v0.13 add-on is custom voice cloning — see
@@ -216,6 +214,8 @@ final class SettingsViewModel {
     // names against `~/.hermes/hermes-agent/hermes_cli/voice/tts.py`.
     func setTTSXAIVoiceID(_ value: String) { setSetting("tts.xai.voice_id", value: value) }
     func setTTSXAIModel(_ value: String) { setSetting("tts.xai.model", value: value) }
+    // v0.15: auto-insert speech-control tags into xAI TTS output.
+    func setTTSXAIAutoSpeechTags(_ value: Bool) { setSetting("tts.xai.auto_speech_tags", value: value ? "true" : "false") }
     func setSTTEnabled(_ value: Bool) { setSetting("stt.enabled", value: value ? "true" : "false") }
     func setSTTProvider(_ value: String) { setSetting("stt.provider", value: value) }
     func setSTTLocalModel(_ value: String) { setSetting("stt.local.model", value: value) }

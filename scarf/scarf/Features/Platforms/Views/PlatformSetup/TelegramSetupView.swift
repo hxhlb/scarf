@@ -26,6 +26,8 @@ struct TelegramSetupView: View {
                 EditableTextField(label: "Home Channel", value: viewModel.homeChannel) { viewModel.homeChannel = $0 }
                 ToggleRow(label: "Require @mention", isOn: viewModel.requireMention) { viewModel.requireMention = $0 }
                 ToggleRow(label: "Reactions", isOn: viewModel.reactions) { viewModel.reactions = $0 }
+                ToggleRow(label: "Disable topic auto-rename", isOn: viewModel.disableTopicAutoRename) { viewModel.disableTopicAutoRename = $0 }
+                ToggleRow(label: "Ignore root DM", isOn: viewModel.ignoreRootDM) { viewModel.ignoreRootDM = $0 }
             }
 
             SettingsSection(title: "Webhook (advanced)", icon: "arrow.up.right.square") {

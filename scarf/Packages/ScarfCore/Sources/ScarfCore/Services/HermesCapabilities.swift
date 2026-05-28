@@ -363,6 +363,83 @@ public struct HermesCapabilities: Sendable, Equatable {
     /// Prompt Caching when on a v0.14 host.
     public var hasCrossSessionClaudeCache: Bool { atLeastSemver(0, 14, 0) }
 
+    // MARK: v0.15 (v2026.5.28) flags
+    //
+    // v0.15 is the Velocity Release. Flags here gate the v0.15 surfaces
+    // Scarf adopts: the chat-scoped Kanban surface, the Kanban maturation
+    // wave, ntfy, xAI web search + TTS speech tags, Azure Entra auth,
+    // Bitwarden secrets, `hermes audit`, xAI model-retirement migration,
+    // MCP mTLS + catalog, skill bundles, and ACP session edit-approval
+    // modes. Catalog-sync changes (the `openai-api` overlay, Krea image
+    // models, xAI retired-model aliases, Vercel removal) are unconditional
+    // and carry no flag.
+
+    /// Kanban tasks carry an originating ACP `session_id`, and
+    /// `hermes kanban list --session <id>` filters by it (v0.15+). The
+    /// ACP adapter stamps `HERMES_SESSION_ID` around the agent loop, so
+    /// `kanban_create` links every task to its originating chat with no
+    /// agent flag discipline. Lets the chat-scoped board filter precisely
+    /// instead of the old tenant + time-window heuristic; gates the
+    /// chat-header Kanban chip + chat → board handoff.
+    public var hasKanbanSessionFilter: Bool { atLeastSemver(0, 15, 0) }
+
+    /// The v0.15 Kanban maturation wave: `list --sort`, `promote`,
+    /// `archive --rm` purge, `schedule` verb + `scheduled`/`review`
+    /// statuses, worktree `--branch`, read-only `model_override`, the
+    /// `swarm` topology helper, and the `--board` multi-board flag. Single
+    /// gate for the whole wave — pre-v0.15 hosts keep the v0.12 board.
+    public var hasKanbanV015: Bool { atLeastSemver(0, 15, 0) }
+
+    /// xAI Web Search as a `web_tools.search.backend` value (`xai`).
+    /// Reuses Grok OAuth / `XAI_API_KEY`; no new env var.
+    public var hasXAIWebSearchBackend: Bool { atLeastSemver(0, 15, 0) }
+
+    /// ntfy — 23rd messaging platform (push notifications via a topic URL,
+    /// no account). Config under `platforms.ntfy.extra`.
+    public var hasNtfyPlatform: Bool { atLeastSemver(0, 15, 0) }
+
+    /// Opt-in `tts.xai.auto_speech_tags` — inserts light `[pause]` tags
+    /// between sentences/paragraphs for more natural xAI TTS. Default OFF.
+    public var hasXAITTSAutoSpeechTags: Bool { atLeastSemver(0, 15, 0) }
+
+    /// Microsoft Entra ID auth for Azure AI Foundry — config knob
+    /// `model.auth_mode = "entra_id"` (+ `model.entra.scope`); credentials
+    /// flow through the Azure SDK env chain (`DefaultAzureCredential`).
+    public var hasAzureEntraAuth: Bool { atLeastSemver(0, 15, 0) }
+
+    /// Bitwarden Secrets Manager — `secrets.bitwarden.*` config + a
+    /// bootstrap token (`BWS_ACCESS_TOKEN`) replacing per-provider keys.
+    public var hasBitwarden: Bool { atLeastSemver(0, 15, 0) }
+
+    /// `hermes audit` — on-demand OSV.dev supply-chain audit verb.
+    public var hasHermesAudit: Bool { atLeastSemver(0, 15, 0) }
+
+    /// xAI May-15 model retirement detection + `hermes migrate xai`
+    /// one-shot config migration to the supported successor model.
+    public var hasXAIModelRetirement: Bool { atLeastSemver(0, 15, 0) }
+
+    /// mTLS / TLS client certificate support for HTTP + SSE MCP servers —
+    /// `client_cert` / `client_key` / `ssl_verify` keys on the server entry.
+    public var hasMCPClientCerts: Bool { atLeastSemver(0, 15, 0) }
+
+    /// Nous-approved MCP catalog + `hermes mcp` picker (catalog is text
+    /// output — no `--json`). Manifests at `optional-mcps/<name>/`.
+    public var hasMCPCatalog: Bool { atLeastSemver(0, 15, 0) }
+
+    /// Skill bundles — named groups of skills loaded by one `/<name>`
+    /// slash command. Enumerated via `hermes bundles list`; stored at
+    /// `~/.hermes/skill-bundles/*.yaml`.
+    public var hasSkillBundles: Bool { atLeastSemver(0, 15, 0) }
+
+    /// Skills Hub index-level freshness (`generated_at` + `skill_count` in
+    /// skills-index.json). Index-level only — no per-skill staleness.
+    public var hasSkillHubFreshness: Bool { atLeastSemver(0, 15, 0) }
+
+    /// ACP session edit auto-approval modes — `session/set_mode` with
+    /// mode IDs `default` / `accept_edits` / `dont_ask` (advertised in
+    /// `session/new`'s `modes`). Sensitive paths always still prompt.
+    public var hasSessionEditAutoApproval: Bool { atLeastSemver(0, 15, 0) }
+
     // MARK: Convenience predicates
 
     /// Whether the connected host is on the v0.13 line or newer. Convenience
@@ -378,6 +455,11 @@ public struct HermesCapabilities: Sendable, Equatable {
     /// proxying through a feature-specific flag (e.g. "v0.14 features"
     /// badges, cross-session-cache hints in Settings).
     public var isV014OrLater: Bool { atLeastSemver(0, 14, 0) }
+
+    /// Whether the connected host is on the v0.15 line or newer. Convenience
+    /// for UI copy that toggles on the v0.14 → v0.15 boundary without
+    /// proxying through a feature-specific flag.
+    public var isV015OrLater: Bool { atLeastSemver(0, 15, 0) }
 
     private func atLeastSemver(_ major: Int, _ minor: Int, _ patch: Int) -> Bool {
         guard let s = semver else { return false }

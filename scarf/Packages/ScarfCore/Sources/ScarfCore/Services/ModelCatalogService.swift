@@ -480,13 +480,32 @@ public struct ModelCatalogService: Sendable {
         // v0.13: x-ai dropped the `-beta` suffix once Grok 4.20 GA'd.
         // The model is the same one served at the same OpenRouter slot;
         // only the marketing identifier changed.
-        // TODO(WS-6-Q4): verify whether OpenRouter retired the
-        // `x-ai/grok-4.20-beta` slot entirely. Either way the alias is
-        // correct (cosmetic if old slot stays live, load-bearing if it
-        // 404s).
         "openrouter/x-ai/grok-4.20-beta": "x-ai/grok-4.20",
         "xai/grok-4.20-beta": "grok-4.20",
-        "vercel/xai/grok-4.20-beta": "xai/grok-4.20",
+        // (Vercel alias removed in v0.15 — Vercel AI Gateway was deleted.)
+
+        // v0.15: xAI retired a swath of Grok models on May 15. Mirrors
+        // `hermes_cli/xai_retirement.py` `_RETIRED_MODELS` — all roll to
+        // `grok-4.3` except the image model. Hermes pairs some with a
+        // `reasoning_effort="none"` adjustment; that nuance is Hermes-side,
+        // the id→id alias is all Scarf needs so a stored retired id still
+        // resolves in the picker. Registered under both `xai` and
+        // `xai-oauth` provider prefixes since users may have either.
+        "xai/grok-4-0709": "grok-4.3",
+        "xai/grok-4-fast-reasoning": "grok-4.3",
+        "xai/grok-4-fast-non-reasoning": "grok-4.3",
+        "xai/grok-4-1-fast-reasoning": "grok-4.3",
+        "xai/grok-4-1-fast-non-reasoning": "grok-4.3",
+        "xai/grok-code-fast-1": "grok-4.3",
+        "xai/grok-3": "grok-4.3",
+        "xai/grok-imagine-image-pro": "grok-imagine-image-quality",
+        "xai-oauth/grok-4-0709": "grok-4.3",
+        "xai-oauth/grok-4-fast-reasoning": "grok-4.3",
+        "xai-oauth/grok-4-fast-non-reasoning": "grok-4.3",
+        "xai-oauth/grok-4-1-fast-reasoning": "grok-4.3",
+        "xai-oauth/grok-4-1-fast-non-reasoning": "grok-4.3",
+        "xai-oauth/grok-code-fast-1": "grok-4.3",
+        "xai-oauth/grok-3": "grok-4.3",
     ]
 
     /// Resolve a stored model identifier through the alias map. Returns
@@ -500,15 +519,14 @@ public struct ModelCatalogService: Sendable {
 
     // MARK: - Demoted providers (sort tail)
 
-    /// Provider IDs that Hermes v0.13 explicitly deprioritizes in the
-    /// picker. `loadProviders()` sorts these to the tail of the list,
-    /// after the alphabetical group, so users who haven't manually
-    /// chosen Vercel as their gateway don't end up there by default.
-    /// Mirrors Hermes's deprioritized-provider list in
-    /// `hermes-agent/hermes_cli/providers.py`.
-    public static let demotedProviders: Set<String> = [
-        "vercel",
-    ]
+    /// Provider IDs that Hermes explicitly deprioritizes in the picker.
+    /// `loadProviders()` sorts these to the tail of the list, after the
+    /// alphabetical group. Mirrors Hermes's deprioritized-provider list
+    /// in `hermes-agent/hermes_cli/providers.py`.
+    ///
+    /// Empty as of v0.15 — Vercel AI Gateway (the only prior entry) was
+    /// removed from Hermes entirely. Kept as a hook for future demotions.
+    public static let demotedProviders: Set<String> = []
 
     // MARK: - Image-generation model allowlist (curated)
 
@@ -525,6 +543,9 @@ public struct ModelCatalogService: Sendable {
         .init(modelID: "google/imagen-4", display: "Google · Imagen 4", providerHint: "google-vertex"),
         .init(modelID: "google/imagen-3", display: "Google · Imagen 3", providerHint: "google-vertex"),
         .init(modelID: "stability/stable-image-ultra", display: "Stability · Stable Image Ultra", providerHint: "stability"),
+        // v0.15: Krea joins image_gen as a built-in plugin (env KREA_API_KEY).
+        .init(modelID: "krea-2-medium", display: "Krea · Krea 2 Medium", providerHint: "krea"),
+        .init(modelID: "krea-2-large", display: "Krea · Krea 2 Large", providerHint: "krea"),
         .init(modelID: "fal-ai/flux-pro-1.1", display: "fal · FLUX 1.1 Pro", providerHint: "fal"),
         .init(modelID: "black-forest-labs/flux-1.1-pro", display: "Black Forest Labs · FLUX 1.1 Pro", providerHint: "openrouter"),
         .init(modelID: "openai/dall-e-3", display: "OpenAI · DALL·E 3", providerHint: "openai"),
@@ -532,7 +553,7 @@ public struct ModelCatalogService: Sendable {
 
     // MARK: - Hermes overlay providers
 
-    /// The 11 providers Hermes surfaces via `hermes model` that have no
+    /// The providers Hermes surfaces via `hermes model` that have no
     /// entry in `models_dev_cache.json` (models.dev doesn't mirror them).
     /// Mirrors the overlay-only subset of `HERMES_OVERLAYS` in
     /// `hermes-agent/hermes_cli/providers.py`. The other overlay entries
@@ -554,6 +575,16 @@ public struct ModelCatalogService: Sendable {
             displayName: "OpenAI Codex",
             baseURL: "https://chatgpt.com/backend-api/codex",
             authType: .oauthExternal,
+            subscriptionGated: false,
+            docURL: nil
+        ),
+        // v0.15: OpenAI API as a first-class provider, distinct from the
+        // Codex runtime above. Wire ID `openai-api` (HERMES_OVERLAYS) —
+        // NOT bare `openai`, which Hermes aliases to `openrouter`.
+        "openai-api": HermesProviderOverlay(
+            displayName: "OpenAI",
+            baseURL: "https://api.openai.com/v1",
+            authType: .apiKey,
             subscriptionGated: false,
             docURL: nil
         ),

@@ -171,6 +171,7 @@ struct PlatformsView: View {
         case "matrix":         MatrixSetupView(context: ctx)
         case "mattermost":     MattermostSetupView(context: ctx)
         case "feishu":         FeishuSetupView(context: ctx)
+        case "ntfy":           NtfySetupView(context: ctx)
         case "imessage":       IMessageSetupView(context: ctx)
         case "homeassistant":  HomeAssistantSetupView(context: ctx)
         case "webhook":        WebhookSetupView(context: ctx)

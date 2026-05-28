@@ -36,16 +36,33 @@ struct KanbanCardView: View {
     /// Optimistic-aware accessor. Pre-v0.13 always nil. Otherwise delegates
     /// to the board VM so a Verify click un-dims the card immediately.
     let effectiveHallucinationGate: (HermesKanbanTask) -> KanbanHallucinationGate?
+    /// v0.15+ gate for the Promote / Schedule / Delete context actions.
+    /// Pre-v0.15 hosts get no context menu beyond what older builds had.
+    let supportsKanbanV015: Bool
+    /// Context-menu callbacks. The board wires these to the VM's
+    /// `promote` / `schedule` / `purge` (delete-permanently after a
+    /// confirm). Each shown conditionally by `task.status`.
+    let onPromote: () -> Void
+    let onSchedule: () -> Void
+    let onDeletePermanently: () -> Void
 
     init(
         task: HermesKanbanTask,
         supportsKanbanDiagnostics: Bool = false,
         effectiveHallucinationGate: @escaping (HermesKanbanTask) -> KanbanHallucinationGate? = { _ in nil },
+        supportsKanbanV015: Bool = false,
+        onPromote: @escaping () -> Void = {},
+        onSchedule: @escaping () -> Void = {},
+        onDeletePermanently: @escaping () -> Void = {},
         onTap: @escaping () -> Void
     ) {
         self.task = task
         self.supportsKanbanDiagnostics = supportsKanbanDiagnostics
         self.effectiveHallucinationGate = effectiveHallucinationGate
+        self.supportsKanbanV015 = supportsKanbanV015
+        self.onPromote = onPromote
+        self.onSchedule = onSchedule
+        self.onDeletePermanently = onDeletePermanently
         self.onTap = onTap
     }
 
@@ -101,6 +118,40 @@ struct KanbanCardView: View {
         .draggable(KanbanTaskRef(id: task.id)) {
             // Drag preview — the live card with a heavier shadow.
             self.dragPreview
+        }
+        .contextMenu { contextMenuItems }
+    }
+
+    /// v0.15 lifecycle actions, status-gated. Empty (no menu) on
+    /// pre-v0.15 hosts so we don't surface verbs Hermes won't accept.
+    @ViewBuilder
+    private var contextMenuItems: some View {
+        if supportsKanbanV015 {
+            let status = KanbanStatus.from(task.status)
+            // Promote — only meaningful before a task is dispatchable.
+            if status == .todo || status == .triage || status == .blocked {
+                Button {
+                    onPromote()
+                } label: {
+                    Label("Promote", systemImage: "arrow.up.circle")
+                }
+            }
+            // Schedule / Park — pull an eligible task out of the queue.
+            if status == .todo || status == .ready {
+                Button {
+                    onSchedule()
+                } label: {
+                    Label("Schedule / Park", systemImage: "pause.circle")
+                }
+            }
+            // Delete permanently — only on already-archived cards.
+            if status == .archived {
+                Button(role: .destructive) {
+                    onDeletePermanently()
+                } label: {
+                    Label("Delete permanently", systemImage: "trash")
+                }
+            }
         }
     }
 

@@ -229,6 +229,12 @@ public struct VoiceSettings: Sendable, Equatable {
     public var ttsXAIVoiceID: String
     /// xAI TTS model identifier. v0.13+. Mirrors the elevenlabs shape.
     public var ttsXAIModel: String
+    /// xAI TTS `auto_speech_tags`. v0.15+ — when true, xAI auto-inserts
+    /// speech-control tags (emotion / emphasis) into synthesized output.
+    /// Config key `tts.xai.auto_speech_tags`, default `false`. Pre-v0.15
+    /// hosts ignore the key; Scarf hides the toggle when
+    /// `HermesCapabilities.hasXAITTSAutoSpeechTags` is false.
+    public var ttsXAIAutoSpeechTags: Bool
 
     // STT
     public var sttEnabled: Bool
@@ -258,7 +264,8 @@ public struct VoiceSettings: Sendable, Equatable {
         sttOpenAIModel: String,
         sttMistralModel: String,
         ttsXAIVoiceID: String = "",
-        ttsXAIModel: String = ""
+        ttsXAIModel: String = "",
+        ttsXAIAutoSpeechTags: Bool = false
     ) {
         self.recordKey = recordKey
         self.maxRecordingSeconds = maxRecordingSeconds
@@ -273,6 +280,7 @@ public struct VoiceSettings: Sendable, Equatable {
         self.ttsNeuTTSDevice = ttsNeuTTSDevice
         self.ttsXAIVoiceID = ttsXAIVoiceID
         self.ttsXAIModel = ttsXAIModel
+        self.ttsXAIAutoSpeechTags = ttsXAIAutoSpeechTags
         self.sttEnabled = sttEnabled
         self.sttProvider = sttProvider
         self.sttLocalModel = sttLocalModel
@@ -299,7 +307,8 @@ public struct VoiceSettings: Sendable, Equatable {
         sttOpenAIModel: "whisper-1",
         sttMistralModel: "voxtral-mini-latest",
         ttsXAIVoiceID: "",
-        ttsXAIModel: ""
+        ttsXAIModel: "",
+        ttsXAIAutoSpeechTags: false
     )
 }
 
@@ -513,6 +522,10 @@ public struct DiscordSettings: Sendable, Equatable {
     /// Default `true` matches Hermes's v0.14 server-side default.
     /// Pre-v0.14 hosts ignore the key.
     public var historyBackfill: Bool
+    /// Hermes v0.15 — `platforms.discord.extra.allow_any_attachment`.
+    /// When true, the adapter forwards any attachment type to the agent
+    /// (not just images). Default `false`. Pre-v0.15 hosts ignore the key.
+    public var allowAnyAttachment: Bool
 
 
     public init(
@@ -520,15 +533,17 @@ public struct DiscordSettings: Sendable, Equatable {
         freeResponseChannels: String,
         autoThread: Bool,
         reactions: Bool,
-        historyBackfill: Bool = true
+        historyBackfill: Bool = true,
+        allowAnyAttachment: Bool = false
     ) {
         self.requireMention = requireMention
         self.freeResponseChannels = freeResponseChannels
         self.autoThread = autoThread
         self.reactions = reactions
         self.historyBackfill = historyBackfill
+        self.allowAnyAttachment = allowAnyAttachment
     }
-    public nonisolated static let empty = DiscordSettings(requireMention: true, freeResponseChannels: "", autoThread: true, reactions: true, historyBackfill: true)
+    public nonisolated static let empty = DiscordSettings(requireMention: true, freeResponseChannels: "", autoThread: true, reactions: true, historyBackfill: true, allowAnyAttachment: false)
 }
 
 /// Telegram settings under `telegram.*` in config.yaml. Most Telegram tuning is
@@ -537,16 +552,43 @@ public struct DiscordSettings: Sendable, Equatable {
 public struct TelegramSettings: Sendable, Equatable {
     public var requireMention: Bool
     public var reactions: Bool
+    /// Hermes v0.15 — top-level `telegram.disable_topic_auto_rename`.
+    /// When true, the adapter won't auto-rename forum topics. Default
+    /// `false`. Pre-v0.15 hosts ignore the key.
+    public var disableTopicAutoRename: Bool
+    /// Hermes v0.15 — `platforms.telegram.extra.ignore_root_dm`. When
+    /// true, the agent ignores DMs sent to the root chat. Default
+    /// `false`. Pre-v0.15 hosts ignore the key.
+    public var ignoreRootDM: Bool
 
 
     public init(
         requireMention: Bool,
-        reactions: Bool
+        reactions: Bool,
+        disableTopicAutoRename: Bool = false,
+        ignoreRootDM: Bool = false
     ) {
         self.requireMention = requireMention
         self.reactions = reactions
+        self.disableTopicAutoRename = disableTopicAutoRename
+        self.ignoreRootDM = ignoreRootDM
     }
-    public nonisolated static let empty = TelegramSettings(requireMention: true, reactions: false)
+    public nonisolated static let empty = TelegramSettings(requireMention: true, reactions: false, disableTopicAutoRename: false, ignoreRootDM: false)
+}
+
+/// Signal settings. Signal credentials live in `.env` (`SIGNAL_*`); v0.15
+/// added a group-only `platforms.signal.extra.require_mention` config key.
+public struct SignalSettings: Sendable, Equatable {
+    /// Hermes v0.15 — `platforms.signal.extra.require_mention`. In group
+    /// chats, only respond when @mentioned. Default `false`. Pre-v0.15
+    /// hosts ignore the key.
+    public var requireMention: Bool
+
+
+    public init(requireMention: Bool = false) {
+        self.requireMention = requireMention
+    }
+    public nonisolated static let empty = SignalSettings(requireMention: false)
 }
 
 /// Slack settings under `platforms.slack.*` (and a couple of top-level keys).
@@ -622,6 +664,35 @@ public struct WhatsAppSettings: Sendable, Equatable {
         self.replyPrefix = replyPrefix
     }
     public nonisolated static let empty = WhatsAppSettings(unauthorizedDMBehavior: "pair", replyPrefix: "")
+}
+
+/// ntfy settings under `platforms.ntfy.extra` (Hermes v0.15, 23rd platform).
+/// `topic` + `server` are also settable via env (`NTFY_TOPIC` /
+/// `NTFY_SERVER_URL`), which win over config.yaml. `publishTopic`, `token`,
+/// and `markdown` live only in the YAML `extra` block. `token` is a bearer
+/// token, or `user:pass` for Basic auth — treated as a secret in the UI.
+public struct NtfySettings: Sendable, Equatable {
+    public var topic: String
+    public var server: String
+    public var publishTopic: String
+    public var token: String
+    public var markdown: Bool
+
+
+    public init(
+        topic: String,
+        server: String,
+        publishTopic: String,
+        token: String,
+        markdown: Bool
+    ) {
+        self.topic = topic
+        self.server = server
+        self.publishTopic = publishTopic
+        self.token = token
+        self.markdown = markdown
+    }
+    public nonisolated static let empty = NtfySettings(topic: "", server: "https://ntfy.sh", publishTopic: "", token: "", markdown: false)
 }
 
 /// Home Assistant filters under `platforms.homeassistant.extra`. Hermes ignores
@@ -780,6 +851,10 @@ public struct HermesConfig: Sendable {
     public var mattermost: MattermostSettings
     public var whatsapp: WhatsAppSettings
     public var homeAssistant: HomeAssistantSettings
+    /// Hermes v0.15 — ntfy (23rd platform). See `NtfySettings`.
+    public var ntfy: NtfySettings
+    /// Hermes v0.15 — Signal group-only `require_mention`. See `SignalSettings`.
+    public var signal: SignalSettings
 
 
     public init(
@@ -847,7 +922,9 @@ public struct HermesConfig: Sendable {
         openrouterResponseCacheEnabled: Bool = false,
         webToolsBackend: String = "duckduckgo",
         webToolsSearchBackend: String = "duckduckgo",
-        webToolsExtractBackend: String = "reader"
+        webToolsExtractBackend: String = "reader",
+        ntfy: NtfySettings = .empty,
+        signal: SignalSettings = .empty
     ) {
         self.cacheTTL = cacheTTL
         self.redactionEnabled = redactionEnabled
@@ -914,6 +991,8 @@ public struct HermesConfig: Sendable {
         self.mattermost = mattermost
         self.whatsapp = whatsapp
         self.homeAssistant = homeAssistant
+        self.ntfy = ntfy
+        self.signal = signal
     }
     public nonisolated static let empty = HermesConfig(
         model: "unknown",

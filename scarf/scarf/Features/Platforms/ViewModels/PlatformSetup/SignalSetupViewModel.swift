@@ -19,6 +19,9 @@ final class SignalSetupViewModel {
     var groupAllowedUsers: String = ""
     var homeChannel: String = ""
     var allowAllUsers: Bool = false
+    /// Hermes v0.15 — `platforms.signal.extra.require_mention`. Group-only:
+    /// in group chats, only respond when @mentioned.
+    var requireMention: Bool = false
 
     var message: String?
 
@@ -40,6 +43,7 @@ final class SignalSetupViewModel {
         groupAllowedUsers = env["SIGNAL_GROUP_ALLOWED_USERS"] ?? ""
         homeChannel = env["SIGNAL_HOME_CHANNEL"] ?? ""
         allowAllUsers = PlatformSetupHelpers.parseEnvBool(env["SIGNAL_ALLOW_ALL_USERS"])
+        requireMention = HermesFileService(context: context).loadConfig().signal.requireMention
         signalCLIInstalled = Self.detectSignalCLI()
     }
 
@@ -64,7 +68,10 @@ final class SignalSetupViewModel {
             "SIGNAL_HOME_CHANNEL": homeChannel,
             "SIGNAL_ALLOW_ALL_USERS": allowAllUsers ? "true" : ""
         ]
-        message = PlatformSetupHelpers.saveForm(context: context, envPairs: envPairs, configKV: [:])
+        let configKV: [String: String] = [
+            "platforms.signal.extra.require_mention": PlatformSetupHelpers.envBool(requireMention)
+        ]
+        message = PlatformSetupHelpers.saveForm(context: context, envPairs: envPairs, configKV: configKV)
         clearMessageAfterDelay()
     }
 

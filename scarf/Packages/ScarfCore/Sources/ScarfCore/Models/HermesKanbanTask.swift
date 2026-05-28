@@ -58,6 +58,31 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
     /// hosts AND for tasks the diagnostics engine hasn't flagged.
     public let diagnostics: [HermesKanbanDiagnostic]
 
+    // v0.15 (v2026.5.28) field.
+    /// Originating ACP chat session id, stamped by `kanban_create` from
+    /// the `HERMES_SESSION_ID` env the ACP adapter sets around the agent
+    /// loop. `nil` for CLI/dashboard-created tasks and on pre-v0.15 hosts.
+    /// Lets the chat-scoped board filter precisely by `--session` instead
+    /// of the old tenant + time-window heuristic.
+    public let sessionId: String?
+
+    // v0.15 (v2026.5.28) worktree + workflow fields.
+    /// Git branch a worktree-workspace task operates on, set via
+    /// `kanban create --branch`. Present in `list --json`; `nil` for
+    /// non-worktree tasks and pre-v0.15 hosts.
+    public let branchName: String?
+    /// Identifier of the multi-step workflow template driving this task.
+    /// Present in `list --json`; `nil` for ad-hoc tasks and pre-v0.15
+    /// hosts.
+    public let workflowTemplateId: String?
+    /// Key of the current step within the task's workflow template.
+    /// Present in `list --json`; `nil` outside a workflow and pre-v0.15.
+    public let currentStepKey: String?
+    /// Per-task model override (e.g. a worker pinned to a specific
+    /// model). Only emitted by `show --json` / tool calls, NOT `list
+    /// --json` — still decoded tolerantly so it's `nil` from list rows.
+    public let modelOverride: String?
+
     public init(
         id: String,
         title: String,
@@ -81,7 +106,12 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         maxRetries: Int? = nil,
         autoBlockedReason: String? = nil,
         hallucinationGateStatus: String? = nil,
-        diagnostics: [HermesKanbanDiagnostic] = []
+        diagnostics: [HermesKanbanDiagnostic] = [],
+        sessionId: String? = nil,
+        branchName: String? = nil,
+        workflowTemplateId: String? = nil,
+        currentStepKey: String? = nil,
+        modelOverride: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -106,6 +136,11 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         self.autoBlockedReason = autoBlockedReason
         self.hallucinationGateStatus = hallucinationGateStatus
         self.diagnostics = diagnostics
+        self.sessionId = sessionId
+        self.branchName = branchName
+        self.workflowTemplateId = workflowTemplateId
+        self.currentStepKey = currentStepKey
+        self.modelOverride = modelOverride
     }
 
     enum CodingKeys: String, CodingKey {
@@ -125,6 +160,11 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         case autoBlockedReason = "auto_blocked_reason"
         case hallucinationGateStatus = "hallucination_gate_status"
         case diagnostics
+        case sessionId = "session_id"
+        case branchName = "branch_name"
+        case workflowTemplateId = "workflow_template_id"
+        case currentStepKey = "current_step_key"
+        case modelOverride = "model_override"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -164,6 +204,16 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         // task row — the rest of the decoder still produces a usable
         // task. Empty default matches the `skills` pattern.
         self.diagnostics = (try? c.decodeIfPresent([HermesKanbanDiagnostic].self, forKey: .diagnostics)) ?? []
+        // v0.15 field — `decodeIfPresent` so pre-v0.15 task rows (no
+        // `session_id` key) decode with `sessionId == nil`.
+        self.sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+        // v0.15 worktree + workflow fields. All `decodeIfPresent` so
+        // pre-v0.15 rows decode with nil; `modelOverride` is nil from
+        // `list --json` rows even on v0.15 (only `show --json` emits it).
+        self.branchName = try c.decodeIfPresent(String.self, forKey: .branchName)
+        self.workflowTemplateId = try c.decodeIfPresent(String.self, forKey: .workflowTemplateId)
+        self.currentStepKey = try c.decodeIfPresent(String.self, forKey: .currentStepKey)
+        self.modelOverride = try c.decodeIfPresent(String.self, forKey: .modelOverride)
     }
 
     /// Decode a timestamp that may arrive as a Unix integer or an
@@ -209,9 +259,13 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
 public enum KanbanStatus: String, Sendable, CaseIterable, Identifiable {
     case triage
     case todo
+    // v0.15: tasks parked by `kanban schedule` await a trigger.
+    case scheduled
     case ready
     case running
     case blocked
+    // v0.15: completed work awaiting verification before `done`.
+    case review
     case done
     case archived
     case unknown
@@ -222,25 +276,32 @@ public enum KanbanStatus: String, Sendable, CaseIterable, Identifiable {
         KanbanStatus(rawValue: raw.lowercased()) ?? .unknown
     }
 
-    /// Coarse 5-column board grouping. `triage` is a column; `todo` and
-    /// `ready` collapse to one ("Up Next"); everything else maps 1:1.
-    /// `archived` lives outside the board (toggle).
+    /// Coarse board grouping. `triage` is a column; `todo` and `ready`
+    /// collapse to one ("Up Next"); everything else maps 1:1.
+    /// `archived` lives outside the board (toggle). The v0.15 statuses
+    /// `scheduled` and `review` map to their own dedicated columns.
     public var boardColumn: KanbanBoardColumn {
         switch self {
-        case .triage:                return .triage
+        case .triage:              return .triage
+        case .scheduled:           return .scheduled
         case .todo, .ready, .unknown: return .upNext
-        case .running:               return .running
-        case .blocked:               return .blocked
-        case .done:                  return .done
-        case .archived:              return .archived
+        case .running:             return .running
+        case .review:              return .review
+        case .blocked:             return .blocked
+        case .done:                return .done
+        case .archived:            return .archived
         }
     }
 }
 
 public enum KanbanBoardColumn: String, Sendable, CaseIterable, Identifiable {
     case triage
+    // v0.15: pre-work parked via `kanban schedule`, awaiting a trigger.
+    case scheduled
     case upNext
     case running
+    // v0.15: completed work awaiting verification before `done`.
+    case review
     case blocked
     case done
     case archived
@@ -249,21 +310,25 @@ public enum KanbanBoardColumn: String, Sendable, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .triage:   return "Triage"
-        case .upNext:   return "Up Next"
-        case .running:  return "Running"
-        case .blocked:  return "Blocked"
-        case .done:     return "Done"
-        case .archived: return "Archived"
+        case .triage:    return "Triage"
+        case .scheduled: return "Scheduled"
+        case .upNext:    return "Up Next"
+        case .running:   return "Running"
+        case .review:    return "Review"
+        case .blocked:   return "Blocked"
+        case .done:      return "Done"
+        case .archived:  return "Archived"
         }
     }
 
     /// Visible columns in the default board layout. `archived` appears
-    /// only when the "Show archived" toggle is on. `triage` is shown
-    /// only when the board has at least one triage task (collapsed
-    /// otherwise to keep the default layout focused).
+    /// only when the "Show archived" toggle is on. `triage`, `scheduled`,
+    /// and `review` are shown only when the board has at least one task
+    /// in that bucket (collapsed otherwise to keep the layout focused).
+    /// `scheduled` sits before Up Next (it's pre-work); `review` sits
+    /// between Running and Done.
     public static let defaultVisible: [KanbanBoardColumn] = [
-        .triage, .upNext, .running, .blocked, .done
+        .triage, .scheduled, .upNext, .running, .review, .blocked, .done
     ]
 }
 

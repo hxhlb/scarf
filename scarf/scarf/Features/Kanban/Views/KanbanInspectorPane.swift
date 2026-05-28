@@ -13,6 +13,10 @@ struct KanbanInspectorPane: View {
     /// and auto-blocked reason banner. Pre-v0.13 hosts see the v2.7.5
     /// inspector unchanged.
     let supportsKanbanDiagnostics: Bool
+    /// True when the connected Hermes is on v0.15+ — gates the read-only
+    /// model-override + branch chips. Pre-v0.15 hosts never populate
+    /// those fields, so this is belt-and-suspenders.
+    let supportsKanbanV015: Bool
     /// Resolves an effective hallucination gate — the board VM owns the
     /// optimistic-override merge so the banner disappears immediately on
     /// Verify before the polled state confirms the new gate. Falls back
@@ -43,6 +47,7 @@ struct KanbanInspectorPane: View {
         taskId: String,
         availableAssignees: [HermesKanbanAssignee] = [],
         supportsKanbanDiagnostics: Bool = false,
+        supportsKanbanV015: Bool = false,
         effectiveHallucinationGate: @escaping (HermesKanbanTask) -> KanbanHallucinationGate? = { _ in nil },
         onClose: @escaping () -> Void,
         onClaim: @escaping () -> Void,
@@ -57,6 +62,7 @@ struct KanbanInspectorPane: View {
         _viewModel = State(initialValue: KanbanTaskDetailViewModel(service: service, taskId: taskId))
         self.availableAssignees = availableAssignees
         self.supportsKanbanDiagnostics = supportsKanbanDiagnostics
+        self.supportsKanbanV015 = supportsKanbanV015
         self.effectiveHallucinationGate = effectiveHallucinationGate
         self.onClose = onClose
         self.onClaim = onClaim
@@ -188,6 +194,19 @@ struct KanbanInspectorPane: View {
                                 ScarfBadge("retries: \(maxRetries)", kind: .neutral)
                                     .fixedSize()
                                     .help("Max retries set at create time. Hermes has no update verb — re-create the task to change this.")
+                            }
+                            // v0.15: read-only model override + branch chips.
+                            // Hermes has no update verb for either — set at
+                            // create time (model) or by the worker (branch).
+                            if supportsKanbanV015, let model = task.modelOverride, !model.isEmpty {
+                                ScarfBadge("Model: \(model)", kind: .neutral)
+                                    .fixedSize()
+                                    .help("Per-task model override set at create time. Read-only — Hermes has no update verb.")
+                            }
+                            if supportsKanbanV015, let branch = task.branchName, !branch.isEmpty {
+                                ScarfBadge("Branch: \(branch)", kind: .neutral)
+                                    .fixedSize()
+                                    .help("Git branch the worker is operating on.")
                             }
                             if let tenant = task.tenant, !tenant.isEmpty {
                                 ScarfBadge(tenant, kind: .brand)

@@ -32,6 +32,7 @@ struct DiscordSetupView: View {
                 if capabilitiesStore?.capabilities.hasDiscordHistoryBackfill == true {
                     ToggleRow(label: "Backfill channel history on join", isOn: viewModel.historyBackfill) { viewModel.historyBackfill = $0 }
                 }
+                ToggleRow(label: "Allow any attachment type", isOn: viewModel.allowAnyAttachment) { viewModel.allowAnyAttachment = $0 }
             }
 
             saveBar

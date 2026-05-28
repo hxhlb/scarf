@@ -28,6 +28,12 @@ struct WebToolsTab: View {
     private static let v014SearchAdditions: [String] = [
         "brave-free", "ddgs"
     ]
+    /// v0.15 search-only addition — xAI Web Search (`plugins/web/xai`),
+    /// reuses Grok OAuth / `XAI_API_KEY`. Search-only, so it isn't in the
+    /// extract picker.
+    private static let v015SearchAdditions: [String] = [
+        "xai"
+    ]
     private static let extractBackends: [String] = [
         "exa", "parallel", "firecrawl", "tavily"
     ]
@@ -43,6 +49,7 @@ struct WebToolsTab: View {
         var list = Self.v013SearchBackends
         if caps.hasBraveFreeSearchBackend { list.append("brave-free") }
         if caps.hasDDGSearchBackend { list.append("ddgs") }
+        if caps.hasXAIWebSearchBackend { list.append("xai") }
         return list
     }
 
@@ -65,6 +72,9 @@ struct WebToolsTab: View {
             // SearXNG-joined-search-only line.
             let caps = capabilitiesStore?.capabilities ?? .empty
             let footerCopy: String = {
+                if caps.hasXAIWebSearchBackend {
+                    return "v0.15 added xAI Web Search (reuses your Grok OAuth / XAI_API_KEY). v0.14 added Brave Search (free tier; honors BRAVE_SEARCH_API_KEY) and DuckDuckGo (DDGS). All three are search-only. Backend-specific tuning lives in the raw YAML editor for now."
+                }
                 if caps.hasBraveFreeSearchBackend || caps.hasDDGSearchBackend {
                     return "v0.14 added Brave Search (free tier; honors BRAVE_SEARCH_API_KEY) and DuckDuckGo (DDGS) as search-only backends. Backend-specific tuning lives in the raw YAML editor for now."
                 }

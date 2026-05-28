@@ -24,6 +24,7 @@ struct SignalSetupView: View {
                 }
                 EditableTextField(label: "Group Allowed Users", value: viewModel.groupAllowedUsers) { viewModel.groupAllowedUsers = $0 }
                 EditableTextField(label: "Home Channel", value: viewModel.homeChannel) { viewModel.homeChannel = $0 }
+                ToggleRow(label: "Require @mention (groups)", isOn: viewModel.requireMention) { viewModel.requireMention = $0 }
             }
 
             saveBar

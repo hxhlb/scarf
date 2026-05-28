@@ -27,15 +27,34 @@ public actor KanbanService {
     #endif
 
     private let context: ServerContext
+    /// Optional board slug. `--board <slug>` is a GLOBAL flag on the
+    /// top-level `kanban` parser (applies to every subcommand), so it's
+    /// inserted right after `"kanban"` in every verb's argv via
+    /// `prefix()`. `nil` (the default) keeps existing callers on the
+    /// implicit default board — argv is byte-identical to before.
+    private let board: String?
 
-    public init(context: ServerContext) {
+    public init(context: ServerContext, board: String? = nil) {
         self.context = context
+        self.board = board
+    }
+
+    /// argv prefix shared by every verb: `["kanban"]` plus the global
+    /// `--board <slug>` flag when a board slug is set. Keeps the global
+    /// flag in one place so all subcommands scope consistently.
+    private nonisolated func prefix(_ verbAndArgs: String...) -> [String] {
+        var args = ["kanban"]
+        if let board, !board.isEmpty {
+            args.append(contentsOf: ["--board", board])
+        }
+        args.append(contentsOf: verbAndArgs)
+        return args
     }
 
     // MARK: - Reads
 
     public func list(_ filter: KanbanListFilter = .all) async throws -> [HermesKanbanTask] {
-        var args = ["kanban", "list"]
+        var args = prefix("list")
         args.append(contentsOf: filter.argv())
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 20)
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "list")
@@ -56,7 +75,7 @@ public actor KanbanService {
     }
 
     public func show(taskId: String) async throws -> HermesKanbanTaskDetail {
-        let args = ["kanban", "show", taskId, "--json"]
+        let args = prefix("show", taskId, "--json")
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "show")
         guard let data = stdout.data(using: .utf8) else {
@@ -70,7 +89,7 @@ public actor KanbanService {
     }
 
     public func runs(taskId: String) async throws -> [HermesKanbanRun] {
-        let args = ["kanban", "runs", taskId, "--json"]
+        let args = prefix("runs", taskId, "--json")
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "runs")
         guard let data = stdout.data(using: .utf8) else {
@@ -89,7 +108,7 @@ public actor KanbanService {
     }
 
     public func stats() async throws -> HermesKanbanStats {
-        let args = ["kanban", "stats", "--json"]
+        let args = prefix("stats", "--json")
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "stats")
         guard let data = stdout.data(using: .utf8) else {
@@ -108,7 +127,7 @@ public actor KanbanService {
     /// the task has never been claimed). Pass `tailBytes` to cap the
     /// returned size (useful when polling at high cadence).
     public func log(taskId: String, tailBytes: Int? = nil) async throws -> String {
-        var args = ["kanban", "log"]
+        var args = prefix("log")
         if let tailBytes {
             args.append(contentsOf: ["--tail", String(tailBytes)])
         }
@@ -134,7 +153,7 @@ public actor KanbanService {
         // The `assignees` verb doesn't take `--json` consistently across
         // 0.12.x — pass it anyway and fall back to a tab-delimited parse
         // if Hermes printed a human table.
-        let args = ["kanban", "assignees"]
+        let args = prefix("assignees")
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "assignees")
 
@@ -194,7 +213,7 @@ public actor KanbanService {
     // MARK: - Writes
 
     public func create(_ request: KanbanCreateRequest) async throws -> HermesKanbanTask {
-        var args = ["kanban", "create"]
+        var args = prefix("create")
         args.append(contentsOf: request.argv())
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 30)
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "create")
@@ -218,14 +237,14 @@ public actor KanbanService {
 
     public func assign(taskId: String, profile: String?) async throws {
         let target = (profile?.isEmpty ?? true) ? "none" : profile!
-        let args = ["kanban", "assign", taskId, target]
+        let args = prefix("assign", taskId, target)
         let (code, _, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: "", stderr: stderr, verb: "assign")
     }
 
     @discardableResult
     public func claim(taskId: String, ttlSeconds: Int = 900) async throws -> String {
-        let args = ["kanban", "claim", taskId, "--ttl", String(ttlSeconds)]
+        let args = prefix("claim", taskId, "--ttl", String(ttlSeconds))
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 20)
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "claim")
         // claim prints the resolved workspace path on stdout.
@@ -233,7 +252,7 @@ public actor KanbanService {
     }
 
     public func comment(taskId: String, text: String, author: String? = nil) async throws {
-        var args = ["kanban", "comment"]
+        var args = prefix("comment")
         if let author, !author.isEmpty {
             args.append(contentsOf: ["--author", author])
         }
@@ -250,7 +269,7 @@ public actor KanbanService {
         metadataJSON: String? = nil
     ) async throws {
         guard !taskIds.isEmpty else { return }
-        var args = ["kanban", "complete"]
+        var args = prefix("complete")
         if let result, !result.isEmpty {
             args.append(contentsOf: ["--result", result])
         }
@@ -266,7 +285,7 @@ public actor KanbanService {
     }
 
     public func block(taskId: String, reason: String? = nil) async throws {
-        var args = ["kanban", "block", taskId]
+        var args = prefix("block", taskId)
         if let reason, !reason.trimmingCharacters(in: .whitespaces).isEmpty {
             // Hermes accepts free-form trailing words as the reason.
             args.append(contentsOf: reason.split(separator: " ").map(String.init))
@@ -277,7 +296,7 @@ public actor KanbanService {
 
     public func unblock(taskIds: [String]) async throws {
         guard !taskIds.isEmpty else { return }
-        var args = ["kanban", "unblock"]
+        var args = prefix("unblock")
         args.append(contentsOf: taskIds)
         let (code, _, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: "", stderr: stderr, verb: "unblock")
@@ -285,7 +304,7 @@ public actor KanbanService {
 
     public func archive(taskIds: [String]) async throws {
         guard !taskIds.isEmpty else { return }
-        var args = ["kanban", "archive"]
+        var args = prefix("archive")
         args.append(contentsOf: taskIds)
         let (code, _, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: "", stderr: stderr, verb: "archive")
@@ -293,7 +312,7 @@ public actor KanbanService {
 
     @discardableResult
     public func dispatch(maxTasks: Int? = nil, dryRun: Bool = false) async throws -> KanbanDispatchSummary {
-        var args = ["kanban", "dispatch", "--json"]
+        var args = prefix("dispatch", "--json")
         if dryRun { args.append("--dry-run") }
         if let maxTasks { args.append(contentsOf: ["--max", String(maxTasks)]) }
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 60)
@@ -310,15 +329,105 @@ public actor KanbanService {
     }
 
     public func link(parent: String, child: String) async throws {
-        let args = ["kanban", "link", parent, child]
+        let args = prefix("link", parent, child)
         let (code, _, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: "", stderr: stderr, verb: "link")
     }
 
     public func unlink(parent: String, child: String) async throws {
-        let args = ["kanban", "unlink", parent, child]
+        let args = prefix("unlink", parent, child)
         let (code, _, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: "", stderr: stderr, verb: "unlink")
+    }
+
+    // MARK: - v0.15 verbs
+
+    /// Promote `todo`/`blocked` tasks to `ready` so the dispatcher can
+    /// pick them up — `hermes kanban promote <ids…>`. Hermes accepts
+    /// positional ids (the `--ids` flag is the bulk alternative; positional
+    /// is fine). `reason` is appended as a trailing positional word group;
+    /// `--force` overrides guard checks, `--dry-run` previews without
+    /// mutating. `--json` for a machine-readable summary.
+    public func promote(
+        taskIds: [String],
+        reason: String? = nil,
+        force: Bool = false,
+        dryRun: Bool = false
+    ) async throws {
+        guard !taskIds.isEmpty else { return }
+        var args = prefix("promote")
+        args.append(contentsOf: taskIds)
+        if let reason, !reason.isEmpty {
+            args.append(reason)
+        }
+        if force { args.append("--force") }
+        if dryRun { args.append("--dry-run") }
+        args.append("--json")
+        let (code, stdout, stderr) = await runHermes(args: args, timeout: 30)
+        try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "promote")
+    }
+
+    /// Park tasks in the `scheduled` status — `hermes kanban schedule
+    /// <ids…>`. They await a later trigger (workflow step, manual
+    /// promote, etc.) instead of being eligible for dispatch.
+    public func schedule(taskIds: [String], reason: String? = nil) async throws {
+        guard !taskIds.isEmpty else { return }
+        var args = prefix("schedule")
+        args.append(contentsOf: taskIds)
+        if let reason, !reason.isEmpty {
+            args.append(reason)
+        }
+        let (code, _, stderr) = await runHermes(args: args, timeout: 15)
+        try ensureSuccess(code: code, stdout: "", stderr: stderr, verb: "schedule")
+    }
+
+    /// Hard-delete already-archived tasks — `hermes kanban archive --rm
+    /// <ids…>`. There's no separate `purge` verb; the `--rm` flag on
+    /// `archive` performs the destructive removal. Only valid on tasks
+    /// already in `archived`.
+    public func purge(taskIds: [String]) async throws {
+        guard !taskIds.isEmpty else { return }
+        var args = prefix("archive", "--rm")
+        args.append(contentsOf: taskIds)
+        let (code, _, stderr) = await runHermes(args: args, timeout: 15)
+        try ensureSuccess(code: code, stdout: "", stderr: stderr, verb: "purge")
+    }
+
+    /// Spawn a swarm of workers against a single goal — `hermes kanban
+    /// swarm <goal> --worker … --verifier … --synthesizer …`. Each
+    /// `worker` string is passed verbatim in `PROFILE:TITLE[:SKILL,SKILL]`
+    /// format. The verifier checks worker output; the synthesizer merges
+    /// it. Optional tenant / priority / created-by / idempotency-key.
+    public func swarm(
+        goal: String,
+        workers: [String],
+        verifier: String,
+        synthesizer: String,
+        tenant: String? = nil,
+        priority: Int? = nil,
+        createdBy: String? = nil,
+        idempotencyKey: String? = nil
+    ) async throws {
+        var args = prefix("swarm", goal)
+        for worker in workers {
+            args.append(contentsOf: ["--worker", worker])
+        }
+        args.append(contentsOf: ["--verifier", verifier, "--synthesizer", synthesizer])
+        if let tenant, !tenant.isEmpty {
+            args.append(contentsOf: ["--tenant", tenant])
+        }
+        if let priority {
+            args.append(contentsOf: ["--priority", String(priority)])
+        }
+        if let createdBy, !createdBy.isEmpty {
+            args.append(contentsOf: ["--created-by", createdBy])
+        }
+        if let idempotencyKey, !idempotencyKey.isEmpty {
+            args.append(contentsOf: ["--idempotency-key", idempotencyKey])
+        }
+        args.append("--json")
+        let (code, stdout, stderr) = await runHermes(args: args, timeout: 60)
+        try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "swarm")
     }
 
     // MARK: - Hallucination gate (v0.13)
@@ -344,7 +453,7 @@ public actor KanbanService {
     // `archive` + a comment), so the recovery UX stays functional even
     // if Verify is a stub for an early v0.13.x.
     public func verify(taskId: String) async throws {
-        let args = ["kanban", "verify", taskId]
+        let args = prefix("verify", taskId)
         let (code, _, stderr) = await runHermes(args: args, timeout: 15)
         try ensureSuccess(code: code, stdout: "", stderr: stderr, verb: "verify")
     }
@@ -418,6 +527,26 @@ public actor KanbanService {
         // Archive lives outside the board — only via context menu.
         if to == .archived {
             return KanbanTransitionPlan(steps: [.archive])
+        }
+
+        // v0.15: Scheduled is reached via the explicit Schedule action,
+        // not by dragging a card onto the column.
+        if to == .scheduled {
+            throw KanbanError.forbiddenTransition(
+                from: from.displayName,
+                to: to.displayName,
+                reason: "Scheduled tasks are parked via the Schedule action."
+            )
+        }
+
+        // v0.15: Review is owned by the dispatcher — work lands there
+        // automatically when a worker completes, not by a drag.
+        if to == .review {
+            throw KanbanError.forbiddenTransition(
+                from: from.displayName,
+                to: to.displayName,
+                reason: "Review is managed by the dispatcher."
+            )
         }
 
         switch (from, to) {

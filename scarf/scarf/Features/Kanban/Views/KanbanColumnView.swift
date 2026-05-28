@@ -25,6 +25,12 @@ struct KanbanColumnView: View {
     /// "no override" so Previews and harness contexts still render
     /// without wiring up a board VM.
     let effectiveHallucinationGate: (HermesKanbanTask) -> KanbanHallucinationGate?
+    /// v0.15+ gate forwarded to each card's context menu.
+    let supportsKanbanV015: Bool
+    /// v0.15 context-menu callbacks, keyed by the acted-on task.
+    let onPromote: (HermesKanbanTask) -> Void
+    let onSchedule: (HermesKanbanTask) -> Void
+    let onDeletePermanently: (HermesKanbanTask) -> Void
 
     init(
         column: KanbanBoardColumn,
@@ -36,7 +42,11 @@ struct KanbanColumnView: View {
         onDrop: @escaping (KanbanTaskRef) -> Void,
         canCreate: Bool,
         supportsKanbanDiagnostics: Bool = false,
-        effectiveHallucinationGate: @escaping (HermesKanbanTask) -> KanbanHallucinationGate? = { _ in nil }
+        effectiveHallucinationGate: @escaping (HermesKanbanTask) -> KanbanHallucinationGate? = { _ in nil },
+        supportsKanbanV015: Bool = false,
+        onPromote: @escaping (HermesKanbanTask) -> Void = { _ in },
+        onSchedule: @escaping (HermesKanbanTask) -> Void = { _ in },
+        onDeletePermanently: @escaping (HermesKanbanTask) -> Void = { _ in }
     ) {
         self.column = column
         self.tasks = tasks
@@ -48,6 +58,10 @@ struct KanbanColumnView: View {
         self.canCreate = canCreate
         self.supportsKanbanDiagnostics = supportsKanbanDiagnostics
         self.effectiveHallucinationGate = effectiveHallucinationGate
+        self.supportsKanbanV015 = supportsKanbanV015
+        self.onPromote = onPromote
+        self.onSchedule = onSchedule
+        self.onDeletePermanently = onDeletePermanently
     }
 
     @State private var isTargeted = false
@@ -71,7 +85,11 @@ struct KanbanColumnView: View {
                             KanbanCardView(
                                 task: task,
                                 supportsKanbanDiagnostics: supportsKanbanDiagnostics,
-                                effectiveHallucinationGate: effectiveHallucinationGate
+                                effectiveHallucinationGate: effectiveHallucinationGate,
+                                supportsKanbanV015: supportsKanbanV015,
+                                onPromote: { onPromote(task) },
+                                onSchedule: { onSchedule(task) },
+                                onDeletePermanently: { onDeletePermanently(task) }
                             ) {
                                 onTaskTap(task)
                             }
@@ -159,12 +177,14 @@ struct KanbanColumnView: View {
 
     private var emptyCopy: String {
         switch column {
-        case .triage:   return "Nothing waiting on you."
-        case .upNext:   return "Empty queue. Drop a task here."
-        case .running:  return "No live workers."
-        case .blocked:  return "Nothing blocked."
-        case .done:     return "Recent completions appear here."
-        case .archived: return "No archived tasks."
+        case .triage:    return "Nothing waiting on you."
+        case .scheduled: return "No parked tasks."
+        case .upNext:    return "Empty queue. Drop a task here."
+        case .running:   return "No live workers."
+        case .review:    return "Nothing awaiting review."
+        case .blocked:   return "Nothing blocked."
+        case .done:      return "Recent completions appear here."
+        case .archived:  return "No archived tasks."
         }
     }
 }

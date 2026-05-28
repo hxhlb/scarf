@@ -25,17 +25,14 @@ struct KanbanBoardView: View {
         tenantFilter: String? = nil,
         projectPath: String? = nil,
         projectName: String? = nil,
-        sessionStartedAt: Date? = nil
+        sessionScopeId: String? = nil
     ) {
         let vm = KanbanBoardViewModel(
             context: context,
             tenantFilter: tenantFilter,
-            projectPath: projectPath
+            projectPath: projectPath,
+            sessionScopeId: sessionScopeId
         )
-        vm.sessionStartedAt = sessionStartedAt
-        // Default the toggle on when the handoff seeded a baseline,
-        // off otherwise. The pill in the toolbar lets the user flip it.
-        vm.filterBySessionStart = sessionStartedAt != nil
         _viewModel = State(initialValue: vm)
         self.projectName = projectName
     }
@@ -49,8 +46,19 @@ struct KanbanBoardView: View {
         capabilitiesStore?.capabilities.hasKanbanDiagnostics ?? false
     }
 
+    /// v0.15+ gate for the new Scheduled/Review-aware actions: the
+    /// Promote / Schedule context actions, the sort picker, and the
+    /// permanent-delete action on archived cards. Pre-v0.15 hosts hide
+    /// these surfaces. Missing store treated as "off" (Previews).
+    private var supportsKanbanV015: Bool {
+        capabilitiesStore?.capabilities.hasKanbanV015 ?? false
+    }
+
     @State private var inspectorTaskId: String?
     @State private var showingCreateSheet = false
+    /// Pending permanent-delete (archived-card context action). Drives
+    /// the destructive confirmation dialog before calling `purge`.
+    @State private var pendingPurge: HermesKanbanTask?
     @State private var blockSheetTaskId: String?
     @State private var blockSheetTitle: String = ""
     @State private var blockSheetDestination: KanbanBoardColumn = .blocked
@@ -128,6 +136,21 @@ struct KanbanBoardView: View {
                 completeSheetTaskId = nil
             }
         }
+        .confirmationDialog(
+            pendingPurge.map { "Permanently delete '\($0.title)'?" } ?? "",
+            isPresented: Binding(
+                get: { pendingPurge != nil },
+                set: { if !$0 { pendingPurge = nil } }
+            )
+        ) {
+            Button("Delete permanently", role: .destructive) {
+                if let task = pendingPurge { viewModel.purge(task.id) }
+                pendingPurge = nil
+            }
+            Button("Cancel", role: .cancel) { pendingPurge = nil }
+        } message: {
+            Text("This removes the task from `~/.hermes/kanban.db` for good. This cannot be undone.")
+        }
     }
 
     // MARK: - Header
@@ -139,11 +162,18 @@ struct KanbanBoardView: View {
         ) {
             HStack(spacing: ScarfSpace.s2) {
                 glanceText
-                if viewModel.sessionStartedAt != nil {
-                    sessionStartedFilterPill
+                // Scope toggle: shown only on a chat-scoped board that
+                // also has a project tenant to widen to. A session-scoped
+                // chat with no tenant stays session-only (nothing to
+                // toggle to).
+                if viewModel.sessionScopeId != nil, viewModel.tenantFilter != nil {
+                    chatScopePill
                 }
                 if viewModel.tenantFilter == nil {
                     assigneeFilterMenu
+                }
+                if supportsKanbanV015 {
+                    sortMenu
                 }
                 Toggle("Show archived", isOn: $viewModel.showArchived)
                     .toggleStyle(.switch)
@@ -166,57 +196,38 @@ struct KanbanBoardView: View {
         }
     }
 
-    /// Toggle pill that appears only when the chat → Kanban hand-off
-    /// seeded a baseline timestamp. Tap to flip between "tasks
-    /// created since this chat opened" (filtered) and "all tasks for
-    /// this tenant" (unfiltered). The lens is approximate — Hermes
-    /// doesn't track per-session task linkage in this version, so
-    /// the time window is a best-effort proxy.
-    private var sessionStartedFilterPill: some View {
+    /// Scope toggle for a chat-scoped board. Flips between "This chat"
+    /// (precise server-side `--session` filter) and "All project tasks"
+    /// (the project's tenant). Each flip re-polls with the new filter.
+    private var chatScopePill: some View {
         Button {
-            viewModel.filterBySessionStart.toggle()
+            viewModel.setScopeToThisChat(!viewModel.scopeToThisChat)
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: viewModel.filterBySessionStart
-                    ? "clock.fill" : "clock")
-                Text(sessionStartedPillLabel)
+                Image(systemName: viewModel.scopeToThisChat
+                    ? "text.bubble.fill" : "square.grid.2x2")
+                Text(viewModel.scopeToThisChat ? "This chat" : "All project tasks")
                     .scarfStyle(.caption)
             }
             .padding(.horizontal, ScarfSpace.s2)
             .padding(.vertical, 3)
             .background(
                 Capsule().fill(
-                    (viewModel.filterBySessionStart
+                    (viewModel.scopeToThisChat
                         ? ScarfColor.accent
                         : ScarfColor.foregroundFaint).opacity(0.16)
                 )
             )
             .foregroundStyle(
-                viewModel.filterBySessionStart
+                viewModel.scopeToThisChat
                     ? ScarfColor.accent
                     : ScarfColor.foregroundMuted
             )
         }
         .buttonStyle(.plain)
-        .help(sessionStartedPillHelp)
-    }
-
-    private var sessionStartedPillLabel: String {
-        guard let started = viewModel.sessionStartedAt else {
-            return "Since chat opened"
-        }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return viewModel.filterBySessionStart
-            ? "Since \(formatter.string(from: started))"
-            : "All tasks"
-    }
-
-    private var sessionStartedPillHelp: String {
-        viewModel.filterBySessionStart
-            ? "Showing tasks created after the chat opened. Tap to show all tenant tasks."
-            : "Showing all tasks for this tenant. Tap to filter to tasks created after the chat opened."
+        .help(viewModel.scopeToThisChat
+            ? "Showing tasks created by this chat. Tap to show all tasks for the project."
+            : "Showing all tasks for the project. Tap to filter to tasks created by this chat.")
     }
 
     private var subtitle: String {
@@ -254,6 +265,63 @@ struct KanbanBoardView: View {
         .menuIndicator(.hidden)
     }
 
+    /// v0.15: server-side `--sort` picker. `nil` = Hermes default
+    /// (priority). Selecting a row sets `viewModel.sortKey`, whose
+    /// `didSet` re-polls with the new order.
+    private var sortMenu: some View {
+        Menu {
+            Button {
+                viewModel.sortKey = nil
+            } label: {
+                sortRowLabel("Default", isSelected: viewModel.sortKey == nil)
+            }
+            Divider()
+            ForEach(Self.sortOptions, id: \.key) { option in
+                Button {
+                    viewModel.sortKey = option.key
+                } label: {
+                    sortRowLabel(option.label, isSelected: viewModel.sortKey == option.key)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.arrow.down")
+                Text(currentSortLabel)
+                    .scarfStyle(.caption)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Sort the board")
+    }
+
+    @ViewBuilder
+    private func sortRowLabel(_ title: String, isSelected: Bool) -> some View {
+        if isSelected {
+            Label(title, systemImage: "checkmark")
+        } else {
+            Text(title)
+        }
+    }
+
+    private var currentSortLabel: String {
+        guard let key = viewModel.sortKey else { return "Sort" }
+        return Self.sortOptions.first(where: { $0.key == key })?.label ?? "Sort"
+    }
+
+    /// Sort keys + labels. Keys are passed verbatim to
+    /// `hermes kanban list --sort <key>` (v0.15).
+    private static let sortOptions: [(key: String, label: String)] = [
+        ("priority", "Priority"),
+        ("priority-desc", "Priority ↑"),
+        ("created", "Oldest"),
+        ("created-desc", "Newest"),
+        ("status", "Status"),
+        ("assignee", "Assignee"),
+        ("title", "Title"),
+        ("updated", "Recently updated")
+    ]
+
     // MARK: - Board area
 
     private var boardArea: some View {
@@ -274,7 +342,11 @@ struct KanbanBoardView: View {
                         },
                         canCreate: column == .upNext || column == .triage,
                         supportsKanbanDiagnostics: supportsKanbanDiagnostics,
-                        effectiveHallucinationGate: { viewModel.effectiveHallucinationGate($0) }
+                        effectiveHallucinationGate: { viewModel.effectiveHallucinationGate($0) },
+                        supportsKanbanV015: supportsKanbanV015,
+                        onPromote: { viewModel.promote($0.id) },
+                        onSchedule: { viewModel.schedule($0.id) },
+                        onDeletePermanently: { pendingPurge = $0 }
                     )
                 }
                 Spacer(minLength: ScarfSpace.s4)
@@ -295,6 +367,7 @@ struct KanbanBoardView: View {
                 taskId: taskId,
                 availableAssignees: viewModel.assignees,
                 supportsKanbanDiagnostics: supportsKanbanDiagnostics,
+                supportsKanbanV015: supportsKanbanV015,
                 effectiveHallucinationGate: { viewModel.effectiveHallucinationGate($0) },
                 onClose: { inspectorTaskId = nil },
                 onClaim: {

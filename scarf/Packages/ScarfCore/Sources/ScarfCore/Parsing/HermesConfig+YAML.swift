@@ -105,7 +105,11 @@ public extension HermesConfig {
             sttLocalModel: str("stt.local.model", default: "base"),
             sttLocalLanguage: str("stt.local.language"),
             sttOpenAIModel: str("stt.openai.model", default: "whisper-1"),
-            sttMistralModel: str("stt.mistral.model", default: "voxtral-mini-latest")
+            sttMistralModel: str("stt.mistral.model", default: "voxtral-mini-latest"),
+            ttsXAIVoiceID: str("tts.xai.voice_id"),
+            ttsXAIModel: str("tts.xai.model"),
+            // v0.15 round-trip — read the auto-speech-tags toggle back.
+            ttsXAIAutoSpeechTags: bool("tts.xai.auto_speech_tags", default: false)
         )
 
         func aux(_ name: String) -> AuxiliaryModel {
@@ -177,12 +181,28 @@ public extension HermesConfig {
             freeResponseChannels: str("discord.free_response_channels"),
             autoThread: bool("discord.auto_thread", default: true),
             reactions: bool("discord.reactions", default: true),
-            historyBackfill: bool("discord.history_backfill", default: true)
+            historyBackfill: bool("discord.history_backfill", default: true),
+            allowAnyAttachment: bool("platforms.discord.extra.allow_any_attachment", default: false)
         )
 
         let telegram = TelegramSettings(
             requireMention: bool("telegram.require_mention", default: true),
-            reactions: bool("telegram.reactions", default: false)
+            reactions: bool("telegram.reactions", default: false),
+            disableTopicAutoRename: bool("telegram.disable_topic_auto_rename", default: false),
+            ignoreRootDM: bool("platforms.telegram.extra.ignore_root_dm", default: false)
+        )
+
+        // -- v0.15: Signal group-only require_mention + ntfy (23rd platform).
+        let signal = SignalSettings(
+            requireMention: bool("platforms.signal.extra.require_mention", default: false)
+        )
+
+        let ntfy = NtfySettings(
+            topic: str("platforms.ntfy.extra.topic"),
+            server: str("platforms.ntfy.extra.server", default: "https://ntfy.sh"),
+            publishTopic: str("platforms.ntfy.extra.publish_topic"),
+            token: str("platforms.ntfy.extra.token"),
+            markdown: bool("platforms.ntfy.extra.markdown", default: false)
         )
 
         // Slack fields live under both `platforms.slack.*` (newer) and `slack.*`
@@ -359,7 +379,10 @@ public extension HermesConfig {
             // chooses which to render based on `hasWebToolsBackendSplit`.
             webToolsBackend: str("web_tools.backend", default: "duckduckgo"),
             webToolsSearchBackend: str("web_tools.search.backend", default: "duckduckgo"),
-            webToolsExtractBackend: str("web_tools.extract.backend", default: "reader")
+            webToolsExtractBackend: str("web_tools.extract.backend", default: "reader"),
+            // -- v0.15 additions -------------------------------------
+            ntfy: ntfy,
+            signal: signal
         )
     }
 }

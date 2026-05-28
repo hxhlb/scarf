@@ -8,22 +8,37 @@ public struct KanbanListFilter: Sendable, Equatable {
     /// `nil` = all tenants. Empty string → "untagged" (NULL tenant)
     /// — Hermes treats `--tenant ""` as "no tenant".
     public var tenant: String?
+    /// `nil` = all sessions. Filters by the originating ACP chat
+    /// `session_id` stamped on tasks created inside an agent loop
+    /// (`hermes kanban list --session <id>`, v0.15+). ANDs with the
+    /// other filters. Lets the chat-scoped board scope precisely.
+    public var session: String?
     public var includeArchived: Bool
     /// Show only my profile's tasks (`--mine`).
     public var mineOnly: Bool
+    /// v0.15: `--sort <key>` ordering. Accepted values (Hermes default
+    /// `priority`): created, created-desc, priority, priority-desc,
+    /// status, assignee, title, updated. Not enforced Swift-side —
+    /// passed through verbatim so a new Hermes sort key doesn't need a
+    /// Scarf release. `nil`/empty → omitted (Hermes default applies).
+    public var sort: String?
 
     public init(
         status: KanbanStatus? = nil,
         assignee: String? = nil,
         tenant: String? = nil,
+        session: String? = nil,
         includeArchived: Bool = false,
-        mineOnly: Bool = false
+        mineOnly: Bool = false,
+        sort: String? = nil
     ) {
         self.status = status
         self.assignee = assignee
         self.tenant = tenant
+        self.session = session
         self.includeArchived = includeArchived
         self.mineOnly = mineOnly
+        self.sort = sort
     }
 
     public static let all = KanbanListFilter()
@@ -43,8 +58,14 @@ public struct KanbanListFilter: Sendable, Equatable {
         if let tenant {
             args.append(contentsOf: ["--tenant", tenant])
         }
+        if let session, !session.isEmpty {
+            args.append(contentsOf: ["--session", session])
+        }
         if includeArchived {
             args.append("--archived")
+        }
+        if let sort, !sort.isEmpty {
+            args.append(contentsOf: ["--sort", sort])
         }
         return args
     }

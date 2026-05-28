@@ -185,14 +185,14 @@ struct SessionInfoBar: View {
                     )
                 }
 
-                // Kanban chip — renders only when (a) the host supports
-                // kanban and (b) the host has a callback for the chip.
-                // Tap handler is owned upstream so it can resolve the
-                // project's tenant + post the handoff to AppCoordinator.
-                // The badge surfaces running + blocked task counts so
-                // the user sees agent activity at a glance without
-                // leaving chat.
-                if capabilities.hasKanban, let onOpenKanban {
+                // Kanban chip — renders only when (a) the host stamps an
+                // ACP session_id on tasks so the board can scope precisely
+                // by `--session` (v0.15+) and (b) the host has a callback
+                // for the chip. Tap handler is owned upstream so it can
+                // post the chat's session id to AppCoordinator. The badge
+                // surfaces this chat's running + blocked task counts so the
+                // user sees agent activity at a glance without leaving chat.
+                if capabilities.hasKanbanSessionFilter, let onOpenKanban {
                     Button(action: onOpenKanban) {
                         HStack(spacing: 4) {
                             Image(systemName: "rectangle.split.3x1")

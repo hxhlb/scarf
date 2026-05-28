@@ -190,7 +190,10 @@ struct ScarfGoKanbanView: View {
     private var visibleColumns: [KanbanBoardColumn] {
         var cols: [KanbanBoardColumn] = []
         if !tasks(in: .triage).isEmpty { cols.append(.triage) }
-        cols.append(contentsOf: [.upNext, .running, .blocked, .done])
+        if !tasks(in: .scheduled).isEmpty { cols.append(.scheduled) }
+        cols.append(contentsOf: [.upNext, .running])
+        if !tasks(in: .review).isEmpty { cols.append(.review) }
+        cols.append(contentsOf: [.blocked, .done])
         return cols
     }
 
@@ -210,23 +213,27 @@ struct ScarfGoKanbanView: View {
 
     private func emptyTitle(for column: KanbanBoardColumn) -> String {
         switch column {
-        case .triage:   return "Triage empty"
-        case .upNext:   return "Queue empty"
-        case .running:  return "No live workers"
-        case .blocked:  return "Nothing blocked"
-        case .done:     return "No completions yet"
-        case .archived: return "No archived tasks"
+        case .triage:    return "Triage empty"
+        case .scheduled: return "Nothing scheduled"
+        case .upNext:    return "Queue empty"
+        case .running:   return "No live workers"
+        case .review:    return "Nothing in review"
+        case .blocked:   return "Nothing blocked"
+        case .done:      return "No completions yet"
+        case .archived:  return "No archived tasks"
         }
     }
 
     private func emptyCopy(for column: KanbanBoardColumn) -> String {
         switch column {
-        case .triage:   return "No tasks waiting on a specifier."
-        case .upNext:   return "Drop a task on the Mac board, or create one with `hermes kanban create`."
-        case .running:  return "No workers are running tasks for this project right now."
-        case .blocked:  return "Nothing is blocked. When a worker hits a block, it'll show up here."
-        case .done:     return "Recent completions will land here."
-        case .archived: return "Archived tasks are hidden by default."
+        case .triage:    return "No tasks waiting on a specifier."
+        case .scheduled: return "Parked tasks awaiting a trigger will show up here."
+        case .upNext:    return "Drop a task on the Mac board, or create one with `hermes kanban create`."
+        case .running:   return "No workers are running tasks for this project right now."
+        case .review:    return "Completed work awaiting verification lands here."
+        case .blocked:   return "Nothing is blocked. When a worker hits a block, it'll show up here."
+        case .done:      return "Recent completions will land here."
+        case .archived:  return "Archived tasks are hidden by default."
         }
     }
 }

@@ -368,10 +368,11 @@ import Foundation
 
     // MARK: - ModelCatalogService — WS-6 (v0.13)
 
-    @Test func vercelAIGatewayDemotedToBottom() throws {
-        // Build a minimal catalog with vercel + alphabetically-later
-        // providers, then assert vercel sorts after them. Locks the
-        // demoted-axis sort comparator added in WS-6.
+    @Test func vercelNoLongerDemotedSortsAlphabetically() throws {
+        // v0.15 removed Vercel AI Gateway from Hermes entirely, so Scarf's
+        // `demotedProviders` set is empty and nothing is special-cased to
+        // the tail. With a now-empty demote set, providers sort purely
+        // alphabetically — vercel lands in the middle, not last.
         let json = """
         {
           "anthropic": { "name": "Anthropic", "models": {} },
@@ -386,12 +387,11 @@ import Foundation
         let svc = ModelCatalogService(path: tmp.path)
         let providers = svc.loadProviders().filter { !$0.isOverlay }
         let names = providers.map(\.providerName)
-        // anthropic first (alpha), zonk next (alpha), vercel last
-        // (demoted) — even though `vercel` < `zonk` alphabetically.
-        #expect(names.last == "Vercel AI Gateway")
         let vercelIdx = names.firstIndex(of: "Vercel AI Gateway") ?? -1
         let zonkIdx = names.firstIndex(of: "Zonk Provider") ?? -1
-        #expect(vercelIdx > zonkIdx)
+        // Not demoted to the tail anymore: vercel sorts before zonk.
+        #expect(names.last != "Vercel AI Gateway")
+        #expect(vercelIdx < zonkIdx)
     }
 
     @Test func grok420BetaAliasResolvesToGrok420() {
@@ -421,6 +421,9 @@ import Foundation
         #expect(models.count >= 5)
         #expect(models.contains(where: { $0.modelID == "openai/gpt-image-1" }))
         #expect(models.contains(where: { $0.modelID == "google/imagen-4" }))
+        // v0.15: Krea image models.
+        #expect(models.contains(where: { $0.modelID == "krea-2-medium" }))
+        #expect(models.contains(where: { $0.modelID == "krea-2-large" }))
         // Every entry has a non-empty display + a non-empty modelID.
         for m in models {
             #expect(!m.modelID.isEmpty)
@@ -428,10 +431,35 @@ import Foundation
         }
     }
 
-    @Test func demotedProvidersContainsVercel() {
-        // Minimal lock-in for the demoted-providers static set. Mirrors
-        // Hermes's deprioritized-provider list in providers.py.
-        #expect(ModelCatalogService.demotedProviders.contains("vercel"))
+    @Test func demotedProvidersEmptyAfterVercelRemoval() {
+        // v0.15 removed Vercel AI Gateway from Hermes, so the demoted set
+        // (whose only prior entry was vercel) is now empty. Kept as a hook
+        // for future demotions. Mirrors providers.py.
+        #expect(ModelCatalogService.demotedProviders.isEmpty)
+        #expect(!ModelCatalogService.demotedProviders.contains("vercel"))
+    }
+
+    @Test func openAIAPIOverlayPresent() {
+        // v0.15: OpenAI API as a first-class overlay provider, distinct
+        // from `openai-codex`. Wire id is `openai-api` (NOT bare `openai`,
+        // which Hermes aliases to openrouter).
+        let overlay = ModelCatalogService.overlayOnlyProviders["openai-api"]
+        #expect(overlay != nil)
+        #expect(overlay?.baseURL == "https://api.openai.com/v1")
+        #expect(overlay?.authType == .apiKey)
+        #expect(overlay?.subscriptionGated == false)
+        // Bare `openai` must NOT be registered as an overlay.
+        #expect(ModelCatalogService.overlayOnlyProviders["openai"] == nil)
+    }
+
+    @Test func xaiRetiredModelAliasesResolveToGrok43() {
+        let svc = ModelCatalogService(path: "/tmp/scarf-nonexistent-\(UUID().uuidString).json")
+        // v0.15 May-15 retirement map → grok-4.3 (xai + xai-oauth prefixes).
+        #expect(svc.resolveModelAlias(providerID: "xai", modelID: "grok-3") == "grok-4.3")
+        #expect(svc.resolveModelAlias(providerID: "xai", modelID: "grok-code-fast-1") == "grok-4.3")
+        #expect(svc.resolveModelAlias(providerID: "xai-oauth", modelID: "grok-4-0709") == "grok-4.3")
+        #expect(svc.resolveModelAlias(providerID: "xai", modelID: "grok-imagine-image-pro")
+                == "grok-imagine-image-quality")
     }
 
     // MARK: - ProjectDashboardService

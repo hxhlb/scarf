@@ -42,6 +42,61 @@ import Foundation
         #expect(task.idempotencyKey == "abc")
         #expect(task.maxRuntimeSeconds == 1800)
         #expect(task.currentRunId == 1)
+        // A row without `session_id` (pre-v0.15 host, or a CLI/dashboard
+        // -created task) decodes with `sessionId == nil` — pins the
+        // tolerant-decode contract.
+        #expect(task.sessionId == nil)
+    }
+
+    @Test func decodeV015TaskFields() throws {
+        // v0.15 `list --json` exposes branch_name / workflow_template_id /
+        // current_step_key; model_override comes from `show --json` but is
+        // still decoded tolerantly.
+        let json = """
+        {
+          "id": "t_v015",
+          "title": "worktree task",
+          "status": "running",
+          "branch_name": "feat/x",
+          "workflow_template_id": "wf_translate",
+          "current_step_key": "draft",
+          "model_override": "claude-opus-4.7"
+        }
+        """
+        let task = try JSONDecoder().decode(HermesKanbanTask.self, from: Data(json.utf8))
+        #expect(task.branchName == "feat/x")
+        #expect(task.workflowTemplateId == "wf_translate")
+        #expect(task.currentStepKey == "draft")
+        #expect(task.modelOverride == "claude-opus-4.7")
+    }
+
+    @Test func decodeV015TaskFieldsAbsentBecomesNil() throws {
+        // A row missing the v0.15 fields (pre-v0.15 host, or a list row
+        // that doesn't carry model_override) decodes with all nil —
+        // pins the tolerant-decode contract.
+        let json = """
+        {"id": "t_legacy15", "title": "no v0.15 fields", "status": "ready"}
+        """
+        let task = try JSONDecoder().decode(HermesKanbanTask.self, from: Data(json.utf8))
+        #expect(task.branchName == nil)
+        #expect(task.workflowTemplateId == nil)
+        #expect(task.currentStepKey == nil)
+        #expect(task.modelOverride == nil)
+    }
+
+    @Test func decodeSessionId() throws {
+        // v0.15 stamps the originating ACP session id on tasks created
+        // inside an agent loop; `hermes kanban list --json` exposes it.
+        let json = """
+        {
+          "id": "t_abc",
+          "title": "Created by a chat",
+          "status": "running",
+          "session_id": "acp-sess-123"
+        }
+        """
+        let task = try JSONDecoder().decode(HermesKanbanTask.self, from: Data(json.utf8))
+        #expect(task.sessionId == "acp-sess-123")
     }
 
     // MARK: - Assignee table parsing
@@ -168,6 +223,14 @@ import Foundation
         #expect(KanbanStatus.from("WHATEVER").boardColumn == .upNext) // unknown → upNext
     }
 
+    @Test func statusV015NewCases() {
+        // v0.15 VALID_STATUSES adds `scheduled` and `review`.
+        #expect(KanbanStatus.from("scheduled") == .scheduled)
+        #expect(KanbanStatus.from("review") == .review)
+        // Case-insensitive, mirroring `from(_:)`.
+        #expect(KanbanStatus.from("SCHEDULED") == .scheduled)
+    }
+
     // MARK: - KanbanCreateRequest argv assembly
 
     @Test func createRequestArgvIncludesAllFields() {
@@ -212,6 +275,26 @@ import Foundation
         #expect(!argv.contains("--body"))
         #expect(!argv.contains("--assignee"))
         #expect(!argv.contains("--triage"))
+        // v0.15 `--branch` is absent by default.
+        #expect(!argv.contains("--branch"))
+    }
+
+    @Test func createRequestArgvIncludesBranch() {
+        // v0.15 worktree tasks carry a `--branch <name>` flag.
+        let req = KanbanCreateRequest(
+            title: "worktree task",
+            workspace: .worktreePath("/tmp/wt"),
+            branch: "feat/x"
+        )
+        let argv = req.argv()
+        #expect(argv.contains("--branch"))
+        if let i = argv.firstIndex(of: "--branch") {
+            #expect(argv[argv.index(after: i)] == "feat/x")
+        } else {
+            Issue.record("expected --branch in argv: \(argv)")
+        }
+        // `worktree:<path>` workspace spec round-trips.
+        #expect(argv.contains("worktree:/tmp/wt"))
     }
 
     // MARK: - KanbanListFilter argv
@@ -237,6 +320,44 @@ import Foundation
         let argv = KanbanListFilter(includeArchived: true, mineOnly: true).argv()
         #expect(argv.contains("--mine"))
         #expect(argv.contains("--archived"))
+    }
+
+    @Test func listFilterSessionPasses() {
+        let argv = KanbanListFilter(session: "acp-sess-123").argv()
+        #expect(argv.contains("--session"))
+        #expect(argv.contains("acp-sess-123"))
+        // The empty default filter never emits `--session`.
+        #expect(!KanbanListFilter.all.argv().contains("--session"))
+    }
+
+    @Test func listFilterEmptySessionDropped() {
+        // Empty string is treated as "no session" (mirrors the
+        // non-empty guard on `--session`), so it isn't emitted.
+        let argv = KanbanListFilter(session: "").argv()
+        #expect(!argv.contains("--session"))
+    }
+
+    @Test func listFilterSessionAndsWithTenant() {
+        let argv = KanbanListFilter(tenant: "scarf:demo", session: "acp-x").argv()
+        #expect(argv.contains("--tenant"))
+        #expect(argv.contains("scarf:demo"))
+        #expect(argv.contains("--session"))
+        #expect(argv.contains("acp-x"))
+    }
+
+    @Test func listFilterSortPasses() {
+        // v0.15 `--sort` is passed through verbatim (not enforced).
+        let argv = KanbanListFilter(sort: "priority-desc").argv()
+        #expect(argv.contains("--sort"))
+        #expect(argv.contains("priority-desc"))
+        // The two appear adjacently in flag/value order.
+        if let i = argv.firstIndex(of: "--sort") {
+            #expect(argv[argv.index(after: i)] == "priority-desc")
+        } else {
+            Issue.record("expected --sort in argv: \(argv)")
+        }
+        // The empty default filter never emits `--sort`.
+        #expect(!KanbanListFilter.all.argv().contains("--sort"))
     }
 
     // MARK: - Transition planning

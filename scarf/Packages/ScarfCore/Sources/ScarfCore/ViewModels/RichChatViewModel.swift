@@ -702,6 +702,15 @@ public final class RichChatViewModel {
     /// edits); reset on every session boundary so a resumed/new session
     /// doesn't inherit a stale mode. Hermes owns the authoritative value
     /// server-side.
+    ///
+    /// **Known limitation:** this is a local indicator, not synced from the
+    /// `session/new`/`session/load` response. A fresh session genuinely
+    /// starts at `.default` (correct), but a *resumed* session whose mode
+    /// was changed elsewhere (a prior Scarf run, the TUI) will display
+    /// `.default` until the user re-selects. This is display-only —
+    /// actual edit prompting is driven by Hermes regardless of this chip.
+    /// Syncing from the response would require surfacing the advertised
+    /// `modes`/current-mode out of `ACPClient.newSession` (deferred).
     public var activeApprovalMode: ACPApprovalMode = .default
 
     /// Parse the argument slug from a `/subgoal …` invocation. Pure
@@ -971,13 +980,6 @@ public final class RichChatViewModel {
 
     public private(set) var sessionId: String?
     /// Wall-clock timestamp of when this view model attached to its
-    /// current session — set on every `setSessionId(_:)` call (new
-    /// chat OR resume). Distinct from the underlying session's
-    /// `created_at`, which may be days old for resumed sessions; this
-    /// is the "when did I start watching?" baseline used by the
-    /// chat → Kanban hand-off to seed a "Since chat opened" filter.
-    /// Nil before the first session attaches.
-    public private(set) var sessionOpenedAt: Date?
     /// The original CLI session ID when resuming a CLI session via ACP.
     /// Used to combine old CLI messages with new ACP messages.
     public private(set) var originSessionId: String?
@@ -1144,11 +1146,6 @@ public final class RichChatViewModel {
         // the next chat we attach to also drops post-load replay
         // events until the user prompts.
         hasUserSentPromptThisSession = false
-        // Refresh the wall-clock baseline whenever the session changes —
-        // including the nil → real-id transition on first attach AND
-        // the id → different-id transition on session swap. Resetting
-        // for nil avoids stamping the gap with a stale timestamp.
-        sessionOpenedAt = (id == nil) ? nil : Date()
     }
 
     public func cleanup() async {

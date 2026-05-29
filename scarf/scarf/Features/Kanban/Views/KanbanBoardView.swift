@@ -166,7 +166,7 @@ struct KanbanBoardView: View {
                 // also has a project tenant to widen to. A session-scoped
                 // chat with no tenant stays session-only (nothing to
                 // toggle to).
-                if viewModel.sessionScopeId != nil, viewModel.tenantFilter != nil {
+                if viewModel.sessionScopeId != nil {
                     chatScopePill
                 }
                 if viewModel.tenantFilter == nil {
@@ -197,16 +197,21 @@ struct KanbanBoardView: View {
     }
 
     /// Scope toggle for a chat-scoped board. Flips between "This chat"
-    /// (precise server-side `--session` filter) and "All project tasks"
-    /// (the project's tenant). Each flip re-polls with the new filter.
+    /// (precise server-side `--session` filter) and the wider view — the
+    /// project's tenant when the chat is project-scoped, or all tasks for
+    /// a global chat. Shown whenever a session scope exists so a global
+    /// chat (no tenant) isn't locked to the session filter with no way to
+    /// see, e.g., a task it just created via New Task. Each flip re-polls.
     private var chatScopePill: some View {
-        Button {
+        // Without a project tenant the wider view is the whole board.
+        let wideLabel = viewModel.tenantFilter != nil ? "All project tasks" : "All tasks"
+        return Button {
             viewModel.setScopeToThisChat(!viewModel.scopeToThisChat)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: viewModel.scopeToThisChat
                     ? "text.bubble.fill" : "square.grid.2x2")
-                Text(viewModel.scopeToThisChat ? "This chat" : "All project tasks")
+                Text(viewModel.scopeToThisChat ? "This chat" : wideLabel)
                     .scarfStyle(.caption)
             }
             .padding(.horizontal, ScarfSpace.s2)
@@ -226,8 +231,8 @@ struct KanbanBoardView: View {
         }
         .buttonStyle(.plain)
         .help(viewModel.scopeToThisChat
-            ? "Showing tasks created by this chat. Tap to show all tasks for the project."
-            : "Showing all tasks for the project. Tap to filter to tasks created by this chat.")
+            ? "Showing tasks created by this chat. Tap to show \(wideLabel.lowercased())."
+            : "Showing \(wideLabel.lowercased()). Tap to filter to tasks created by this chat.")
     }
 
     private var subtitle: String {

@@ -275,32 +275,18 @@ struct MCPServerEditorView: View {
                     Text("SSL verify")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Toggle("Verify TLS peer (default on)", isOn: Binding<Bool>(
-                        get: {
-                            // Anything other than an explicit "false" is treated
-                            // as verification on — covers empty (default true)
-                            // and a CA-bundle path.
-                            viewModel.sslVerifyDraft.trimmingCharacters(in: .whitespaces).lowercased() != "false"
-                        },
-                        set: { isOn in
-                            if isOn {
-                                // Clear the explicit "false" so the YAML key is
-                                // dropped (Hermes default true). Preserve a
-                                // CA-path value if one is present.
-                                if viewModel.sslVerifyDraft.trimmingCharacters(in: .whitespaces).lowercased() == "false" {
-                                    viewModel.sslVerifyDraft = ""
-                                }
-                            } else {
-                                viewModel.sslVerifyDraft = "false"
-                            }
-                        }
-                    ))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    TextField("Or a CA-bundle path (optional)", text: $viewModel.sslVerifyDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-                        .help("Leave empty for the default (verify on). Enter \"false\" to disable verification, or a path to a custom CA bundle.")
+                    // Two independent controls backed by separate VM state so
+                    // toggling verification off never clobbers a typed CA path;
+                    // they collapse to the single `ssl_verify` value at save.
+                    Toggle("Verify TLS peer (default on)", isOn: $viewModel.sslVerifyPeer)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                    if viewModel.sslVerifyPeer {
+                        TextField("Custom CA-bundle path (optional)", text: $viewModel.sslCAPathDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                            .help("Leave empty for the system trust store (verify on). Enter a path to pin a custom CA bundle.")
+                    }
                 }
                 Text("mTLS for HTTP / SSE transports. Requires Hermes v0.15+.")
                     .font(.caption)

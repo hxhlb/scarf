@@ -30,12 +30,17 @@ final class MCPServerEditorViewModel {
     /// editor under the v0.14 capability gate.
     var parallelToolCallsDraft: Bool?
     /// v0.15 — mTLS client-certificate config (HTTP / SSE only). Empty string
-    /// means "key absent" (writer drops the scalar). `sslVerifyDraft` holds
-    /// the bool string ("true"/"false") OR a CA-bundle path; an empty draft
-    /// resolves to "use Hermes default (true)".
+    /// means "key absent" (writer drops the scalar).
     var clientCertDraft: String
     var clientKeyDraft: String
-    var sslVerifyDraft: String
+    /// SSL-verify is one Hermes key (`ssl_verify`) holding a bool OR a
+    /// CA-bundle path, but the UI splits it into two INDEPENDENT controls so
+    /// toggling verification off can't clobber a typed CA path. `sslVerifyPeer`
+    /// is the on/off toggle; `sslCAPathDraft` is the optional custom CA path
+    /// (only meaningful when verify is on). They resolve to a single
+    /// `ssl_verify` value at save (see `resolvedSSLVerify`).
+    var sslVerifyPeer: Bool
+    var sslCAPathDraft: String
     var showSecrets: Bool = false
     var isSaving: Bool = false
     var saveError: String?
@@ -56,7 +61,29 @@ final class MCPServerEditorViewModel {
         self.parallelToolCallsDraft = server.supportsParallelToolCalls
         self.clientCertDraft = server.clientCert ?? ""
         self.clientKeyDraft = server.clientKey ?? ""
-        self.sslVerifyDraft = server.sslVerify ?? ""
+        // Hydrate the split SSL-verify controls from the single stored value:
+        //   nil/empty → verify on, no custom CA
+        //   "false"   → verify off
+        //   <path>    → verify on, custom CA bundle
+        let storedVerify = (server.sslVerify ?? "").trimmingCharacters(in: .whitespaces)
+        if storedVerify.lowercased() == "false" {
+            self.sslVerifyPeer = false
+            self.sslCAPathDraft = ""
+        } else {
+            self.sslVerifyPeer = true
+            self.sslCAPathDraft = storedVerify  // "" for plain default-on
+        }
+    }
+
+    /// Collapse the two SSL-verify controls back into the single
+    /// `ssl_verify` value Hermes expects. `nil` drops the key (default on).
+    /// Verify off → "false". Verify on + a CA path → the path. Verify on +
+    /// no path → nil (Hermes default true). A CA path is ignored when
+    /// verification is off (you can't pin a CA while not verifying).
+    var resolvedSSLVerify: String? {
+        if !sslVerifyPeer { return "false" }
+        let path = sslCAPathDraft.trimmingCharacters(in: .whitespaces)
+        return path.isEmpty ? nil : path
     }
 
     func appendEnvRow() {
@@ -100,8 +127,7 @@ final class MCPServerEditorViewModel {
             ? nil : clientCertDraft.trimmingCharacters(in: .whitespaces)
         let keyValue: String? = clientKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty
             ? nil : clientKeyDraft.trimmingCharacters(in: .whitespaces)
-        let verifyValue: String? = sslVerifyDraft.trimmingCharacters(in: .whitespaces).isEmpty
-            ? nil : sslVerifyDraft.trimmingCharacters(in: .whitespaces)
+        let verifyValue: String? = resolvedSSLVerify
         let originalCert = server.clientCert
         let originalKey = server.clientKey
         let originalVerify = server.sslVerify

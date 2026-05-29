@@ -405,6 +405,14 @@ final class KanbanBoardViewModel {
             // until the next gateway dispatcher tick.
             _ = try? await service.dispatch(maxTasks: nil, dryRun: false)
         }
+        // A manually-created task isn't stamped with an ACP session_id
+        // (only the agent loop sets HERMES_SESSION_ID), so it won't appear
+        // under the "This chat" session filter. Tell the user where it went
+        // rather than letting it silently vanish on the next poll.
+        if sessionScopeId != nil, scopeToThisChat {
+            let wide = tenantFilter != nil ? "All project tasks" : "All tasks"
+            transientNotice = "Task created. It isn't chat-scoped — switch to \"\(wide)\" to see it."
+        }
         await refresh()
         return task
     }
@@ -457,8 +465,16 @@ final class KanbanBoardViewModel {
         // Filter polled rows to the requested tenant if one is set —
         // belt-and-suspenders against Hermes versions that ignore
         // an empty `--tenant ""` argument.
+        //
+        // BUT skip this when the board is session-scoped ("This chat"):
+        // `currentFilter` then queries `--session <id>` with NO tenant,
+        // and the whole point is to surface every task the chat produced
+        // — including ones the agent created without tagging the project
+        // tenant. Applying the tenant filter here would drop exactly those
+        // and defeat session scoping.
+        let isSessionScoped = (sessionScopeId != nil && scopeToThisChat)
         let filtered: [HermesKanbanTask]
-        if let tenant = tenantFilter, !tenant.isEmpty {
+        if let tenant = tenantFilter, !tenant.isEmpty, !isSessionScoped {
             filtered = polled.filter { $0.tenant == tenant }
         } else {
             filtered = polled

@@ -66,3 +66,9 @@ scripts/wiki-blocklist.txt
 # carriers, locales) and never meant for the public repo — kept local
 # while a fix round is in progress, deleted afterward.
 crashes/
+
+# Memophant app-local state (machine-specific, not for git)
+.memophant/
+
+# Memophant app-local state (machine-specific, not for git)
+.claude/memophant-activity.log

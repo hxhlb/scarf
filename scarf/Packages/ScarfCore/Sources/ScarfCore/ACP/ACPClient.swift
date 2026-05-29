@@ -3,6 +3,53 @@ import Foundation
 import os
 #endif
 
+/// Per-session edit auto-approval mode advertised by ACP's `session/new`
+/// response (`modes` field) and switchable mid-session via the
+/// `session/set_mode` JSON-RPC method (Hermes v0.15+).
+///
+/// Distinct from the global `approvals.mode` config surface (the YOLO
+/// chip): this is a per-ACP-session toggle that loosens (or tightens)
+/// how often Hermes prompts for file-edit approval. Sensitive paths
+/// (`.env*`, `id_rsa`, `.git`, `.ssh`, …) always still prompt regardless
+/// of the chosen mode — that's a server-side guardrail Scarf doesn't
+/// override.
+///
+/// Raw values are the wire mode IDs verified against the v2026.5.28
+/// Hermes source.
+public enum ACPApprovalMode: String, CaseIterable, Sendable {
+    /// Default posture — Hermes asks before every edit.
+    case `default`
+    /// Auto-allow edits inside the workspace + `/tmp`; still asks for
+    /// sensitive paths.
+    case acceptEdits = "accept_edits"
+    /// Auto-allow file edits for the whole session except sensitive
+    /// paths.
+    case dontAsk = "dont_ask"
+
+    /// Short label for chips / menus — mirrors the ACP `modes` entry
+    /// label.
+    public var displayName: String {
+        switch self {
+        case .default: return "Default"
+        case .acceptEdits: return "Accept Edits"
+        case .dontAsk: return "Don't Ask"
+        }
+    }
+
+    /// One-line description for tooltips / menu subtitles — mirrors the
+    /// ACP `modes` entry description.
+    public var summary: String {
+        switch self {
+        case .default:
+            return "Ask before edits"
+        case .acceptEdits:
+            return "Auto-allow workspace + /tmp edits; still asks for sensitive paths"
+        case .dontAsk:
+            return "Auto-allow file edits for this session except sensitive paths"
+        }
+    }
+}
+
 /// Manages an ACP (Agent Client Protocol) session with a backing Hermes
 /// agent. Talks JSON-RPC over an `ACPChannel` — the channel itself owns
 /// the transport (subprocess for macOS, SSH exec session for iOS via
@@ -382,6 +429,30 @@ public actor ACPClient {
         ]
         _ = try await sendRequest(method: "session/cancel", params: params)
         statusMessage = "Cancelled"
+    }
+
+    /// Switch the per-session edit auto-approval mode on a live ACP
+    /// session via the `session/set_mode` JSON-RPC method (Hermes v0.15+).
+    /// `modeId` is one of the wire IDs ACP advertised in the `session/new`
+    /// response's `modes` field — `default` / `accept_edits` / `dont_ask`
+    /// (see `ACPApprovalMode`).
+    ///
+    /// Sensitive paths (`.env*`, `id_rsa`, `.git`, `.ssh`, …) always still
+    /// prompt server-side regardless of the chosen mode — Scarf doesn't
+    /// override that guardrail.
+    ///
+    /// The caller is responsible for capability-gating on
+    /// `HermesCapabilities.hasSessionEditAutoApproval` — calling this
+    /// against a pre-v0.15 host throws because the method doesn't exist.
+    public func setSessionMode(
+        sessionId: String,
+        modeId: String
+    ) async throws {
+        let params: [String: AnyCodable] = [
+            "sessionId": AnyCodable(sessionId),
+            "modeId": AnyCodable(modeId),
+        ]
+        _ = try await sendRequest(method: "session/set_mode", params: params)
     }
 
     /// Switch the model on a live ACP session via the `session/set_model`

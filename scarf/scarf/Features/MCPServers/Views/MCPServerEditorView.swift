@@ -60,6 +60,10 @@ struct MCPServerEditorView: View {
                     if capabilitiesStore?.capabilities.hasMCPParallelToolCalls == true {
                         parallelToolCallsSection
                     }
+                    if viewModel.server.transport != .stdio,
+                       capabilitiesStore?.capabilities.hasMCPClientCerts == true {
+                        tlsSection
+                    }
                     if viewModel.server.hasOAuthToken {
                         oauthSection
                     }
@@ -238,6 +242,67 @@ struct MCPServerEditorView: View {
                 }
                 .pickerStyle(.segmented)
                 Text("When enabled, Hermes can batch concurrent tool calls to this MCP server instead of serializing them. Requires Hermes v0.14+.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// v0.15 — mTLS / TLS client-certificate config for HTTP + SSE servers.
+    /// Shown only on non-stdio transports under the `hasMCPClientCerts` gate
+    /// in `body`. Empty fields drop their YAML key; the SSL-verify toggle
+    /// flips between "true"/"false" and an optional CA-bundle path field.
+    private var tlsSection: some View {
+        sectionBox(title: "TLS client certificate (mTLS)") {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Client cert path (combined PEM)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("/path/to/client.pem", text: $viewModel.clientCertDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Client key path")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("/path/to/client.key", text: $viewModel.clientKeyDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("SSL verify")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Toggle("Verify TLS peer (default on)", isOn: Binding<Bool>(
+                        get: {
+                            // Anything other than an explicit "false" is treated
+                            // as verification on — covers empty (default true)
+                            // and a CA-bundle path.
+                            viewModel.sslVerifyDraft.trimmingCharacters(in: .whitespaces).lowercased() != "false"
+                        },
+                        set: { isOn in
+                            if isOn {
+                                // Clear the explicit "false" so the YAML key is
+                                // dropped (Hermes default true). Preserve a
+                                // CA-path value if one is present.
+                                if viewModel.sslVerifyDraft.trimmingCharacters(in: .whitespaces).lowercased() == "false" {
+                                    viewModel.sslVerifyDraft = ""
+                                }
+                            } else {
+                                viewModel.sslVerifyDraft = "false"
+                            }
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    TextField("Or a CA-bundle path (optional)", text: $viewModel.sslVerifyDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .help("Leave empty for the default (verify on). Enter \"false\" to disable verification, or a path to a custom CA bundle.")
+                }
+                Text("mTLS for HTTP / SSE transports. Requires Hermes v0.15+.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -156,6 +156,54 @@ import Foundation
         #expect(http.summary == "https://mcp.linear.app/sse")
     }
 
+    /// v0.15 — mTLS client-certificate fields round-trip through the model,
+    /// and a server constructed without them defaults to nil. The YAML
+    /// parser that populates these (`HermesFileService.parseMCPServersBlock`)
+    /// lives in the app target, so this exercises the ScarfCore model
+    /// surface the parser feeds — mirroring `hermesMCPServerInit`.
+    @Test func hermesMCPServerClientCertFields() {
+        // Mirrors a parsed `mcp_servers` entry with client_cert / client_key /
+        // ssl_verify present (string-path form).
+        let withCerts = HermesMCPServer(
+            name: "secure", transport: .http, command: nil, args: [],
+            url: "https://mcp.example.com", auth: nil,
+            env: [:], headers: [:], timeout: nil, connectTimeout: nil,
+            enabled: true, toolsInclude: [], toolsExclude: [],
+            resourcesEnabled: true, promptsEnabled: true, hasOAuthToken: false,
+            clientCert: "/etc/certs/client.pem",
+            clientKey: "/etc/certs/client.key",
+            sslVerify: "/etc/certs/ca-bundle.pem"
+        )
+        #expect(withCerts.clientCert == "/etc/certs/client.pem")
+        #expect(withCerts.clientKey == "/etc/certs/client.key")
+        #expect(withCerts.sslVerify == "/etc/certs/ca-bundle.pem")
+
+        // ssl_verify can also hold the bool string form.
+        let verifyOff = HermesMCPServer(
+            name: "noverify", transport: .sse, command: nil, args: [],
+            url: "https://mcp.example.com/sse", auth: nil,
+            env: [:], headers: [:], timeout: nil, connectTimeout: nil,
+            enabled: true, toolsInclude: [], toolsExclude: [],
+            resourcesEnabled: true, promptsEnabled: true, hasOAuthToken: false,
+            sslVerify: "false"
+        )
+        #expect(verifyOff.sslVerify == "false")
+        #expect(verifyOff.clientCert == nil)
+        #expect(verifyOff.clientKey == nil)
+
+        // A server without any TLS keys decodes with nil for all three.
+        let plain = HermesMCPServer(
+            name: "plain", transport: .http, command: nil, args: [],
+            url: "https://mcp.example.com", auth: nil,
+            env: [:], headers: [:], timeout: nil, connectTimeout: nil,
+            enabled: true, toolsInclude: [], toolsExclude: [],
+            resourcesEnabled: true, promptsEnabled: true, hasOAuthToken: false
+        )
+        #expect(plain.clientCert == nil)
+        #expect(plain.clientKey == nil)
+        #expect(plain.sslVerify == nil)
+    }
+
     @Test func mcpServerPresetGalleryReadable() {
         #expect(!MCPServerPreset.gallery.isEmpty)
         #expect(MCPServerPreset.gallery.contains { $0.id == "filesystem" })

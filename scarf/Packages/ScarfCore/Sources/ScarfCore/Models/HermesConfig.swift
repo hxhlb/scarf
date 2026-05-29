@@ -721,6 +721,58 @@ public struct HomeAssistantSettings: Sendable, Equatable {
     public nonisolated static let empty = HomeAssistantSettings(watchDomains: [], watchEntities: [], watchAll: false, ignoreEntities: [], cooldownSeconds: 30)
 }
 
+/// Bitwarden Secrets Manager settings (`secrets.bitwarden.*`, Hermes v0.15).
+/// A single bootstrap token (whose env-var NAME is `accessTokenEnv`; the
+/// token itself lives in `~/.hermes/.env`, never in config) lets Hermes
+/// resolve per-provider API keys from a Bitwarden Secrets Manager project,
+/// replacing per-provider keys in config/.env. Pre-v0.15 hosts ignore the
+/// block; Scarf hides the whole Secrets tab when
+/// `HermesCapabilities.hasBitwarden` is false.
+public struct BitwardenSettings: Sendable, Equatable {
+    public var enabled: Bool
+    /// Name of the env var holding the bootstrap access token (default
+    /// `"BWS_ACCESS_TOKEN"`). The token VALUE lives in `~/.hermes/.env`,
+    /// not in config.yaml.
+    public var accessTokenEnv: String
+    public var projectID: String
+    /// When true, Bitwarden-resolved secrets override existing
+    /// per-provider keys already present in config/.env.
+    public var overrideExisting: Bool
+    /// Empty = US Cloud; `https://vault.bitwarden.eu` = EU; or a
+    /// self-hosted URL.
+    public var serverURL: String
+    public var cacheTTLSeconds: Int
+    public var autoInstall: Bool
+
+
+    public init(
+        enabled: Bool = false,
+        accessTokenEnv: String = "BWS_ACCESS_TOKEN",
+        projectID: String = "",
+        overrideExisting: Bool = false,
+        serverURL: String = "",
+        cacheTTLSeconds: Int = 300,
+        autoInstall: Bool = true
+    ) {
+        self.enabled = enabled
+        self.accessTokenEnv = accessTokenEnv
+        self.projectID = projectID
+        self.overrideExisting = overrideExisting
+        self.serverURL = serverURL
+        self.cacheTTLSeconds = cacheTTLSeconds
+        self.autoInstall = autoInstall
+    }
+    public nonisolated static let empty = BitwardenSettings(
+        enabled: false,
+        accessTokenEnv: "BWS_ACCESS_TOKEN",
+        projectID: "",
+        overrideExisting: false,
+        serverURL: "",
+        cacheTTLSeconds: 300,
+        autoInstall: true
+    )
+}
+
 // MARK: - Root Config
 
 public struct HermesConfig: Sendable {
@@ -855,6 +907,8 @@ public struct HermesConfig: Sendable {
     public var ntfy: NtfySettings
     /// Hermes v0.15 — Signal group-only `require_mention`. See `SignalSettings`.
     public var signal: SignalSettings
+    /// Hermes v0.15 — Bitwarden Secrets Manager bootstrap. See `BitwardenSettings`.
+    public var bitwarden: BitwardenSettings
 
 
     public init(
@@ -924,7 +978,8 @@ public struct HermesConfig: Sendable {
         webToolsSearchBackend: String = "duckduckgo",
         webToolsExtractBackend: String = "reader",
         ntfy: NtfySettings = .empty,
-        signal: SignalSettings = .empty
+        signal: SignalSettings = .empty,
+        bitwarden: BitwardenSettings = .empty
     ) {
         self.cacheTTL = cacheTTL
         self.redactionEnabled = redactionEnabled
@@ -993,6 +1048,7 @@ public struct HermesConfig: Sendable {
         self.homeAssistant = homeAssistant
         self.ntfy = ntfy
         self.signal = signal
+        self.bitwarden = bitwarden
     }
     public nonisolated static let empty = HermesConfig(
         model: "unknown",

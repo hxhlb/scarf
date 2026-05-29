@@ -29,6 +29,13 @@ final class MCPServerEditorViewModel {
     /// false = opt out explicitly. Bound to a tri-state Picker in the
     /// editor under the v0.14 capability gate.
     var parallelToolCallsDraft: Bool?
+    /// v0.15 — mTLS client-certificate config (HTTP / SSE only). Empty string
+    /// means "key absent" (writer drops the scalar). `sslVerifyDraft` holds
+    /// the bool string ("true"/"false") OR a CA-bundle path; an empty draft
+    /// resolves to "use Hermes default (true)".
+    var clientCertDraft: String
+    var clientKeyDraft: String
+    var sslVerifyDraft: String
     var showSecrets: Bool = false
     var isSaving: Bool = false
     var saveError: String?
@@ -47,6 +54,9 @@ final class MCPServerEditorViewModel {
         self.connectTimeoutDraft = server.connectTimeout.map { String($0) } ?? ""
         self.sseReadTimeoutDraft = server.sseReadTimeout.map { String($0) } ?? ""
         self.parallelToolCallsDraft = server.supportsParallelToolCalls
+        self.clientCertDraft = server.clientCert ?? ""
+        self.clientKeyDraft = server.clientKey ?? ""
+        self.sslVerifyDraft = server.sslVerify ?? ""
     }
 
     func appendEnvRow() {
@@ -83,6 +93,18 @@ final class MCPServerEditorViewModel {
         let sseTimeoutValue: Int? = trimmedSSE.isEmpty ? nil : Int(trimmedSSE)
         let parallelDraft = parallelToolCallsDraft
         let originalParallel = server.supportsParallelToolCalls
+        // v0.15 — mTLS drafts. Resolve empty strings to nil so an untouched /
+        // cleared field drops the YAML key. Only HTTP/SSE servers surface the
+        // TLS section, so non-stdio transports gate the writes below.
+        let certValue: String? = clientCertDraft.trimmingCharacters(in: .whitespaces).isEmpty
+            ? nil : clientCertDraft.trimmingCharacters(in: .whitespaces)
+        let keyValue: String? = clientKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty
+            ? nil : clientKeyDraft.trimmingCharacters(in: .whitespaces)
+        let verifyValue: String? = sslVerifyDraft.trimmingCharacters(in: .whitespaces).isEmpty
+            ? nil : sslVerifyDraft.trimmingCharacters(in: .whitespaces)
+        let originalCert = server.clientCert
+        let originalKey = server.clientKey
+        let originalVerify = server.sslVerify
 
         let service = fileService
         let transport = server.transport
@@ -126,6 +148,21 @@ final class MCPServerEditorViewModel {
                 if parallelDraft != originalParallel {
                     if !service.setMCPServerParallelToolCalls(name: name, enabled: parallelDraft) {
                         ok = false
+                    }
+                }
+                // v0.15 — mTLS scalars. Only HTTP/SSE servers expose the TLS
+                // section in the editor; for stdio servers the drafts stay at
+                // their initial (absent) values, so the != checks are no-ops.
+                // Each write is gated on a delta to keep the YAML diff minimal.
+                if transport != .stdio {
+                    if certValue != originalCert {
+                        if !service.setMCPServerClientCert(name: name, path: certValue) { ok = false }
+                    }
+                    if keyValue != originalKey {
+                        if !service.setMCPServerClientKey(name: name, path: keyValue) { ok = false }
+                    }
+                    if verifyValue != originalVerify {
+                        if !service.setMCPServerSSLVerify(name: name, value: verifyValue) { ok = false }
                     }
                 }
                 return ok

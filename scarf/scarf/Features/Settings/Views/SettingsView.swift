@@ -14,9 +14,22 @@ import ScarfDesign
 struct SettingsView: View {
     @State private var viewModel: SettingsViewModel
     @State private var selectedTab: SettingsTab = .general
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
 
     init(context: ServerContext) {
         _viewModel = State(initialValue: SettingsViewModel(context: context))
+    }
+
+    /// Tabs visible for the connected host. The Secrets (Bitwarden) tab is
+    /// release-gated — pre-v0.15 hosts don't see it at all.
+    private var visibleTabs: [SettingsTab] {
+        let hasBitwarden = capabilitiesStore?.capabilities.hasBitwarden ?? false
+        return SettingsTab.allCases.filter { tab in
+            switch tab {
+            case .secrets: return hasBitwarden
+            default: return true
+            }
+        }
     }
 
 
@@ -31,6 +44,7 @@ struct SettingsView: View {
         case memory = "Memory"
         case auxiliary = "Aux Models"
         case security = "Security"
+        case secrets = "Secrets"
         case advanced = "Advanced"
 
         var id: String { rawValue }
@@ -47,6 +61,7 @@ struct SettingsView: View {
             case .memory: return "Memory"
             case .auxiliary: return "Aux Models"
             case .security: return "Security"
+            case .secrets: return "Secrets"
             case .advanced: return "Advanced"
             }
         }
@@ -63,6 +78,7 @@ struct SettingsView: View {
             case .memory: return "memorychip"
             case .auxiliary: return "sparkles.rectangle.stack"
             case .security: return "lock.shield"
+            case .secrets: return "key.horizontal"
             case .advanced: return "slider.horizontal.3"
             }
         }
@@ -124,7 +140,7 @@ struct SettingsView: View {
     private var tabStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: ScarfSpace.s1) {
-                ForEach(SettingsTab.allCases) { tab in
+                ForEach(visibleTabs) { tab in
                     tabButton(tab)
                 }
             }
@@ -179,6 +195,7 @@ struct SettingsView: View {
         case .memory:    MemoryTab(viewModel: viewModel)
         case .auxiliary: AuxiliaryTab(viewModel: viewModel)
         case .security:  SecurityTab(viewModel: viewModel)
+        case .secrets:   SecretsTab(viewModel: viewModel)
         case .advanced:  AdvancedTab(viewModel: viewModel)
         }
     }

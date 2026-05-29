@@ -76,6 +76,21 @@ struct SessionInfoBar: View {
     /// when the caller doesn't wire it.
     var onSwitchModel: ((ModelPreset?) -> Void)? = nil
 
+    /// Live ACP session edit auto-approval mode (Hermes v0.15+
+    /// `session/set_mode`). Drives the per-session approval chip. This
+    /// is distinct from the global `approvals.mode` / YOLO surface
+    /// above — it loosens or tightens how often Hermes prompts for file
+    /// edits within just this session. Defaulted so previews and
+    /// pre-v0.15 hosts render unchanged.
+    var approvalSessionMode: ACPApprovalMode = .default
+
+    /// Tap handler for the approval-mode chip — selecting a mode fires
+    /// this callback (wired to `ChatViewModel.switchApprovalMode`). Nil
+    /// hides the chip entirely, so it stays absent on pre-v0.15 hosts or
+    /// when the caller doesn't wire it (also gated on
+    /// `capabilities.hasSessionEditAutoApproval`).
+    var onSwitchApprovalMode: ((ACPApprovalMode) -> Void)? = nil
+
     /// Active Hermes profile name (issue #50). Resolved on each body
     /// re-evaluation; the resolver caches for 5s so this is cheap.
     /// Chip renders only when not "default" so existing (non-profile)
@@ -182,6 +197,19 @@ struct SessionInfoBar: View {
                     ChatModelBadge(
                         preset: modelPreset,
                         onSwitch: onSwitchModel
+                    )
+                }
+
+                // Per-session edit auto-approval chip (v0.15 / Hermes ACP
+                // `session/set_mode`). Renders only when (a) the host
+                // advertises the per-session mode RPC and (b) there's a
+                // live-session switch handler. Distinct from the global
+                // YOLO chip above — this loosens/tightens approvals just
+                // for this session. Sensitive paths always still prompt.
+                if capabilities.hasSessionEditAutoApproval, let onSwitchApprovalMode {
+                    ChatApprovalModeBadge(
+                        mode: approvalSessionMode,
+                        onSwitch: onSwitchApprovalMode
                     )
                 }
 

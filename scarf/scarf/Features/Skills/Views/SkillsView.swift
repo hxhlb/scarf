@@ -28,6 +28,7 @@ struct SkillsView: View {
 
     enum Tab: String, CaseIterable, Identifiable {
         case installed = "Installed"
+        case bundles = "Bundles"
         case hub = "Browse Hub"
         case updates = "Updates"
         var id: String { rawValue }
@@ -35,10 +36,20 @@ struct SkillsView: View {
         var displayName: LocalizedStringResource {
             switch self {
             case .installed: return "Installed"
+            case .bundles: return "Bundles"
             case .hub: return "Browse Hub"
             case .updates: return "Updates"
             }
         }
+    }
+
+    /// The tabs to render. `.bundles` only appears when the connected
+    /// host advertises Hermes v0.15 skill bundles — pre-v0.15 hosts
+    /// don't have `~/.hermes/skill-bundles/` so the surface would always
+    /// be empty.
+    private var visibleTabs: [Tab] {
+        let hasBundles = capabilitiesStore?.capabilities.hasSkillBundles ?? false
+        return Tab.allCases.filter { $0 != .bundles || hasBundles }
     }
 
     var body: some View {
@@ -86,6 +97,7 @@ struct SkillsView: View {
             Divider()
             switch currentTab {
             case .installed: installedContent
+            case .bundles:   bundlesContent
             case .hub:       hubContent
             case .updates:   updatesContent
             }
@@ -168,7 +180,7 @@ struct SkillsView: View {
     private var modePicker: some View {
         HStack {
             Picker("", selection: $currentTab) {
-                ForEach(Tab.allCases) { tab in
+                ForEach(visibleTabs) { tab in
                     Text(tab.displayName).tag(tab)
                 }
             }
@@ -606,6 +618,84 @@ struct SkillsView: View {
         .background(.quaternary.opacity(0.3))
     }
 
+    // MARK: - Bundles
+
+    /// v0.15 skill-bundles surface. Read-only list of the bundle YAMLs
+    /// found in `~/.hermes/skill-bundles/`. Each card shows the bundle
+    /// name, optional description, the member-skill chip row, and the
+    /// `/<slug>` command that invokes it.
+    private var bundlesContent: some View {
+        Group {
+            if viewModel.bundles.isEmpty {
+                ContentUnavailableView(
+                    "No Skill Bundles",
+                    systemImage: "square.stack.3d.up",
+                    description: Text("Bundles group several skills under one `/<name>` command. Create them with `hermes bundles create`; they live in ~/.hermes/skill-bundles/.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: ScarfSpace.s3) {
+                        ForEach(viewModel.bundles) { bundle in
+                            bundleCard(bundle)
+                        }
+                    }
+                    .padding(ScarfSpace.s4)
+                }
+            }
+        }
+    }
+
+    private func bundleCard(_ bundle: HermesSkillBundle) -> some View {
+        ScarfCard {
+            VStack(alignment: .leading, spacing: ScarfSpace.s2) {
+                HStack(spacing: ScarfSpace.s2) {
+                    Image(systemName: "square.stack.3d.up.fill")
+                        .foregroundStyle(ScarfColor.accent)
+                    Text(bundle.name)
+                        .scarfStyle(.headline)
+                    Spacer(minLength: 0)
+                    ScarfBadge("/\(bundle.slug)", kind: .brand)
+                }
+                if let description = bundle.description, !description.isEmpty {
+                    Text(description)
+                        .scarfStyle(.body)
+                        .foregroundStyle(ScarfColor.foregroundMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !bundle.skills.isEmpty {
+                    VStack(alignment: .leading, spacing: ScarfSpace.s1) {
+                        Text("\(bundle.skills.count) skill\(bundle.skills.count == 1 ? "" : "s")")
+                            .scarfStyle(.captionUppercase)
+                            .foregroundStyle(ScarfColor.foregroundFaint)
+                        BundleChipFlowLayout(spacing: ScarfSpace.s1) {
+                            ForEach(bundle.skills, id: \.self) { skill in
+                                Text(skill)
+                                    .scarfStyle(.caption)
+                                    .foregroundStyle(ScarfColor.foregroundMuted)
+                                    .padding(.horizontal, ScarfSpace.s2)
+                                    .padding(.vertical, 2)
+                                    .background(ScarfColor.backgroundTertiary, in: Capsule())
+                            }
+                        }
+                    }
+                }
+                if let instruction = bundle.instruction, !instruction.isEmpty {
+                    VStack(alignment: .leading, spacing: ScarfSpace.s1) {
+                        Text("Instruction")
+                            .scarfStyle(.captionUppercase)
+                            .foregroundStyle(ScarfColor.foregroundFaint)
+                        Text(instruction)
+                            .scarfStyle(.caption)
+                            .foregroundStyle(ScarfColor.foregroundMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     // MARK: - Updates
 
     private var updatesContent: some View {
@@ -653,6 +743,49 @@ struct SkillsView: View {
                     .padding()
                 }
             }
+        }
+    }
+}
+
+/// Wrapping chip layout for a bundle's member-skill list. Custom layout
+/// keeps the wrap behaviour predictable across window widths without a
+/// fixed-column `LazyVGrid`. Mirrors the `FlowLayout` used by CuratorView
+/// (scoped privately there; copied here to avoid a cross-feature import).
+private struct BundleChipFlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: maxWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

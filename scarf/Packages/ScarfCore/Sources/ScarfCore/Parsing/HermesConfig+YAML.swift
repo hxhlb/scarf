@@ -205,6 +205,20 @@ public extension HermesConfig {
             markdown: bool("platforms.ntfy.extra.markdown", default: false)
         )
 
+        // -- v0.15: Bitwarden Secrets Manager bootstrap (`secrets.bitwarden.*`).
+        // The access token VALUE lives in `~/.hermes/.env` under the env var
+        // named here; only its NAME (+ the routing knobs) round-trips through
+        // config.yaml. Every field is read back so the Secrets tab persists.
+        let bitwarden = BitwardenSettings(
+            enabled: bool("secrets.bitwarden.enabled", default: false),
+            accessTokenEnv: str("secrets.bitwarden.access_token_env", default: "BWS_ACCESS_TOKEN"),
+            projectID: str("secrets.bitwarden.project_id"),
+            overrideExisting: bool("secrets.bitwarden.override_existing", default: false),
+            serverURL: str("secrets.bitwarden.server_url"),
+            cacheTTLSeconds: int("secrets.bitwarden.cache_ttl_seconds", default: 300),
+            autoInstall: bool("secrets.bitwarden.auto_install", default: true)
+        )
+
         // Slack fields live under both `platforms.slack.*` (newer) and `slack.*`
         // (legacy). Prefer the newer path but fall back.
         let slack = SlackSettings(
@@ -382,7 +396,8 @@ public extension HermesConfig {
             webToolsExtractBackend: str("web_tools.extract.backend", default: "reader"),
             // -- v0.15 additions -------------------------------------
             ntfy: ntfy,
-            signal: signal
+            signal: signal,
+            bitwarden: bitwarden
         )
     }
 }

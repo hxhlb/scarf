@@ -42,6 +42,10 @@ struct ChatTranscriptPane: View {
                 modelPreset: chatViewModel.currentModelPreset,
                 onSwitchModel: { preset in
                     chatViewModel.switchModelPreset(preset)
+                },
+                approvalSessionMode: richChat.activeApprovalMode,
+                onSwitchApprovalMode: { mode in
+                    chatViewModel.switchApprovalMode(mode)
                 }
             )
             Divider()

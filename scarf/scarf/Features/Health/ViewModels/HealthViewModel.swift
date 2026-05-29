@@ -70,6 +70,56 @@ final class HealthViewModel {
     var diagnosticsOutput: String = ""
     var isSharingDebug = false
 
+    // MARK: - Supply-chain audit (`hermes audit`, v0.15)
+
+    /// True while `hermes audit` is shelling out so the header button can show
+    /// a spinner. The OSV.dev lookup is a network round-trip — easily a couple
+    /// seconds — so this runs off MainActor and never blocks the UI.
+    var isRunningAudit = false
+    /// Inline result strip for the last audit run. Nil before the first run.
+    /// Mirrors the `--setup-browser` inline-status pattern in `HealthView` —
+    /// success summary or the tail of the advisory list / stderr on failure.
+    var auditMessage: String?
+
+    // MARK: - xAI retired-model migration (`hermes migrate xai`, v0.15)
+
+    /// The configured model+provider, refreshed from `loadConfig()` whenever
+    /// the view loads or a migration completes. Drives the retired-model warning.
+    var configuredModel: String = ""
+    var configuredProvider: String = ""
+    /// True while `hermes migrate xai` is in flight.
+    var isMigratingXAI = false
+    /// Inline result strip for the last migration run.
+    var migrateXAIMessage: String?
+
+    /// May-15 (v0.15) retired xAI model IDs. When the configured model is one
+    /// of these AND the provider is an xAI variant, Health surfaces a warning
+    /// row with a one-tap `hermes migrate xai`. These mirror the keys in
+    /// `ModelCatalogService.modelAliases` (kept local for clarity — the Health
+    /// layer shouldn't reach across into the catalog's alias map).
+    static let retiredXAIModels: Set<String> = [
+        "grok-4-0709",
+        "grok-4-fast-reasoning",
+        "grok-4-fast-non-reasoning",
+        "grok-4-1-fast-reasoning",
+        "grok-4-1-fast-non-reasoning",
+        "grok-code-fast-1",
+        "grok-3",
+        "grok-imagine-image-pro",
+    ]
+
+    /// True when the configured model is a retired xAI model under an xAI
+    /// provider. The view gates the warning on this AND `hasXAIModelRetirement`.
+    var configuredModelIsRetiredXAI: Bool {
+        let providerIsXAI = configuredProvider == "xai" || configuredProvider == "xai-oauth"
+        guard providerIsXAI else { return false }
+        // Tolerate a `provider/model` form just in case the config stored it
+        // fully qualified — compare on the trailing path component too.
+        let bareModel = configuredModel.split(separator: "/").last.map(String.init) ?? configuredModel
+        return Self.retiredXAIModels.contains(configuredModel)
+            || Self.retiredXAIModels.contains(bareModel)
+    }
+
     /// Liveness + control state for `hermes dashboard` (local web UI). The
     /// section in `HealthView` is hidden for remote contexts — the dashboard
     /// binds 127.0.0.1 by default and remote probing / tunneling is out of
@@ -118,6 +168,8 @@ final class HealthViewModel {
                 self.hasUpdate = hasUpdate
                 self.statusSections = statusSections
                 self.doctorSections = doctorSections
+                self.configuredModel = config.model
+                self.configuredProvider = config.provider
                 self.computeCounts()
                 self.isLoading = false
             }
@@ -471,6 +523,58 @@ final class HealthViewModel {
                 self.actionMessage = result.exitCode == 0 ? "Upload complete" : "Upload failed"
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
                     self?.actionMessage = nil
+                }
+            }
+        }
+    }
+
+    /// Run `hermes audit` (v0.15 OSV.dev supply-chain scan) off MainActor.
+    /// Non-destructive read-only verb. On success we surface a one-line summary;
+    /// on failure we surface the tail of the advisory list / stderr so the user
+    /// can see which packages tripped the scan without leaving the view.
+    func runAudit() {
+        guard !isRunningAudit else { return }
+        isRunningAudit = true
+        auditMessage = "Running supply-chain audit…"
+        Task.detached { [fileService] in
+            let result = fileService.runHermesCLI(args: ["audit"], timeout: 180)
+            await MainActor.run {
+                self.isRunningAudit = false
+                let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if result.exitCode == 0 {
+                    // Prefer a concise tail of the output (the summary line)
+                    // over the full report — the panel-less inline strip is short.
+                    let tail = trimmed.split(separator: "\n").suffix(2).joined(separator: " · ")
+                    self.auditMessage = tail.isEmpty ? "No known advisories found." : tail
+                } else {
+                    let tail = trimmed.split(separator: "\n").suffix(4).joined(separator: " · ")
+                    self.auditMessage = "Audit failed (exit \(result.exitCode)). \(tail)"
+                }
+            }
+        }
+    }
+
+    /// Run `hermes migrate xai` (v0.15) off MainActor to move a retired xAI
+    /// model selection onto its successor. After completion we re-read config
+    /// via `loadConfig()` so the retired-model warning clears when the model
+    /// flips. Non-destructive; errors surface inline.
+    func migrateXAI() {
+        guard !isMigratingXAI else { return }
+        isMigratingXAI = true
+        migrateXAIMessage = "Migrating xAI model…"
+        Task.detached { [fileService] in
+            let result = fileService.runHermesCLI(args: ["migrate", "xai"], timeout: 120)
+            let config = fileService.loadConfig()
+            await MainActor.run {
+                self.isMigratingXAI = false
+                self.configuredModel = config.model
+                self.configuredProvider = config.provider
+                let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if result.exitCode == 0 {
+                    self.migrateXAIMessage = "Migrated to \(config.model). You may need to restart the gateway."
+                } else {
+                    let tail = trimmed.split(separator: "\n").suffix(3).joined(separator: " · ")
+                    self.migrateXAIMessage = "Migration failed (exit \(result.exitCode)). \(tail)"
                 }
             }
         }

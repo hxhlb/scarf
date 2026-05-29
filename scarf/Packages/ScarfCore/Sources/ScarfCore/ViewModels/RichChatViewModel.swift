@@ -695,6 +695,15 @@ public final class RichChatViewModel {
     /// the goal pill in `SessionInfoBar`.
     public private(set) var activeSubgoals: [String] = []
 
+    /// Per-session edit auto-approval mode (Hermes v0.15+ ACP
+    /// `session/set_mode`). Optimistic mirror — the chat-header picker
+    /// flips this immediately on tap and `ChatViewModel.switchApprovalMode`
+    /// reverts it if the RPC fails. Defaults to `.default` (ask before
+    /// edits); reset on every session boundary so a resumed/new session
+    /// doesn't inherit a stale mode. Hermes owns the authoritative value
+    /// server-side.
+    public var activeApprovalMode: ACPApprovalMode = .default
+
     /// Parse the argument slug from a `/subgoal …` invocation. Pure
     /// function — exposed for unit tests. The chat dispatch uses the
     /// result to apply the right optimistic mutation before the prompt
@@ -1121,6 +1130,10 @@ public final class RichChatViewModel {
         activeGoal = nil
         queuedPrompts = []
         activeSubgoals = []
+        // v0.15 — the per-session edit auto-approval mode is session-
+        // scoped; a fresh chat starts back at the default "ask before
+        // edits" posture rather than carrying the previous session's mode.
+        activeApprovalMode = .default
         loadQuickCommands()
     }
 

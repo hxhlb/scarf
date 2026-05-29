@@ -50,6 +50,20 @@ public struct HermesMCPServer: Identifiable, Sendable, Equatable {
     /// surfaces in MCPServerEditorView as an optional toggle when
     /// `HermesCapabilities.hasMCPParallelToolCalls` is on.
     public let supportsParallelToolCalls: Bool?
+    /// Hermes v0.15+ — mTLS / TLS client-certificate config for HTTP + SSE
+    /// transports. `clientCert` is the path to a combined-PEM file (Hermes
+    /// also accepts `[cert, key]` / `[cert, key, password]` list forms on
+    /// disk; Scarf reads/writes only the common string-path form, taking the
+    /// first element if a list is present). `nil` means the key is absent.
+    public let clientCert: String?
+    /// Hermes v0.15+ — path to a private-key file paired with a string
+    /// `clientCert`. `nil` when absent.
+    public let clientKey: String?
+    /// Hermes v0.15+ — TLS peer verification. Held as `String?` so it can
+    /// represent the bool form (`"true"` / `"false"`) OR a CA-bundle file
+    /// path. `nil` = key absent = Hermes default (`true`). Surfaced in
+    /// MCPServerEditorView when `HermesCapabilities.hasMCPClientCerts` is on.
+    public let sslVerify: String?
 
 
     public init(
@@ -70,7 +84,10 @@ public struct HermesMCPServer: Identifiable, Sendable, Equatable {
         promptsEnabled: Bool,
         hasOAuthToken: Bool,
         sseReadTimeout: Int? = nil,
-        supportsParallelToolCalls: Bool? = nil
+        supportsParallelToolCalls: Bool? = nil,
+        clientCert: String? = nil,
+        clientKey: String? = nil,
+        sslVerify: String? = nil
     ) {
         self.name = name
         self.transport = transport
@@ -90,6 +107,9 @@ public struct HermesMCPServer: Identifiable, Sendable, Equatable {
         self.hasOAuthToken = hasOAuthToken
         self.sseReadTimeout = sseReadTimeout
         self.supportsParallelToolCalls = supportsParallelToolCalls
+        self.clientCert = clientCert
+        self.clientKey = clientKey
+        self.sslVerify = sslVerify
     }
     public var id: String { name }
 

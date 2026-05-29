@@ -522,6 +522,26 @@ import Foundation
         )
     }
 
+    @Test func approvalModeRawValuesMatchHermesWireIDs() {
+        // Wire IDs verified against Hermes v2026.5.28 ACP `modes`.
+        #expect(ACPApprovalMode.default.rawValue == "default")
+        #expect(ACPApprovalMode.acceptEdits.rawValue == "accept_edits")
+        #expect(ACPApprovalMode.dontAsk.rawValue == "dont_ask")
+        // Round-trip from the wire ID back into the enum.
+        #expect(ACPApprovalMode(rawValue: "default") == .default)
+        #expect(ACPApprovalMode(rawValue: "accept_edits") == .acceptEdits)
+        #expect(ACPApprovalMode(rawValue: "dont_ask") == .dontAsk)
+        // All three modes are enumerable for the header picker.
+        #expect(ACPApprovalMode.allCases.count == 3)
+    }
+
+    @Test func approvalModeDisplayAndSummaryAreNonEmpty() {
+        for mode in ACPApprovalMode.allCases {
+            #expect(!mode.displayName.isEmpty)
+            #expect(!mode.summary.isEmpty)
+        }
+    }
+
     @Test func errorHintsClassifyCommonFailures() {
         let noCreds = ACPErrorHint.classify(
             errorMessage: "No Anthropic credentials found",

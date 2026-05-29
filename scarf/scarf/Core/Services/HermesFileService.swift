@@ -238,6 +238,21 @@ struct HermesFileService: Sendable {
             markdown: bool("platforms.ntfy.extra.markdown", default: false)
         )
 
+        // v0.15: Bitwarden Secrets Manager bootstrap (`secrets.bitwarden.*`).
+        // CRITICAL round-trip: read EVERY field back here (mirrors the
+        // ScarfCore parser) so the Secrets tab toggles/fields persist. The
+        // access-token VALUE lives in `~/.hermes/.env`; config only carries
+        // the env-var NAME + routing knobs.
+        let bitwarden = BitwardenSettings(
+            enabled: bool("secrets.bitwarden.enabled", default: false),
+            accessTokenEnv: str("secrets.bitwarden.access_token_env", default: "BWS_ACCESS_TOKEN"),
+            projectID: str("secrets.bitwarden.project_id"),
+            overrideExisting: bool("secrets.bitwarden.override_existing", default: false),
+            serverURL: str("secrets.bitwarden.server_url"),
+            cacheTTLSeconds: int("secrets.bitwarden.cache_ttl_seconds", default: 300),
+            autoInstall: bool("secrets.bitwarden.auto_install", default: true)
+        )
+
         // Slack fields live under both `platforms.slack.*` (newer) and `slack.*`
         // (legacy) in config.yaml. Prefer the newer path but fall back.
         let slack = SlackSettings(
@@ -385,7 +400,8 @@ struct HermesFileService: Sendable {
             runtimeMetadataFooter: bool("agent.runtime_metadata_footer", default: false),
             gatewayPlatforms: gatewayPlatforms,
             ntfy: ntfy,
-            signal: signal
+            signal: signal,
+            bitwarden: bitwarden
         )
     }
 
@@ -673,7 +689,10 @@ struct HermesFileService: Sendable {
                 promptsEnabled: server.promptsEnabled,
                 hasOAuthToken: hasToken,
                 sseReadTimeout: server.sseReadTimeout,
-                supportsParallelToolCalls: server.supportsParallelToolCalls
+                supportsParallelToolCalls: server.supportsParallelToolCalls,
+                clientCert: server.clientCert,
+                clientKey: server.clientKey,
+                sslVerify: server.sslVerify
             )
         }
     }
@@ -752,6 +771,60 @@ struct HermesFileService: Sendable {
                 )
             } else {
                 Self.removeScalar(key: "supports_parallel_tool_calls", in: &entryLines)
+            }
+        }
+    }
+
+    /// Updates the v0.15 `client_cert` scalar on an MCP server entry — the
+    /// path to a combined-PEM file used for mTLS on HTTP / SSE transports.
+    /// Pass `nil` or an empty string to drop the key. Caller is responsible
+    /// for capability-gating — `HermesCapabilities.hasMCPClientCerts`.
+    @discardableResult
+    nonisolated func setMCPServerClientCert(name: String, path: String?) -> Bool {
+        patchMCPServerField(name: name) { entryLines in
+            if let path, !path.trimmingCharacters(in: .whitespaces).isEmpty {
+                Self.replaceOrInsertScalar(
+                    key: "client_cert",
+                    value: path.trimmingCharacters(in: .whitespaces),
+                    in: &entryLines
+                )
+            } else {
+                Self.removeScalar(key: "client_cert", in: &entryLines)
+            }
+        }
+    }
+
+    /// Updates the v0.15 `client_key` scalar — the private-key file path that
+    /// pairs with a string `client_cert`. Pass `nil`/empty to drop the key.
+    @discardableResult
+    nonisolated func setMCPServerClientKey(name: String, path: String?) -> Bool {
+        patchMCPServerField(name: name) { entryLines in
+            if let path, !path.trimmingCharacters(in: .whitespaces).isEmpty {
+                Self.replaceOrInsertScalar(
+                    key: "client_key",
+                    value: path.trimmingCharacters(in: .whitespaces),
+                    in: &entryLines
+                )
+            } else {
+                Self.removeScalar(key: "client_key", in: &entryLines)
+            }
+        }
+    }
+
+    /// Updates the v0.15 `ssl_verify` scalar — either a bool string
+    /// (`"true"` / `"false"`) or a CA-bundle file path. Pass `nil`/empty to
+    /// drop the key (Hermes default `true` applies).
+    @discardableResult
+    nonisolated func setMCPServerSSLVerify(name: String, value: String?) -> Bool {
+        patchMCPServerField(name: name) { entryLines in
+            if let value, !value.trimmingCharacters(in: .whitespaces).isEmpty {
+                Self.replaceOrInsertScalar(
+                    key: "ssl_verify",
+                    value: value.trimmingCharacters(in: .whitespaces),
+                    in: &entryLines
+                )
+            } else {
+                Self.removeScalar(key: "ssl_verify", in: &entryLines)
             }
         }
     }
@@ -964,6 +1037,15 @@ struct HermesFileService: Sendable {
                 if s == "false" { return false }
                 return nil
             }()
+            // v0.15 — mTLS client-certificate config. `client_cert` is normally
+            // a scalar PEM-path string but Hermes also accepts an inline list
+            // form `[cert, key, password]`; tolerate it by taking the first
+            // element. `client_key` is always a scalar path. `ssl_verify` is a
+            // bool-or-CA-path string kept verbatim (nil = key absent = default
+            // true).
+            let clientCert = fields["client_cert"].map { Self.firstListElementOrScalar($0) }
+            let clientKey = fields["client_key"].map { Self.unquote($0) }
+            let sslVerify = fields["ssl_verify"].map { Self.unquote($0) }
             let server = HermesMCPServer(
                 name: name,
                 transport: transport,
@@ -982,7 +1064,10 @@ struct HermesFileService: Sendable {
                 promptsEnabled: prompts,
                 hasOAuthToken: false,
                 sseReadTimeout: sseReadTimeout,
-                supportsParallelToolCalls: parallel
+                supportsParallelToolCalls: parallel,
+                clientCert: clientCert,
+                clientKey: clientKey,
+                sslVerify: sslVerify
             )
             servers.append(server)
 
@@ -1366,6 +1451,19 @@ struct HermesFileService: Sendable {
             v = String(v.dropFirst().dropLast())
         }
         return v
+    }
+
+    /// Normalizes an `client_cert`-style value that may be either a scalar
+    /// path or an inline YAML list (`[cert, key, password]`). For a list,
+    /// returns the first element (the cert path); for a scalar, returns it
+    /// unquoted. Tolerant of whitespace and quoting on the list element.
+    nonisolated private static func firstListElementOrScalar(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("[") else { return unquote(trimmed) }
+        let inner = trimmed.dropFirst().drop(while: { $0 == " " })
+        let body = inner.hasSuffix("]") ? inner.dropLast() : Substring(inner)
+        let firstRaw = body.split(separator: ",", maxSplits: 1).first.map(String.init) ?? ""
+        return unquote(firstRaw.trimmingCharacters(in: .whitespaces))
     }
 
     // MARK: - Hermes Process

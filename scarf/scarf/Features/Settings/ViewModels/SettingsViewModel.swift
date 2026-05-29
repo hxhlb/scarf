@@ -284,6 +284,24 @@ final class SettingsViewModel {
     func setHumanDelayMinMS(_ value: Int) { setSetting("human_delay.min_ms", value: String(value)) }
     func setHumanDelayMaxMS(_ value: Int) { setSetting("human_delay.max_ms", value: String(value)) }
 
+    // MARK: - Secrets (Bitwarden Secrets Manager, v0.15)
+
+    func setBitwardenEnabled(_ value: Bool) { setSetting("secrets.bitwarden.enabled", value: value ? "true" : "false") }
+    func setBitwardenAccessTokenEnv(_ value: String) { setSetting("secrets.bitwarden.access_token_env", value: value) }
+    func setBitwardenProjectID(_ value: String) { setSetting("secrets.bitwarden.project_id", value: value) }
+    func setBitwardenOverrideExisting(_ value: Bool) { setSetting("secrets.bitwarden.override_existing", value: value ? "true" : "false") }
+    func setBitwardenServerURL(_ value: String) { setSetting("secrets.bitwarden.server_url", value: value) }
+    func setBitwardenCacheTTLSeconds(_ value: Int) { setSetting("secrets.bitwarden.cache_ttl_seconds", value: String(value)) }
+    func setBitwardenAutoInstall(_ value: Bool) { setSetting("secrets.bitwarden.auto_install", value: value ? "true" : "false") }
+
+    /// Read-only status panel via `hermes secrets bitwarden status`. Mirrors
+    /// how `runConfigCheck` shells a read; returns the captured text output
+    /// (a Rich panel). Empty on non-zero exit.
+    func bitwardenStatus() -> String {
+        let result = runHermes(["secrets", "bitwarden", "status"])
+        return result.output
+    }
+
     // MARK: - Performance / Advanced
 
     func setForceIPv4(_ value: Bool) { setSetting("network.force_ipv4", value: value ? "true" : "false") }

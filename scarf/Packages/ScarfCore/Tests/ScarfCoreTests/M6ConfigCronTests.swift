@@ -115,6 +115,43 @@ import Foundation
         #expect(c.openrouterResponseCacheEnabled == true)
     }
 
+    @Test func parsesBitwardenSecretsBlock() {
+        // WS-F (v0.15): round-trip the `secrets.bitwarden.*` block. Pins
+        // the parser line + setter key shapes to a single source of truth.
+        let yaml = """
+        secrets:
+          bitwarden:
+            enabled: true
+            access_token_env: MY_BWS_TOKEN
+            project_id: proj-123
+            override_existing: true
+            server_url: https://vault.bitwarden.eu
+            cache_ttl_seconds: 600
+            auto_install: false
+        """
+        let c = HermesConfig(yaml: yaml)
+        #expect(c.bitwarden.enabled == true)
+        #expect(c.bitwarden.accessTokenEnv == "MY_BWS_TOKEN")
+        #expect(c.bitwarden.projectID == "proj-123")
+        #expect(c.bitwarden.overrideExisting == true)
+        #expect(c.bitwarden.serverURL == "https://vault.bitwarden.eu")
+        #expect(c.bitwarden.cacheTTLSeconds == 600)
+        #expect(c.bitwarden.autoInstall == false)
+    }
+
+    @Test func bitwardenAbsentYieldsDefaults() {
+        // An absent block must produce the v0.15 server-side defaults so a
+        // pre-v0.15 host looks identical to a freshly-installed one.
+        let c = HermesConfig(yaml: "")
+        #expect(c.bitwarden.enabled == false)
+        #expect(c.bitwarden.accessTokenEnv == "BWS_ACCESS_TOKEN")
+        #expect(c.bitwarden.projectID == "")
+        #expect(c.bitwarden.overrideExisting == false)
+        #expect(c.bitwarden.serverURL == "")
+        #expect(c.bitwarden.cacheTTLSeconds == 300)
+        #expect(c.bitwarden.autoInstall == true)
+    }
+
     @Test func parsesTopLevelModel() {
         let yaml = """
         model:

@@ -72,6 +72,11 @@ public struct HermesPathSet: Sendable, Hashable {
     public nonisolated var cronOutputDir: String { home + "/cron/output" }
     public nonisolated var gatewayStateJSON: String { home + "/gateway_state.json" }
     public nonisolated var skillsDir: String { home + "/skills" }
+    /// Hermes v0.15 skill-bundle definitions. Each `*.yaml` file in here
+    /// is a named group of skills loaded together by one `/<name>` slash
+    /// command. Read-only from Scarf's side (v1); Hermes owns the write
+    /// path via `hermes bundles create/delete`.
+    public nonisolated var skillBundlesDir: String { home + "/skill-bundles" }
     public nonisolated var errorsLog: String { home + "/logs/errors.log" }
     public nonisolated var agentLog: String { home + "/logs/agent.log" }
     public nonisolated var gatewayLog: String { home + "/logs/gateway.log" }

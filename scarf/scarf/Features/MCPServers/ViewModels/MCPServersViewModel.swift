@@ -24,6 +24,12 @@ final class MCPServersViewModel {
     var testingNames: Set<String> = []
     var activeError: String?
     var editingServer: HermesMCPServer?
+    /// v0.15 — `hermes mcp catalog` discovery sheet. `showCatalog` drives the
+    /// sheet; `catalogText` holds the raw CLI text output (no `--json`);
+    /// `isLoadingCatalog` gates a spinner while the CLI runs.
+    var showCatalog = false
+    var catalogText = ""
+    var isLoadingCatalog = false
 
     var filteredServers: [HermesMCPServer] {
         guard !searchText.isEmpty else { return servers }
@@ -243,6 +249,27 @@ final class MCPServersViewModel {
                 } else {
                     self.activeError = "Add failed: \(result.output)"
                 }
+            }
+        }
+    }
+
+    /// v0.15 — runs `hermes mcp catalog` (text output, no `--json`) off the
+    /// MainActor and shows the raw result in a read-only sheet. Caller is
+    /// responsible for capability-gating (`HermesCapabilities.hasMCPCatalog`);
+    /// pre-v0.15 hosts reject the subcommand at argparse time.
+    func browseCatalog() {
+        showCatalog = true
+        isLoadingCatalog = true
+        catalogText = ""
+        let fileService = self.fileService
+        Task.detached {
+            let result = fileService.runHermesCLI(args: ["mcp", "catalog"], timeout: 45)
+            let text = result.output.isEmpty
+                ? "No catalog output. Requires Hermes v0.15+ — check that `hermes mcp catalog` runs on this host."
+                : result.output
+            await MainActor.run {
+                self.catalogText = text
+                self.isLoadingCatalog = false
             }
         }
     }

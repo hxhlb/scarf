@@ -25,6 +25,12 @@ public final class SkillsViewModel {
     // MARK: - Installed skills
 
     public var categories: [HermesSkillCategory] = []
+    /// Hermes v0.15 skill bundles read from `~/.hermes/skill-bundles/`.
+    /// Populated alongside the installed-skill scan in `load()`. Empty on
+    /// pre-v0.15 hosts (the directory simply doesn't exist) — the Bundles
+    /// tab in `SkillsView` is capability-gated so the empty state never
+    /// shows on hosts that can't have bundles.
+    public var bundles: [HermesSkillBundle] = []
     public var selectedSkill: HermesSkill?
     public var skillContent = ""
     public var selectedFileName: String?
@@ -112,6 +118,13 @@ public final class SkillsViewModel {
         let totalSkills = cats.reduce(0) { $0 + $1.skills.count }
         ScarfMon.event(.diskIO, "skills.load.count", count: totalSkills)
         categories = cats
+        // v0.15 skill bundles. Enumerated through the same transport so
+        // remote contexts work; empty on pre-v0.15 hosts where the dir
+        // doesn't exist.
+        let loadedBundles: [HermesSkillBundle] = await Task.detached {
+            SkillBundlesScanner.scan(context: ctx, transport: xport)
+        }.value
+        bundles = loadedBundles
         isLoading = false
     }
 

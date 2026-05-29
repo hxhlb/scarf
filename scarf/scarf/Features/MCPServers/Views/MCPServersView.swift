@@ -4,6 +4,7 @@ import ScarfDesign
 
 struct MCPServersView: View {
     @State private var viewModel: MCPServersViewModel
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
 
     init(context: ServerContext) {
         _viewModel = State(initialValue: MCPServersViewModel(context: context))
@@ -43,6 +44,13 @@ struct MCPServersView: View {
         }
         .sheet(isPresented: $viewModel.showAddCustom) {
             MCPServerAddCustomView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $viewModel.showCatalog) {
+            MCPCatalogSheet(
+                text: viewModel.catalogText,
+                isLoading: viewModel.isLoadingCatalog,
+                onClose: { viewModel.showCatalog = false }
+            )
         }
         .sheet(isPresented: Binding(
             get: { viewModel.editingServer != nil },
@@ -85,6 +93,15 @@ struct MCPServersView: View {
                 }
                 .buttonStyle(ScarfGhostButton())
                 .disabled(viewModel.servers.isEmpty)
+
+                if capabilitiesStore?.capabilities.hasMCPCatalog == true {
+                    Button {
+                        viewModel.browseCatalog()
+                    } label: {
+                        Label("Browse catalog", systemImage: "books.vertical")
+                    }
+                    .buttonStyle(ScarfGhostButton())
+                }
 
                 Button {
                     viewModel.showPresetPicker = true
@@ -214,5 +231,55 @@ struct MCPServersView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+}
+
+/// v0.15 — read-only sheet that renders the raw `hermes mcp catalog` text
+/// output (the CLI has no `--json`). Discovery only: no parsing into rows,
+/// no install action.
+private struct MCPCatalogSheet: View {
+    let text: String
+    let isLoading: Bool
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MCP Catalog")
+                        .scarfStyle(.headline)
+                    Text("Nous-approved MCP servers — `hermes mcp catalog`")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { onClose() }
+                    .buttonStyle(ScarfPrimaryButton())
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding()
+            Divider()
+
+            if isLoading {
+                VStack {
+                    ProgressView()
+                    Text("Loading catalog…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, ScarfSpace.s2)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    Text(text)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+            }
+        }
+        .frame(minWidth: 620, minHeight: 480)
+        .background(ScarfColor.backgroundPrimary)
     }
 }

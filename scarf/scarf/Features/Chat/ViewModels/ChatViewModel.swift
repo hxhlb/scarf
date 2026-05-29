@@ -820,6 +820,39 @@ final class ChatViewModel {
         }
     }
 
+    /// Switch the per-session edit auto-approval mode on the live ACP
+    /// session via `session/set_mode` (Hermes v0.15+). Mirrors
+    /// `switchModelPreset` — optimistic update flips the header chip
+    /// immediately and only reverts on RPC failure (no UI bounce).
+    ///
+    /// Non-fatal: any failure logs + restores the previous mode and
+    /// surfaces an inline `acpError`. The caller (the header picker) is
+    /// already capability-gated on `hasSessionEditAutoApproval`, so this
+    /// is only reachable on v0.15+ hosts.
+    func switchApprovalMode(_ mode: ACPApprovalMode) {
+        guard let client = acpClient,
+              let sessionId = richChatViewModel.sessionId
+        else { return }
+        let previous = richChatViewModel.activeApprovalMode
+        guard previous != mode else { return }
+        // Optimistic update — chip flips immediately.
+        richChatViewModel.activeApprovalMode = mode
+
+        Task { @MainActor [weak self] in
+            do {
+                try await client.setSessionMode(
+                    sessionId: sessionId,
+                    modeId: mode.rawValue
+                )
+                self?.logger.info("session edit auto-approval mode switched to \(mode.rawValue)")
+            } catch {
+                self?.logger.warning("session/set_mode failed: \(error.localizedDescription)")
+                self?.richChatViewModel.activeApprovalMode = previous
+                self?.acpError = "Couldn't change edit approval mode: \(error.localizedDescription)"
+            }
+        }
+    }
+
     /// Apply the project's bound model preset to a live ACP session.
     /// Resolves the binding from `<project>/.scarf/manifest.json` →
     /// looks up the preset by UUID in `~/.hermes/scarf/model_presets.json`

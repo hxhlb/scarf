@@ -49,6 +49,23 @@ struct HealthView: View {
                     .disabled(isSettingUpBrowser)
                     .help("Runs `hermes acp --setup-browser` to install Chromium and provision Playwright.")
                 }
+                if capabilitiesStore?.capabilities.hasHermesAudit == true {
+                    Button {
+                        viewModel.runAudit()
+                    } label: {
+                        if viewModel.isRunningAudit {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Auditing…")
+                            }
+                        } else {
+                            Text("Run supply-chain audit")
+                        }
+                    }
+                    .buttonStyle(ScarfGhostButton())
+                    .disabled(viewModel.isRunningAudit)
+                    .help("Runs `hermes audit` to check installed packages against the OSV.dev advisory database.")
+                }
                 Button("Run Dump") {
                     viewModel.runDump()
                     showDiagnostics = true
@@ -69,6 +86,19 @@ struct HealthView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, ScarfSpace.s6)
                     .padding(.bottom, ScarfSpace.s2)
+            }
+            if let msg = viewModel.auditMessage {
+                Text(msg)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(ScarfColor.foregroundMuted)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, ScarfSpace.s6)
+                    .padding(.bottom, ScarfSpace.s2)
+            }
+            if capabilitiesStore?.capabilities.hasXAIModelRetirement == true
+                && viewModel.configuredModelIsRetiredXAI {
+                xaiRetirementBanner
             }
             if showDiagnostics && !viewModel.diagnosticsOutput.isEmpty {
                 Divider()
@@ -130,6 +160,62 @@ struct HealthView: View {
                 }
             }
         }
+    }
+
+    /// v0.15 — surfaced when the configured model is one of the May-15-retired
+    /// xAI models. Offers a one-tap `hermes migrate xai`. Inline result strip
+    /// mirrors the browser-setup pattern — no modal alert.
+    private var xaiRetirementBanner: some View {
+        VStack(alignment: .leading, spacing: ScarfSpace.s2) {
+            HStack(alignment: .top, spacing: ScarfSpace.s2) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(ScarfColor.warning)
+                    .font(.system(size: 13))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Retired xAI model in use")
+                        .scarfStyle(.captionStrong)
+                        .foregroundStyle(ScarfColor.foregroundPrimary)
+                    Text("\(viewModel.configuredModel) was retired on May 15. Migrate to its successor to keep this provider working.")
+                        .scarfStyle(.caption)
+                        .foregroundStyle(ScarfColor.foregroundMuted)
+                }
+                Spacer()
+                Button {
+                    viewModel.migrateXAI()
+                } label: {
+                    if viewModel.isMigratingXAI {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Migrating…")
+                        }
+                    } else {
+                        Text("Migrate")
+                    }
+                }
+                .buttonStyle(ScarfPrimaryButton())
+                .disabled(viewModel.isMigratingXAI)
+                .help("Runs `hermes migrate xai` to move your selection onto the supported successor model.")
+            }
+            if let msg = viewModel.migrateXAIMessage {
+                Text(msg)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(ScarfColor.foregroundMuted)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(ScarfSpace.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ScarfRadius.md, style: .continuous)
+                .fill(ScarfColor.warning.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: ScarfRadius.md, style: .continuous)
+                .strokeBorder(ScarfColor.warning.opacity(0.4), lineWidth: 1)
+        )
+        .padding(.horizontal, ScarfSpace.s6)
+        .padding(.bottom, ScarfSpace.s2)
     }
 
     private var diagnosticsPanel: some View {

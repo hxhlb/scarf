@@ -1,3 +1,9 @@
+---
+title: README
+type: note
+permalink: scarf-design/static-site/ui-kit/readme
+---
+
 # Scarf macOS UI Kit
 
 A high-fidelity React recreation of the Scarf macOS app, built against the codebase at `awizemann/scarf` (SwiftUI). It mirrors the real navigation hierarchy from `SidebarView.swift` and the visual rhythm of the actual SwiftUI views (`Dashboard`, `RichChat`, `Sessions`, `Projects`, `Insights`, etc.).

@@ -1,3 +1,9 @@
+---
+title: README
+type: note
+permalink: scarf-design/static-site/readme
+---
+
 # Scarf Design System — static site
 
 A self-contained, offline-friendly site that browses every artifact in the

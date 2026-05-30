@@ -75,13 +75,58 @@ struct SkillBootstrapService: Sendable {
 
     // MARK: - Per-skill install
 
+    /// Hermes treats `~/.hermes/skills/<dir>/` as either a category folder
+    /// containing skill subdirectories OR a skill itself; Scarf's
+    /// `SkillsScanner` only recognizes the two-level layout
+    /// (`<category>/<skill>/SKILL.md`). v2.7.0 of this service installed
+    /// bundled skills FLAT (`~/.hermes/skills/<skill>/SKILL.md`), which
+    /// Hermes accepts (so the agent still loaded them) but Scarf's
+    /// Skills view ignored — leaving users wondering why
+    /// `scarf-template-author` was missing from the GUI. v2.10.1 fixes
+    /// the layout by installing under a `scarf/` category folder
+    /// (`~/.hermes/skills/scarf/<skill>/SKILL.md`) and migrating any
+    /// flat install in place. The migration is one-way; once the user
+    /// is on the new layout, the flat path is never re-created.
+    private static let bundledSkillCategory = "scarf"
+
     private nonisolated func installSkill(
         from sourceDir: URL,
         named skillName: String,
         transport: any ServerTransport
     ) throws {
-        let destDir = context.paths.skillsDir + "/" + skillName
+        // Migration: if a prior Scarf version installed this skill at
+        // the flat top-level path, remove it before writing the new
+        // categorized copy. Safe because the flat path was always
+        // a Scarf-owned bootstrap target — never a user-authored
+        // skill — so we're not stomping on user edits.
+        let flatDir = context.paths.skillsDir + "/" + skillName
+        let flatSkillMd = flatDir + "/SKILL.md"
+        let categorizedRoot = context.paths.skillsDir + "/" + Self.bundledSkillCategory
+        let destDir = categorizedRoot + "/" + skillName
         let destSkillMd = destDir + "/SKILL.md"
+
+        if transport.fileExists(flatSkillMd) && flatDir != destDir {
+            do {
+                try transport.removeFile(flatSkillMd)
+                // Best-effort cleanup of companion files + the now-empty
+                // directory. Failures here are non-fatal — leaving a
+                // stale dir is benign (SkillsScanner ignores it because
+                // it has no SKILL.md inside any subdirectory).
+                if let companions = try? transport.listDirectory(flatDir) {
+                    for entry in companions where entry != "SKILL.md" {
+                        try? transport.removeFile(flatDir + "/" + entry)
+                    }
+                }
+                try? transport.removeFile(flatDir)
+                Self.logger.info(
+                    "migrated flat skill install \(skillName, privacy: .public) → \(Self.bundledSkillCategory)/ category"
+                )
+            } catch {
+                Self.logger.warning(
+                    "couldn't remove flat skill install for \(skillName, privacy: .public): \(error.localizedDescription, privacy: .public); install will continue but Skills view may show duplicates until the flat copy is removed manually"
+                )
+            }
+        }
 
         let bundledSkillMd = sourceDir.appendingPathComponent("SKILL.md")
         let bundledData = try Data(contentsOf: bundledSkillMd)
@@ -104,6 +149,7 @@ struct SkillBootstrapService: Sendable {
             return
         }
 
+        try transport.createDirectory(categorizedRoot)
         try transport.createDirectory(destDir)
         try transport.writeFile(destSkillMd, data: bundledData)
 

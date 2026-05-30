@@ -113,6 +113,26 @@ final class NewProjectViewModel {
                     ? nil
                     : description.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+            // P3 of the projects-feature fix: bootstrap the bundled
+            // `scarf-template-author` skill IMMEDIATELY before the
+            // wizard hands off to chat. The launch-time bootstrap is a
+            // detached task that may not have completed (cold launch,
+            // remote context with a slow transport) or may have failed
+            // silently. Running it here makes the wizard self-contained
+            // — if the skill is already installed and current, this is
+            // a no-op; otherwise it copies the bundled copy to
+            // `~/.hermes/skills/scarf-template-author/` so Hermes loads
+            // it on `session/new`. Non-fatal: a failed bootstrap just
+            // means the agent might not recognize the skill, which the
+            // user can recover from by typing `/reload-skills` once
+            // they've installed it manually.
+            do {
+                try SkillBootstrapService(context: context).ensureBundledSkillsInstalled()
+            } catch {
+                logger.warning(
+                    "skill preflight failed for new-project wizard: \(error.localizedDescription, privacy: .public)"
+                )
+            }
             logger.info("scaffolded \(entry.name, privacy: .public) at \(entry.path, privacy: .public)")
             return entry
         } catch {
@@ -123,17 +143,43 @@ final class NewProjectViewModel {
     }
 
     /// Build the auto-prompt the wizard hands to ChatViewModel after
-    /// scaffolding. Mentions the absolute path so the agent has the
-    /// project's location even if the chat session's cwd slot ever
-    /// drifts; appends the user's optional description so the agent
-    /// can tailor its first question.
+    /// scaffolding.
+    ///
+    /// P3 of the projects-feature fix: the old prompt was a polite
+    /// single-sentence request that the agent often ignored — it would
+    /// reply conversationally without invoking the skill. The new
+    /// prompt is structured so the agent treats the
+    /// `scarf-template-author` skill as the literal next action:
+    ///
+    /// - States the skill name in `SKILL:` format twice (top + closing
+    ///   reinforcement) — agents trained on tool-use patterns recognize
+    ///   this as an invocation marker, not a suggestion.
+    /// - Pins the cwd in `PROJECT_PATH:` so the agent can't drift to a
+    ///   different folder if AGENTS.md hasn't been re-read yet.
+    /// - Lists the skill's expected stages explicitly so the agent
+    ///   doesn't have to discover them from the SKILL.md body.
+    /// - Calls the user's description out as the FIRST QUESTION's
+    ///   answer so the agent skips question 1 and jumps to question 2,
+    ///   reducing the perceived "is anything happening?" delay.
     func buildInitialPrompt(for entry: ProjectEntry) -> String {
         let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
-        var prompt = "I just created a new Scarf project at \(entry.path). "
-            + "Use the `scarf-template-author` skill to walk me through configuring it — "
-            + "design the dashboard, optionally schedule cron jobs, and write AGENTS.md instructions."
+        var prompt = """
+        SKILL: scarf-template-author
+        PROJECT_PATH: \(entry.path)
+        PROJECT_NAME: \(entry.name)
+
+        Run the `scarf-template-author` skill interview now. This is a freshly-scaffolded Scarf project with an empty dashboard and a managed AGENTS.md block. Walk me through:
+
+        1. Purpose + data source — what does this project do and where does its data come from?
+        2. Dashboard widgets — pick from the supported widget vocabulary documented in the skill.
+        3. Configuration schema — only if the project takes user-supplied inputs (URLs, API tokens, etc.).
+        4. Scheduled jobs — only if data needs periodic refresh.
+        5. Write everything to disk and confirm the project is ready.
+
+        Start with question 1.
+        """
         if !trimmedDescription.isEmpty {
-            prompt += " Here's what it's for: \(trimmedDescription)"
+            prompt += "\n\nFor question 1, the user already wrote: \"\(trimmedDescription)\". Confirm your understanding and move directly to question 2."
         }
         return prompt
     }

@@ -1104,6 +1104,11 @@ final class ChatViewModel {
                     // the menu degrades to ACP + quick commands only on
                     // any failure (logged inside the service).
                     self.richChatViewModel.loadProjectScopedCommands(at: path)
+                    // Also refresh global Scarf slash commands so the
+                    // `/scarf-*` family stays in sync with any version
+                    // bumps the bootstrap service applied this launch
+                    // (or any hand-edits the user has made since).
+                    self.richChatViewModel.loadGlobalScopedCommands()
                     // Resolve the project's current git branch (v2.5)
                     // for the chat header chip. Async + nil on failure
                     // (not a git repo / git missing / SSH error) — the
@@ -1120,6 +1125,11 @@ final class ChatViewModel {
                     self.currentProjectName = nil
                     self.currentGitBranch = nil
                     self.richChatViewModel.loadProjectScopedCommands(at: nil)
+                    // Global Scarf commands stay loaded — they're not
+                    // project-scoped, so this is the path that lets a
+                    // user fire `/scarf-help` or `/scarf-new` from a
+                    // global (non-project) chat too.
+                    self.richChatViewModel.loadGlobalScopedCommands()
                 }
 
                 // Refresh session list so the new ACP session appears in the Resume menu

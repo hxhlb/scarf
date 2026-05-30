@@ -106,9 +106,12 @@ struct HealthView: View {
             }
             Divider()
             ScrollView {
-                sectionGrid(selectedTab == 0 ? viewModel.statusSections : viewModel.doctorSections)
-                    .padding(.horizontal, ScarfSpace.s6)
-                    .padding(.vertical, ScarfSpace.s5)
+                VStack(alignment: .leading, spacing: ScarfSpace.s4) {
+                    HermesCapabilitiesPanel(store: capabilitiesStore)
+                    sectionGrid(selectedTab == 0 ? viewModel.statusSections : viewModel.doctorSections)
+                }
+                .padding(.horizontal, ScarfSpace.s6)
+                .padding(.vertical, ScarfSpace.s5)
             }
         }
         .background(ScarfColor.backgroundPrimary)

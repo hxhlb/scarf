@@ -64,6 +64,13 @@ struct ChatView: View {
             await viewModel.loadRecentSessions()
             viewModel.refreshCredentialPreflight()
             viewModel.refreshConfigDiagnostics()
+            // Surface the `/scarf-*` global slash commands in the chat
+            // input's menu BEFORE the user opens a session. Without this
+            // the menu collapses to `/new` + greyed agent commands at
+            // cold launch, which was the original "slash commands not
+            // loading" complaint. Same loader fires again at session
+            // start so any version bump applied this launch lands.
+            viewModel.richChatViewModel.loadGlobalScopedCommands()
             // Cold-launch handoff: if the user clicked "New Chat" on
             // a project before ChatView had a chance to render, the
             // coordinator was already populated. Consume the request

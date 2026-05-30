@@ -166,6 +166,45 @@ public struct ProjectSlashCommandService: Sendable {
         }
     }
 
+    // MARK: - Global commands
+    //
+    // Global slash commands live at `~/.hermes/scarf/slash-commands/<name>.md`
+    // and are available in EVERY chat (pre-session, global, project-scoped).
+    // They're populated by `SlashCommandBootstrapService` from the app bundle
+    // on launch. The on-disk format is identical to project-scoped commands —
+    // same frontmatter, same body templating — so this is just the same
+    // parser pointed at a different directory.
+
+    /// List every global slash command at
+    /// `~/.hermes/scarf/slash-commands/`. Returns `[]` when the directory
+    /// doesn't exist yet (fresh install before the bootstrap runs).
+    public nonisolated func loadGlobalCommands() -> [ProjectSlashCommand] {
+        let dir = context.paths.globalSlashCommandsDir
+        let transport = context.makeTransport()
+        guard transport.fileExists(dir) else { return [] }
+
+        let entries: [String]
+        do {
+            entries = try transport.listDirectory(dir)
+        } catch {
+            #if canImport(os)
+            Self.logger.warning(
+                "listDirectory failed at \(dir, privacy: .public): \(error.localizedDescription, privacy: .public); returning empty global command list"
+            )
+            #endif
+            return []
+        }
+
+        var commands: [ProjectSlashCommand] = []
+        for entry in entries where entry.hasSuffix(".md") {
+            let path = dir + "/" + entry
+            if let cmd = loadCommand(at: path) {
+                commands.append(cmd)
+            }
+        }
+        return commands.sorted { $0.name < $1.name }
+    }
+
     // MARK: - Path helpers
 
     /// `<project>/.scarf/slash-commands` — same path on Mac + iOS.

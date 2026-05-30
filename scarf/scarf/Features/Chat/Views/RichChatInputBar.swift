@@ -21,6 +21,13 @@ struct RichChatInputBar: View {
     /// command silently no-ops). v0.13+ hosts allow `/steer` on idle
     /// and the row stays interactive regardless of `isAgentWorking`.
     var isAgentWorking: Bool = false
+    /// Whether the chat has an attached ACP session. Drives the
+    /// session-required grey-out set in the slash menu (P2 of the
+    /// projects-feature fix). Distinct from `isEnabled` — the input
+    /// is enabled the moment hermes is installed, but agent-side
+    /// commands (`/clear`, `/compact`, `/cost`, etc.) only do anything
+    /// after `session/new` returns. Source: `richChat.sessionId != nil`.
+    var hasActiveSession: Bool = false
 
     @Environment(\.hermesCapabilities) private var capabilitiesStore
 
@@ -398,6 +405,7 @@ struct RichChatInputBar: View {
     private var disabledMenuCommandNames: Set<String> {
         RichChatViewModel.disabledSlashCommandNames(
             isAgentWorking: isAgentWorking,
+            hasActiveSession: hasActiveSession,
             capabilities: capabilitiesStore?.capabilities ?? .empty
         )
     }
@@ -405,6 +413,7 @@ struct RichChatInputBar: View {
     private var disabledMenuReason: String? {
         RichChatViewModel.disabledSlashCommandReason(
             isAgentWorking: isAgentWorking,
+            hasActiveSession: hasActiveSession,
             capabilities: capabilitiesStore?.capabilities ?? .empty
         )
     }

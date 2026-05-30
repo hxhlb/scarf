@@ -142,6 +142,7 @@ import Foundation
         )
         let disabled = RichChatViewModel.disabledSlashCommandNames(
             isAgentWorking: false,
+            hasActiveSession: true,
             capabilities: caps
         )
         #expect(disabled == ["steer"])
@@ -155,6 +156,7 @@ import Foundation
         )
         let disabled = RichChatViewModel.disabledSlashCommandNames(
             isAgentWorking: false,
+            hasActiveSession: true,
             capabilities: caps
         )
         #expect(disabled.isEmpty)
@@ -164,6 +166,7 @@ import Foundation
         let caps = HermesCapabilities.empty
         let disabled = RichChatViewModel.disabledSlashCommandNames(
             isAgentWorking: true,
+            hasActiveSession: true,
             capabilities: caps
         )
         #expect(disabled.isEmpty)
@@ -173,6 +176,7 @@ import Foundation
         let caps = HermesCapabilities.empty
         let reason = RichChatViewModel.disabledSlashCommandReason(
             isAgentWorking: false,
+            hasActiveSession: true,
             capabilities: caps
         )
         #expect(reason != nil)
@@ -187,9 +191,47 @@ import Foundation
         )
         let reason = RichChatViewModel.disabledSlashCommandReason(
             isAgentWorking: false,
+            hasActiveSession: true,
             capabilities: caps
         )
         #expect(reason == nil)
+    }
+
+    // P2 of the projects-feature fix — pre-session, every session-
+    // required command goes greyed-out instead of being filtered out.
+
+    @Test func disabledSlashGreysAllAgentCommandsPreSession() {
+        let caps = HermesCapabilities(
+            versionLine: "0.15.0",
+            semver: HermesCapabilities.SemVer(major: 0, minor: 15, patch: 0),
+            dateVersion: nil
+        )
+        let disabled = RichChatViewModel.disabledSlashCommandNames(
+            isAgentWorking: false,
+            hasActiveSession: false,
+            capabilities: caps
+        )
+        // The full session-required set should be disabled — that's
+        // the v2.10 fix that replaces the empty-menu pre-session UX.
+        #expect(disabled.contains("clear"))
+        #expect(disabled.contains("compact"))
+        #expect(disabled.contains("model"))
+        #expect(disabled.contains("yolo"))
+        #expect(disabled.contains("steer"))
+        #expect(disabled.contains("goal"))
+        // `/new` is NEVER session-required — it's how you GET a session.
+        #expect(!disabled.contains("new"))
+    }
+
+    @Test func disabledSlashReasonMentionsOpeningChatPreSession() {
+        let caps = HermesCapabilities.empty
+        let reason = RichChatViewModel.disabledSlashCommandReason(
+            isAgentWorking: false,
+            hasActiveSession: false,
+            capabilities: caps
+        )
+        #expect(reason != nil)
+        #expect(reason?.lowercased().contains("chat is open") == true)
     }
 
     // MARK: - availableCommands capability gating
@@ -274,12 +316,18 @@ import Foundation
     }
 
     @MainActor
-    @Test func availableCommandsAddsSessionScopedCommandsWhenActive() {
+    @Test func availableCommandsAlwaysIncludesAgentCommandsForGreyOut() {
+        // P2 of the projects-feature fix: pre-session, the agent
+        // commands stay in the menu (greyed out via
+        // disabledSlashCommandNames) instead of being filtered out.
+        // Both states must include them; only the disabled set differs.
         let vm = RichChatViewModel(context: .local)
         vm.publishCapabilities(HermesCapabilities.empty)
         let namesBefore = Set(vm.availableCommands.map(\.name))
-        #expect(!namesBefore.contains("clear"))
-        #expect(!namesBefore.contains("compact"))
+        #expect(namesBefore.contains("clear"))
+        #expect(namesBefore.contains("compact"))
+        #expect(namesBefore.contains("model"))
+        #expect(namesBefore.contains("help"))
 
         vm.setSessionId("abc-123")
         let namesAfter = Set(vm.availableCommands.map(\.name))

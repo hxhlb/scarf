@@ -359,6 +359,16 @@ public final class RichChatViewModel {
     /// `ChatViewModel.sendPrompt` and needs the body + model override.
     public private(set) var projectScopedCommands: [ProjectSlashCommand] = []
 
+    /// Global Scarf-managed commands at `~/.hermes/scarf/slash-commands/<name>.md`.
+    /// Populated from `BuiltinSlashCommands.bundle` on app launch by
+    /// `SlashCommandBootstrapService` and refreshed on each session start
+    /// via `loadGlobalScopedCommands()`. Available in EVERY chat (pre-
+    /// session, global, project-scoped), not just project chats — that's
+    /// the whole point of the global vs. project-scoped split. Per-project
+    /// commands of the same name win over global via `availableCommands`'
+    /// dedup logic.
+    public private(set) var globalScopedCommands: [ProjectSlashCommand] = []
+
     /// Hardcoded ACP-native commands that don't interrupt the current
     /// turn. v2.5 ships `/steer` as the flagship — applies user
     /// guidance after the next tool call without aborting. Fronted by
@@ -439,7 +449,12 @@ public final class RichChatViewModel {
                 source: .alwaysAvailable
             )
         ]
-        guard hasActiveSession else { return result }
+        // P2 of the projects-feature fix: pre-session, surface the agent
+        // commands too — greyed out in the menu (the chat view supplies
+        // `disabledCommandNames` from `sessionRequiredCommandNames`) so the
+        // user sees what's available once they open a chat instead of an
+        // apparently-empty menu. Hiding them entirely made the menu look
+        // broken on fresh app launches.
         result.append(contentsOf: [
             HermesSlashCommand(
                 name: "clear",
@@ -592,9 +607,10 @@ public final class RichChatViewModel {
     }
 
     /// Merged slash-menu list. Precedence: **ACP > project-scoped >
-    /// quick_commands** (most specific source wins). De-duplicated by name.
-    /// Non-interruptive ACP commands (`/steer`) are always appended at
-    /// the end so they don't crowd the more frequently-used options.
+    /// global Scarf > quick_commands** (most specific source wins).
+    /// De-duplicated by name. Non-interruptive ACP commands (`/steer`)
+    /// are always appended at the end so they don't crowd the more
+    /// frequently-used options.
     public var availableCommands: [HermesSlashCommand] {
         let acpNames = Set(acpCommands.map(\.name))
         let projectAsHermes: [HermesSlashCommand] = projectScopedCommands
@@ -608,10 +624,33 @@ public final class RichChatViewModel {
                 )
             }
         let projectNames = Set(projectAsHermes.map(\.name))
+        // Global Scarf commands sit BELOW project-scoped in the
+        // precedence chain — a project that authors its own `scarf-help`
+        // wins over the bundled one. Surface them with the same
+        // `.projectScoped` source for now (no UI distinction between
+        // project and global yet); add a dedicated `.globalScarf`
+        // source enum case if/when we want to differentiate them in
+        // the row chrome.
+        let globalAsHermes: [HermesSlashCommand] = globalScopedCommands
+            .filter { !acpNames.contains($0.name) && !projectNames.contains($0.name) }
+            .map { cmd in
+                HermesSlashCommand(
+                    name: cmd.name,
+                    description: cmd.description,
+                    argumentHint: cmd.argumentHint,
+                    source: .projectScoped
+                )
+            }
+        let globalNames = Set(globalAsHermes.map(\.name))
         let quicks = quickCommands.filter {
-            !acpNames.contains($0.name) && !projectNames.contains($0.name)
+            !acpNames.contains($0.name)
+                && !projectNames.contains($0.name)
+                && !globalNames.contains($0.name)
         }
-        let occupied = acpNames.union(projectNames).union(Set(quicks.map(\.name)))
+        let occupied = acpNames
+            .union(projectNames)
+            .union(globalNames)
+            .union(Set(quicks.map(\.name)))
         // Capability gate: `/goal` and `/queue` are v0.13+ surfaces;
         // hide them when the connected host is older. `/steer` is
         // surfaced unconditionally — it works on v0.11+ during an
@@ -622,14 +661,13 @@ public final class RichChatViewModel {
             case "goal":    return capabilitiesGate.hasGoals
             case "queue":   return capabilitiesGate.hasACPQueue
             case "subgoal": return capabilitiesGate.hasSubgoal
-            // /steer requires an active session — nudging an agent that
-            // isn't running has nothing to act on. Hiding it pre-session
-            // keeps the slash menu honest (and matches what a fresh
-            // RichChatViewModel actually does: until the user opens a
-            // chat, there's no agent to steer). v0.13's hasACPSteerOnIdle
-            // controls whether /steer is valid when the active session
-            // is idle vs. mid-turn — orthogonal to the no-session case.
-            case "steer":   return sessionId != nil
+            // P2 of the projects-feature fix: /steer used to be filtered
+            // out pre-session, which made the menu look empty on fresh
+            // app launches. Now it stays visible and `disabledSlash-
+            // CommandNames` greys it (with a "Available once a chat is
+            // open" tooltip) when sessionId is nil — same treatment as
+            // the other agent-side commands. v0.13's hasACPSteerOnIdle
+            // still controls the active-session-but-idle case downstream.
             default:        return true
             }
         }
@@ -647,7 +685,7 @@ public final class RichChatViewModel {
             capabilities: capabilitiesGate,
             hasActiveSession: sessionId != nil
         ).filter { !occupied.contains($0.name) }
-        return acpCommands + projectAsHermes + quicks + nonInterruptive + alwaysAvailable
+        return acpCommands + projectAsHermes + globalAsHermes + quicks + nonInterruptive + alwaysAvailable
     }
 
     /// Publish a fresh capabilities snapshot from the controller.
@@ -821,9 +859,15 @@ public final class RichChatViewModel {
     /// Look up the full project-scoped command payload by slash trigger.
     /// `ChatViewModel.sendPrompt` calls this when the input matches a
     /// `.projectScoped` source and needs the body for client-side
-    /// expansion.
+    /// expansion. Searches project commands first (a project that
+    /// authors `/scarf-help` should win over the bundled global one),
+    /// then falls back to the global store so `/scarf-*` commands work
+    /// in non-project chats too.
     public func projectScopedCommand(named name: String) -> ProjectSlashCommand? {
-        projectScopedCommands.first { $0.name == name }
+        if let cmd = projectScopedCommands.first(where: { $0.name == name }) {
+            return cmd
+        }
+        return globalScopedCommands.first { $0.name == name }
     }
 
     // MARK: - Shared slash menu helpers
@@ -908,30 +952,61 @@ public final class RichChatViewModel {
     }
 
     /// Names of slash-menu rows that should render greyed-out + ignore
-    /// taps. v2.8 / Hermes v0.13: `/steer` is greyed only when the
-    /// connected host is pre-v0.13 AND the session is idle. Pre-v0.13
-    /// hosts silently no-op `/steer` outside an active turn — surfacing
-    /// the row as "use during a turn" is friendlier than letting the
-    /// user click and see nothing happen. v0.13+ hosts allow steer-on-
-    /// idle so the row stays interactive.
+    /// taps.
+    ///
+    /// Two grey-out conditions:
+    /// - **No active session** (P2 of the projects-feature fix): every
+    ///   agent-side command (`/clear /compact /cost /model /tools
+    ///   /reload-skills /help /exit`, plus capability-gated `/yolo
+    ///   /sessions /codex-runtime` and non-interruptive `/steer /goal
+    ///   /queue /subgoal`) needs a live ACP session to do anything.
+    ///   Surfacing them greyed gives the user a visible "what's
+    ///   coming once you open a chat" instead of an empty menu.
+    /// - **Pre-v0.13 idle session**: `/steer` silently no-ops on
+    ///   pre-v0.13 hosts when the agent isn't mid-turn, so we grey it
+    ///   in that specific window even when a session is active.
     public static func disabledSlashCommandNames(
         isAgentWorking: Bool,
+        hasActiveSession: Bool,
         capabilities: HermesCapabilities
     ) -> Set<String> {
-        if !isAgentWorking && !capabilities.hasACPSteerOnIdle {
-            return ["steer"]
+        var disabled: Set<String> = []
+        if !hasActiveSession {
+            disabled.formUnion(Self.sessionRequiredCommandNames)
         }
-        return []
+        if hasActiveSession && !isAgentWorking && !capabilities.hasACPSteerOnIdle {
+            disabled.insert("steer")
+        }
+        return disabled
     }
 
+    /// Slash commands that need a live ACP session to do anything. Used
+    /// by `disabledSlashCommandNames` to grey-out the menu rows when the
+    /// user is looking at the input bar pre-session. Kept in one place
+    /// so the menu and any future enable/disable checks stay in sync.
+    public static let sessionRequiredCommandNames: Set<String> = [
+        "clear", "compact", "cost", "model", "tools",
+        "reload-skills", "help", "exit",
+        "yolo", "sessions", "codex-runtime",
+        "steer", "goal", "queue", "subgoal"
+    ]
+
     /// Tooltip / inline help text shown next to disabled rows. Returns
-    /// nil when no rows are disabled.
+    /// nil when no rows are disabled. Phrased generically so the same
+    /// string applies to both the pre-session "open a chat first" case
+    /// and the pre-v0.13 "wait for the agent's turn" case — both are
+    /// "this command needs a state we're not in yet".
     public static func disabledSlashCommandReason(
         isAgentWorking: Bool,
+        hasActiveSession: Bool,
         capabilities: HermesCapabilities
     ) -> String? {
+        if !hasActiveSession {
+            return "Available once a chat is open. Press Return on `/new` (or click an existing session) to start one."
+        }
         let disabled = disabledSlashCommandNames(
             isAgentWorking: isAgentWorking,
+            hasActiveSession: hasActiveSession,
             capabilities: capabilities
         )
         guard !disabled.isEmpty else { return nil }
@@ -1357,6 +1432,24 @@ public final class RichChatViewModel {
             let loaded = svc.loadCommands(at: projectPath)
             await MainActor.run { [weak self] in
                 self?.projectScopedCommands = loaded
+            }
+        }
+    }
+
+    /// Load the global Scarf slash commands from
+    /// `~/.hermes/scarf/slash-commands/`. Populated by
+    /// `SlashCommandBootstrapService` on app launch; this reads what's
+    /// on disk so user edits (and version bumps from a future app
+    /// release) reach the menu without a relaunch. Safe to call
+    /// repeatedly. Should be called at chat-open time alongside
+    /// `loadProjectScopedCommands`.
+    public func loadGlobalScopedCommands() {
+        let ctx = context
+        Task.detached { [weak self] in
+            let svc = ProjectSlashCommandService(context: ctx)
+            let loaded = svc.loadGlobalCommands()
+            await MainActor.run { [weak self] in
+                self?.globalScopedCommands = loaded
             }
         }
     }

@@ -173,6 +173,33 @@ struct ProjectAgentContextService: Sendable {
             lines.append("- **Uninstall manifest:** `\(project.path)/.scarf/template.lock.json` (tracks files written by template install)")
         }
 
+        // P4 of the projects-feature fix: surface Scarf's actual
+        // feature vocabulary so the agent knows what's available
+        // beyond a bare Hermes session. Without this, agents would
+        // routinely propose plain-Hermes solutions (e.g. "I'll write
+        // a shell script to render this") when the user has a
+        // dashboard widget that does the job in one line of JSON.
+        // The section is static — doesn't depend on the project's
+        // state, just on Scarf being the host — so it stays
+        // byte-identical across refreshes (the idempotency test in
+        // `ProjectAgentContextServiceTests.refreshIsFullyIdempotent`
+        // covers it).
+        lines.append("")
+        lines.append("### Scarf platform reference")
+        lines.append("")
+        lines.append("Some affordances available here that you wouldn't have in a bare Hermes session:")
+        lines.append("")
+        lines.append("- **Dashboard widgets.** `<project>/.scarf/dashboard.json` renders into Scarf's Projects tab via a typed widget vocabulary (`text`, `markdown`, `file_glob`, `command_output`, `sqlite_query`, `recent_messages`, `kanban_summary`, `chart`, etc.). The full schema lives in `~/.hermes/skills/scarf-template-author/SKILL.md` § Widget Catalog. The viewer auto-refreshes on file-watcher and SQLite mtime ticks — no manual reload needed.")
+        lines.append("- **Project slash commands.** Author a `<project>/.scarf/slash-commands/<name>.md` file with frontmatter (`{name, description, hint?}`) and a prompt body; Scarf surfaces `/<name>` in this chat's slash menu and expands the prompt before forwarding to you, wrapped in `<!-- scarf-slash:<name> -->` so you can tell expansion apart from a literal user message.")
+        lines.append("- **Kanban board.** Hermes Kanban tasks created from this chat should pass `--tenant <kanban tenant>` (above) so they land on this project's per-project board, not the global \"Untagged\" pile. Tasks are also auto-stamped with the ACP `session_id` of this chat, so the project's Kanban tab can scope to \"tasks from THIS chat\" with a single toggle.")
+        lines.append("- **Per-project model preset.** The user may have bound a `(model, provider)` preset to this project — `session/set_model` already applied it at session boot. Mention the active model only when relevant; the user picks presets via Scarf's right-click → \"Set Model…\".")
+        lines.append("- **Typed configuration schema.** `<project>/.scarf/manifest.json` may declare `config.schema` with typed fields. Secret-typed values live in the macOS Keychain and are referenced from `config.json` via opaque URI handles, not stored inline. NEVER write a secret value to disk yourself — route Keychain reads through `ProjectConfigService.resolveSecret(_:for:)`.")
+        lines.append("- **Cron jobs.** Schedule recurring work with `hermes cron create --workdir \(project.path) …` so the job inherits this project's AGENTS.md context and resolves relative paths inside the project.")
+        lines.append("- **Skills.** Hermes loads SKILL.md files from `~/.hermes/skills/`. Scarf bundles `scarf-template-author` (v1.1+) for project authoring; users can install more via `hermes skills install <https-url>` or by dropping a directory under `~/.hermes/skills/`.")
+        lines.append("- **Export to template.** When the dashboard, optional schema, and AGENTS.md are stable, the user can right-click the project in Scarf → \"Export as Template…\" to produce a shareable `.scarftemplate` bundle. Authoring guidance: `~/.hermes/skills/scarf-template-author/SKILL.md`.")
+        lines.append("")
+        lines.append("When the user asks to scaffold, extend, or restructure this project, invoke the `scarf-template-author` skill — it documents the full widget catalog, the config-schema field types, and the export contract.")
+
         lines.append("")
         lines.append("Any content below this block is template- or user-authored; preserve and defer to it for project-specific behavior. Do NOT modify content inside these markers — Scarf rewrites this block on every project-scoped chat start.")
         lines.append(Self.endMarker)

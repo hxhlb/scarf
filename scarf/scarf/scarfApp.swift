@@ -77,17 +77,34 @@ struct ScarfApp: App {
         }
 
         // Bootstrap built-in skills shipped inside the app bundle into
-        // `~/.hermes/skills/`. Today this is just `scarf-template-author`,
-        // which the "New Project from Scratch" wizard hands off to. The
-        // service is idempotent + version-gated; failures log and don't
-        // block launch — worst case is the wizard still works but the
-        // agent doesn't have the skill loaded for that session.
+        // `~/.hermes/skills/scarf/`. Today this is just
+        // `scarf-template-author`, which the "New Project from Scratch"
+        // wizard hands off to. The service is idempotent + version-gated;
+        // failures log and don't block launch — worst case is the wizard
+        // still works but the agent doesn't have the skill loaded for
+        // that session.
         Task.detached(priority: .utility) {
             do {
                 try SkillBootstrapService(context: .local).ensureBundledSkillsInstalled()
             } catch {
                 Logger(subsystem: "com.scarf", category: "scarfApp")
                     .warning("skill bootstrap failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // Bootstrap global Scarf slash commands shipped inside the app
+        // bundle into `~/.hermes/scarf/slash-commands/`. These are the
+        // `/scarf-*` family that surfaces in EVERY chat (pre-session,
+        // global, project-scoped) so the user can drive Scarf-specific
+        // workflows without having to author per-project commands first.
+        // Same idempotent + version-gated pattern as
+        // `SkillBootstrapService`; failures log and don't block launch.
+        Task.detached(priority: .utility) {
+            do {
+                try SlashCommandBootstrapService(context: .local).ensureBundledCommandsInstalled()
+            } catch {
+                Logger(subsystem: "com.scarf", category: "scarfApp")
+                    .warning("slash command bootstrap failed: \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -310,6 +327,15 @@ private struct ContextBoundRoot: View {
             .windowFrameAutosave("Scarf.Window.\(context.id)")
             .onAppear { fileWatcher.startWatching() }
             .onDisappear { fileWatcher.stopWatching() }
+            // Re-detect Hermes capabilities when the app comes back to
+            // the foreground. The user may have run `hermes update` in
+            // a Terminal while Scarf was backgrounded — without this,
+            // the slash menu, Kanban tab, and other version-gated UIs
+            // stay on the old version's flag set until Scarf relaunches.
+            // P1 of the projects-feature fix.
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                Task { await capabilities.refresh() }
+            }
     }
 }
 

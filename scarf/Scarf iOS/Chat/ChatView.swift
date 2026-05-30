@@ -75,10 +75,13 @@ struct ChatView: View {
     }
 
     /// Names that render greyed-out + ignore taps. Matches the Mac's
-    /// disabled gating exactly — `/steer` on pre-v0.13 idle sessions.
+    /// disabled gating exactly — `/steer` on pre-v0.13 idle sessions
+    /// PLUS every agent-side command when there's no active session
+    /// (P2 of the projects-feature fix).
     private var disabledSlashCommandNames: Set<String> {
         RichChatViewModel.disabledSlashCommandNames(
             isAgentWorking: controller.vm.isAgentWorking,
+            hasActiveSession: controller.vm.sessionId != nil,
             capabilities: capabilitiesStore?.capabilities ?? .empty
         )
     }
@@ -86,6 +89,7 @@ struct ChatView: View {
     private var disabledSlashCommandReason: String? {
         RichChatViewModel.disabledSlashCommandReason(
             isAgentWorking: controller.vm.isAgentWorking,
+            hasActiveSession: controller.vm.sessionId != nil,
             capabilities: capabilitiesStore?.capabilities ?? .empty
         )
     }
@@ -1990,8 +1994,10 @@ final class ChatController {
         currentProjectName = nil
         currentGitBranch = nil
         // Quick-chat sessions don't have a project; clear any leftover
-        // project-scoped slash commands from a prior session.
+        // project-scoped slash commands from a prior session. Refresh
+        // global Scarf commands too so `/scarf-*` still surfaces.
         vm.loadProjectScopedCommands(at: nil)
+        vm.loadGlobalScopedCommands()
         await start()
     }
 
@@ -2009,6 +2015,9 @@ final class ChatController {
         // <project.path>/.scarf/slash-commands/ into the chat menu.
         // Async + non-fatal — degrades cleanly on SFTP failures (logged).
         vm.loadProjectScopedCommands(at: project.path)
+        // Refresh global Scarf commands so any version bump applied
+        // this launch lands in the menu without a relaunch.
+        vm.loadGlobalScopedCommands()
         // v2.5 git branch indicator. Async + nil on failure — the chip
         // simply doesn't render if the project isn't a git repo.
         let ctx = context
@@ -2199,6 +2208,7 @@ final class ChatController {
         currentProjectName = resolved?.name
         currentGitBranch = nil
         vm.loadProjectScopedCommands(at: resolved?.path)
+        vm.loadGlobalScopedCommands()
         // v2.5 git branch indicator for the resumed-session header.
         if let resumePath = resolved?.path {
             let resolvedName = resolved?.name

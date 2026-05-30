@@ -114,6 +114,12 @@ public struct HermesPathSet: Sendable, Hashable {
     /// via `session/set_model` and at `hermes -z` invocation via
     /// `-m`/`--provider` flags.
     public nonisolated var modelPresetsJSON: String { scarfDir + "/model_presets.json" }
+    /// Global Scarf slash commands available in every chat (not just
+    /// project-scoped). Populated by `SlashCommandBootstrapService` from
+    /// the app bundle on launch — same idempotent + version-gated pattern
+    /// as `SkillBootstrapService`. Per-project commands at
+    /// `<project>/.scarf/slash-commands/` continue to layer on top.
+    public nonisolated var globalSlashCommandsDir: String { scarfDir + "/slash-commands" }
     public nonisolated var mcpTokensDir: String { home + "/mcp-tokens" }
 
     // MARK: - Binary resolution

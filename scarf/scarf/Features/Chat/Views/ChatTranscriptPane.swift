@@ -94,7 +94,8 @@ struct ChatTranscriptPane: View {
                 isEnabled: isEnabled,
                 commands: richChat.availableCommands,
                 showCompressButton: richChat.supportsCompress && !richChat.hasBroaderCommandMenu,
-                isAgentWorking: richChat.isAgentWorking
+                isAgentWorking: richChat.isAgentWorking,
+                hasActiveSession: richChat.sessionId != nil
             )
             .id(richChat.sessionId ?? "scarf.chat.no-session")
         }

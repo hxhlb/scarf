@@ -146,6 +146,23 @@ struct ChatView: View {
                 }
                 .disabled(controller.state == .connecting)
             }
+            // Keyboard accessory dismiss button. Previously chained
+            // onto the TextField's `.toolbar` modifier deep in the
+            // composer subtree; iOS 26.5 stopped surfacing it from
+            // that nested placement (gh#107 — "no button displayed
+            // to hide the keyboard"). Hoisting it to the body-root
+            // toolbar collection keeps the same intent (dismiss the
+            // active editor) and is the placement Apple's own apps
+            // (Mail, Notes, Messages) use on iOS 26.
+            ToolbarItemGroup(placement: .keyboard) {
+                Button {
+                    composerFocused = false
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                }
+                .accessibilityLabel("Hide keyboard")
+                Spacer()
+            }
         }
         .sheet(isPresented: $showProjectPicker) {
             ProjectPickerSheet(
@@ -476,8 +493,13 @@ struct ChatView: View {
     private var connectionBanner: some View {
         switch controller.state {
         case .reconnecting(let attempt, let total):
+            // `attempt == 0` is the "paused on background" sentinel set
+            // by `pauseInBackground` — we haven't started a real attempt
+            // yet, just demoted out of `.ready` so the send button isn't
+            // a silent no-op while client is nil. Show neutral copy until
+            // `attemptReconnect` actually fires on `.active`.
             connectionBannerStrip(
-                text: "Reconnecting (\(attempt)/\(total))…",
+                text: attempt == 0 ? "Resuming…" : "Reconnecting (\(attempt)/\(total))…",
                 tint: ScarfColor.warning,
                 showSpinner: true
             )
@@ -730,28 +752,13 @@ struct ChatView: View {
             .onChange(of: controller.draft) { _, _ in
                 controller.scheduleDraftSave()
             }
-            // Explicit dismiss-keyboard affordance, complementing the
-            // interactive scroll-to-dismiss on the message list. iOS
-            // shows a keyboard accessory toolbar above the system
-            // keyboard whenever a focused TextField is on screen;
-            // putting a "Done" chevron there is the most-discoverable
-            // dismissal pattern (issue #51). Pinned to the LEADING
-            // edge (Spacer trails) so the chevron doesn't visually
-            // stack above the trailing-edge send button in the
-            // composer below — that stacking was the complaint in
-            // issue #57. Matches iOS convention (Notes, Mail, Reminders
-            // all put accessory dismiss on the leading side).
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Button {
-                        composerFocused = false
-                    } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
-                    }
-                    .accessibilityLabel("Hide keyboard")
-                    Spacer()
-                }
-            }
+            // Explicit dismiss-keyboard affordance (chevron) is
+            // declared on the body-root `.toolbar` collection (see
+            // `body` above), not here — iOS 26.5 stopped surfacing
+            // `.toolbar(.keyboard)` placements declared deep in a
+            // composer subtree (gh#107). The body-root placement is
+            // also what Apple's own apps (Mail, Notes, Messages)
+            // use on iOS 26.
 
             // Big circular send button. Filled with the brand accent when
             // ready, swapped to a flat gray when disabled — opacity dims
@@ -1592,6 +1599,23 @@ final class ChatController {
         do {
             _ = try await client.sendPrompt(sessionId: sessionId, text: wireText, images: images)
         } catch {
+            // gh#108: a send in flight when the user switches apps
+            // gets cancelled by pauseInBackground tearing down the
+            // client. Detect that case (state demoted to .reconnecting
+            // by pauseInBackground) and silently restore the prompt to
+            // the draft so the user can tap Send again on resume —
+            // the user bubble we already appended to the VM stays
+            // visible as an orphan, but the agent never saw it so
+            // letting the user re-send is the only correct recovery.
+            if case .reconnecting = state {
+                if !text.isEmpty, draft.isEmpty {
+                    draft = text
+                    scheduleDraftSave()
+                }
+                vm.transientHint = "Message not sent — tap Send again after reconnecting."
+                scheduleTransientHintClear(snapshot: vm.transientHint)
+                return
+            }
             // The event task may already have surfaced a
             // .connectionLost; show the send-time error only if the
             // state didn't already fail. Always populate the error
@@ -1822,8 +1846,19 @@ final class ChatController {
         }
         client = nil
         // The next `.active` cycle will route through
-        // verifyAndResume → handleConnectionDied → attemptReconnect.
-        // Reset the disconnect guard so that flow isn't blocked.
+        // verifyAndResume → attemptReconnect (which now handles a
+        // nil client directly — previously handleConnectionDied
+        // early-returned on `client != nil`, silently stranding the
+        // chat in `.ready` with no live client; gh#107 / gh#108).
+        // Demote `.ready` → `.reconnecting(0/max)` so the composer
+        // disables Send during the gap and the banner explains why
+        // — without this, taps on Send between `.background` and
+        // `.active`'s reconnect were silent no-ops (gh#107).
+        // Preserve `.failed` so a prior unrecoverable error stays
+        // visible across the background round-trip.
+        if state == .ready {
+            state = .reconnecting(attempt: 0, of: Self.maxReconnectAttempts)
+        }
         isHandlingDisconnect = false
     }
 
@@ -1831,14 +1866,27 @@ final class ChatController {
     /// just re-arm the heartbeat; if dead, route into the reconnect
     /// path (which preserves the session id and reconciles against
     /// the DB).
+    ///
+    /// `pauseInBackground` nils out `client` on `.background`, so on
+    /// `.active` we may have `client == nil` even though the session
+    /// is still alive on the remote. handleConnectionDied early-
+    /// returns on `client != nil`, so call attemptReconnect directly
+    /// in that case — without this, the chat sat in `.reconnecting(0)`
+    /// (after the pauseInBackground demote) and never recovered, and
+    /// pre-demote it sat in `.ready` with a nil client (gh#107 — Send
+    /// became a silent no-op) or `.failed` if a prompt was mid-flight
+    /// when the user switched apps (gh#108 — "Chat connection failed").
     private func verifyAndResume(sessionId: String) async {
         if let client {
             if await client.isHealthy {
+                if case .reconnecting = state { state = .ready }
                 startHealthMonitor(client: client)
                 return
             }
+            handleConnectionDied()
+            return
         }
-        handleConnectionDied()
+        attemptReconnect(sessionId: sessionId)
     }
 
     /// React to a transition in `NetworkReachabilityService`. While
@@ -1943,6 +1991,13 @@ final class ChatController {
                         await client?.recentStderr ?? ""
                     }
                     vm.setSessionId(resolvedSessionId)
+                    // Clear any error banner left over from a send that
+                    // failed because the channel was torn down by
+                    // pauseInBackground (gh#108: user sends, app
+                    // switches, returns to an `acpError` describing
+                    // "prompt failed" even though we've successfully
+                    // reconnected on resume).
+                    vm.clearACPErrorState()
 
                     // Merge in-memory state (any local-only user
                     // messages typed before the disconnect) with

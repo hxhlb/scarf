@@ -28,7 +28,7 @@ When you hear those:
 
 1. Load the skill at `~/.hermes/skills/templates/awizemann-template-author/scarf-template-author/SKILL.md` and follow its interview flow. Do not improvise — the skill encodes the specific invariants Scarf enforces (widget types, field-type constraints, the `{{PROJECT_DIR}}` token, the paused-on-install cron rule, the secret-fields-have-no-defaults rule).
 2. Scaffold into a directory the user picks. Use absolute paths.
-3. After writing files, tell the user to register the project: click **+** in Scarf's Projects sidebar and pick the directory. Do not try to edit `~/.hermes/scarf/projects.json` yourself — Scarf reloads the registry on its own and the UI path is safer.
+3. After writing files, register the project yourself by appending a `{ "name": ..., "path": ... }` entry to `~/.hermes/scarf/projects.json` (read it, append, write back; create the file with `{ "projects": [...] }` if it doesn't exist). Scarf watches the file and picks it up on next sidebar refresh — no manual UI step needed.
 4. Optionally append to the Scaffolded Projects list in this project's `dashboard.json` so the user has a local record of what you've built for them. Preserve every other field in the dashboard as-is.
 
 ## When the user asks reference questions

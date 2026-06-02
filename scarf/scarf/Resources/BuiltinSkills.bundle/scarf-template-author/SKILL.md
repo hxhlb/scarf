@@ -1,7 +1,7 @@
 ---
 name: scarf-template-author
 description: Scaffold a new Scarf project — dashboard, optional configuration schema, optional cron job, and AGENTS.md — from a short conversational interview with the user. Output is immediately usable locally and cleanly exportable as a .scarftemplate bundle.
-version: 1.1.0
+version: 1.2.0
 author: Alan Wizemann
 license: MIT
 platforms: [macos]
@@ -416,7 +416,7 @@ Use `{{PROJECT_DIR}}` placeholders in AGENTS.md only if the template will be ins
 User-facing. Keep it short:
 
 - One-paragraph purpose.
-- How to install / first run (for an unexported project: "click + in Scarf's Projects sidebar").
+- How to install / first run (for an unexported project: "the scaffolding agent appends a `{name, path}` entry to `~/.hermes/scarf/projects.json` and Scarf picks it up on next sidebar refresh — no manual UI step needed").
 - How to trigger the cron job manually (Cron sidebar → Run Now).
 - A pointer at `AGENTS.md` for agents.
 
@@ -436,9 +436,9 @@ For an exportable template (one you're staging in `templates/<author>/<name>/sta
 
 ### Step 8 — register the project with Scarf
 
-Tell the user: *"I've written the files. Click the **+** button in Scarf's Projects sidebar and pick `<absolute-project-dir>`. The dashboard will appear."*
+Append a `{ "name": "<project-name>", "path": "<absolute-project-dir>" }` entry to `~/.hermes/scarf/projects.json` yourself (read it, parse it, append to the `projects` array, write it back). Scarf watches the file and picks up the change on next sidebar refresh — no manual UI step needed.
 
-Do NOT edit `~/.hermes/scarf/projects.json` directly — Scarf owns that file and reloads it on its own. The UI path is safer.
+If the file doesn't exist yet, create it with `{ "projects": [ { "name": ..., "path": ... } ] }`. Then tell the user: *"I've written the files and registered the project — it'll appear in Scarf's Projects sidebar within a second."*
 
 ### Step 9 (optional) — log to the Template Author project's list
 
@@ -454,7 +454,7 @@ This gives the user a running audit trail of everything you've scaffolded for th
 
 ### Minimum smoke test
 
-1. Tell the user to click **+** in Scarf's Projects sidebar and pick the directory.
+1. Confirm you've appended the project entry to `~/.hermes/scarf/projects.json` (per Step 8) and tell the user the dashboard will appear in Scarf's Projects sidebar within a second.
 2. Dashboard appears — sanity check every widget renders correctly.
 3. If there's a cron job: click the job in Scarf's Cron sidebar → **Run Now**. The agent executes the prompt; dashboard updates when it finishes.
 

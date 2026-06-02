@@ -2,7 +2,7 @@
 name: scarf-new
 description: Create a brand-new Scarf project — invokes the scarf-template-author skill interview
 argumentHint: <optional one-line description>
-version: 1.0.0
+version: 1.0.1
 ---
 
 SKILL: scarf-template-author
@@ -22,6 +22,6 @@ Once you've gathered enough to scaffold:
 3. Write `AGENTS.md` with project-specific instructions BELOW the `<!-- scarf-project -->` marker region (never edit inside the markers — Scarf rewrites that on every project-scoped chat start).
 4. If the project takes user-supplied inputs (URLs, API tokens, etc.), also write `<project>/.scarf/manifest.json` with a `config.schema`.
 5. If the project needs scheduled refresh, run `hermes cron create --workdir <project.path> …` to register a job.
-6. Tell the user where the project landed so they can register it via Scarf's Projects sidebar → "Add Existing…".
+6. Register the project yourself by appending a `{ "name": "<project-name>", "path": "<absolute-project-dir>" }` entry to `~/.hermes/scarf/projects.json` (read it, append to the `projects` array, write it back; create the file with `{ "projects": [...] }` if missing). Scarf picks up the change on next sidebar refresh, then tell the user where the project landed.
 
 Confirm the project is ready, then suggest they open a chat scoped to it for further work.

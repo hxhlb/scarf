@@ -72,3 +72,7 @@ crashes/
 
 # Memophant app-local state (machine-specific, not for git)
 .claude/memophant-activity.log
+
+# Memophant app-local state (machine-specific, not for git)
+sessions/.raw/
+sessions/.index.json

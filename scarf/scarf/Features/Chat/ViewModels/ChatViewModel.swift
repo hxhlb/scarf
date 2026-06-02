@@ -130,6 +130,66 @@ final class ChatViewModel {
         return nil
     }
 
+    /// Right-side inspector pane mode. The inspector renders different
+    /// content depending on what the user clicked: a tool call (the
+    /// original v2.8 behavior) OR a long user message (v2.10.2 — long
+    /// pasted prompts were overflowing their bubble and overlapping
+    /// later messages; routing them through the inspector uses the
+    /// existing scroll surface and stops the layout collision).
+    /// Mutually exclusive — see `setInspectorFocus`.
+    enum ChatInspectorMode: Sendable, Equatable {
+        case none
+        case toolCall(id: String)
+        case userMessage(id: Int)
+    }
+
+    /// User-message focus for the inspector (v2.10.2). Set by long
+    /// user-message bubbles' "Expand in inspector" pill; cleared by
+    /// the inspector's xmark close OR by setting `focusedToolCallId`
+    /// to a non-nil value (mutual exclusion enforced via
+    /// `setInspectorFocus(_:)`).
+    var focusedUserMessageId: Int?
+
+    /// Resolved focus target for the user-message inspector. Walks
+    /// `richChatViewModel.messageGroups` to find the matching user
+    /// message. Returns nil when nothing is focused or the focused id
+    /// no longer resolves.
+    var focusedUserMessage: HermesMessage? {
+        guard let id = focusedUserMessageId else { return nil }
+        for group in richChatViewModel.messageGroups {
+            if let user = group.userMessage, user.id == id { return user }
+        }
+        return nil
+    }
+
+    /// Derived inspector mode. Prefers `.toolCall` when both ids are
+    /// somehow set (`setInspectorFocus` shouldn't allow that, but
+    /// defensive). The pane reads this to pick its rendering branch.
+    var inspectorMode: ChatInspectorMode {
+        if let id = focusedToolCallId { return .toolCall(id: id) }
+        if let id = focusedUserMessageId { return .userMessage(id: id) }
+        return .none
+    }
+
+    /// Set the inspector's focus, enforcing mutual exclusion between
+    /// tool-call and user-message modes. Pass `.none` from the
+    /// inspector close button. Bubbles use this rather than touching
+    /// the two id fields directly so the exclusion invariant lives in
+    /// one place.
+    func setInspectorFocus(_ mode: ChatInspectorMode) {
+        switch mode {
+        case .none:
+            focusedToolCallId = nil
+            focusedUserMessageId = nil
+        case .toolCall(let id):
+            focusedUserMessageId = nil
+            focusedToolCallId = id
+        case .userMessage(let id):
+            focusedToolCallId = nil
+            focusedUserMessageId = id
+        }
+    }
+
     /// Absolute project path for the current session, when the chat is
     /// project-scoped (either started via a project's "New Chat" button
     /// or resumed from a session that was previously attributed via the
@@ -1515,7 +1575,7 @@ final class ChatViewModel {
         sessionProjectNames.removeValue(forKey: sessionId)
         if richChatViewModel.sessionId == sessionId {
             richChatViewModel.reset()
-            focusedToolCallId = nil
+            setInspectorFocus(.none)
         }
     }
 

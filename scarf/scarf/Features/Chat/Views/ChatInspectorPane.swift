@@ -39,6 +39,19 @@ struct ChatInspectorPane: View {
                     .padding(ScarfSpace.s4)
                 }
                 footer(call: focus.call, result: focus.result)
+            } else if let user = chatViewModel.focusedUserMessage {
+                // v2.10.2 — long user-message bubbles were overflowing
+                // (no lineLimit / maxHeight / scroll on Text → overlapped
+                // later bubbles). Route the long content to the inspector
+                // pane, which already has a working ScrollView. Header is
+                // simpler than the tool-call header (no segmented tabs);
+                // close button calls `setInspectorFocus(.none)`.
+                userMessageHeader(user)
+                ScrollView {
+                    userMessageBody(user)
+                        .padding(ScarfSpace.s4)
+                }
+                userMessageFooter(user)
             } else {
                 emptyState
             }
@@ -54,6 +67,86 @@ struct ChatInspectorPane: View {
                   chatViewModel.focusedToolCall?.result == nil else { return }
             await chatViewModel.richChatViewModel.loadToolResultIfMissing(callId: id)
         }
+    }
+
+    // MARK: - User-message focus (v2.10.2)
+
+    private func userMessageHeader(_ message: HermesMessage) -> some View {
+        HStack(spacing: ScarfSpace.s2) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(ScarfColor.accent.opacity(0.16))
+                Image(systemName: "person.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ScarfColor.accent)
+            }
+            .frame(width: 24, height: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("USER MESSAGE")
+                    .scarfStyle(.captionStrong)
+                    .tracking(0.5)
+                    .foregroundStyle(ScarfColor.accent)
+                if let time = message.timestamp {
+                    Text(time, style: .time)
+                        .font(ScarfFont.monoSmall)
+                        .foregroundStyle(ScarfColor.foregroundMuted)
+                }
+            }
+            Spacer()
+            Button {
+                chatViewModel.setInspectorFocus(.none)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ScarfColor.foregroundMuted)
+                    .padding(4)
+            }
+            .buttonStyle(.plain)
+            .help("Close inspector")
+        }
+        .padding(.horizontal, ScarfSpace.s4)
+        .padding(.vertical, ScarfSpace.s3)
+        .overlay(
+            Rectangle().fill(ScarfColor.border).frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
+    private func userMessageBody(_ message: HermesMessage) -> some View {
+        VStack(alignment: .leading, spacing: ScarfSpace.s2) {
+            Text("\(message.content.count) characters")
+                .scarfStyle(.captionUppercase)
+                .foregroundStyle(ScarfColor.foregroundMuted)
+            Text(message.content)
+                .font(ScarfFont.body)
+                .foregroundStyle(ScarfColor.foregroundPrimary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(ScarfSpace.s3)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(ScarfColor.backgroundTertiary)
+                )
+        }
+    }
+
+    private func userMessageFooter(_ message: HermesMessage) -> some View {
+        HStack(spacing: ScarfSpace.s2) {
+            Spacer()
+            Button("Copy") {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(message.content, forType: .string)
+            }
+            .buttonStyle(ScarfGhostButton())
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, ScarfSpace.s4)
+        .padding(.vertical, ScarfSpace.s2)
+        .overlay(
+            Rectangle().fill(ScarfColor.border).frame(height: 1),
+            alignment: .top
+        )
     }
 
     // MARK: - Header

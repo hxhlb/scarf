@@ -84,6 +84,15 @@ struct RichChatView: View {
                 showInspector = true
             }
         }
+        // v2.10.2 — user-message focus (long-content overflow fix) gets
+        // the same auto-show treatment as tool-call focus. Without this
+        // a click on "Expand in inspector" while the inspector is
+        // hidden would silently do nothing.
+        .onChange(of: chatViewModel.focusedUserMessageId) { _, new in
+            if new != nil, !showInspector {
+                showInspector = true
+            }
+        }
         // DB polling fallback for terminal mode only — never overwrite ACP messages
         .onChange(of: fileWatcher.lastChangeDate) {
             if !isACPMode, !richChat.hasMessages, richChat.sessionId != nil {

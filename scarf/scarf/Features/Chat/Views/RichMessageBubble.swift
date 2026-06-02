@@ -73,27 +73,78 @@ struct RichMessageBubble: View, Equatable {
 
     // MARK: - User Bubble
 
+    /// Threshold above which a user-message bubble switches to clipped
+    /// mode and shows an "Expand in inspector" pill. v2.10.2: pasting
+    /// a long prompt was overflowing the bubble (no lineLimit /
+    /// maxHeight on the Text) and overlapping later messages —
+    /// clipping at this height and routing the full content through
+    /// the existing inspector ScrollView fixes both the overlap and
+    /// the unscrollable-cutoff symptoms in one move. 600 chars is
+    /// roughly 3–4 lines at the default scale; short replies pass
+    /// through untouched.
+    private static let userBubbleClipThreshold = 600
+    private static let userBubbleMaxHeight: CGFloat = 220
+
     private var userBubble: some View {
-        VStack(alignment: .trailing, spacing: 4) {
+        let isLong = message.content.count > Self.userBubbleClipThreshold
+        return VStack(alignment: .trailing, spacing: 4) {
             HStack {
                 Spacer(minLength: 80)
-                Text(message.content)
-                    .font(ChatFontScale.body(chatFontScale))
-                    .foregroundStyle(ScarfColor.onAccent)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        UnevenRoundedRectangle(
-                            cornerRadii: .init(
-                                topLeading: 14,
-                                bottomLeading: 14,
-                                bottomTrailing: 4,
-                                topTrailing: 14
+                VStack(alignment: .trailing, spacing: 4) {
+                    if isLong {
+                        Text(message.content)
+                            .font(ChatFontScale.body(chatFontScale))
+                            .foregroundStyle(ScarfColor.onAccent)
+                            .textSelection(.enabled)
+                            .frame(maxHeight: Self.userBubbleMaxHeight, alignment: .topLeading)
+                            .clipped()
+                        // "Expand in inspector" pill — tap routes the
+                        // full content into the right-side inspector
+                        // pane (where the existing ScrollView handles
+                        // arbitrarily long text). Using a Button on
+                        // top of the bubble's tap-to-select-text
+                        // gesture is fine — the pill is its own hit
+                        // region.
+                        Button {
+                            chatViewModel.setInspectorFocus(
+                                .userMessage(id: message.id)
                             )
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.up.right.square")
+                                    .font(.system(size: 10))
+                                Text("Expand in inspector")
+                                    .scarfStyle(.captionUppercase)
+                            }
+                            .foregroundStyle(ScarfColor.onAccent.opacity(0.85))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule().fill(ScarfColor.onAccent.opacity(0.18))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open the full message in the inspector pane (\(message.content.count) chars)")
+                    } else {
+                        Text(message.content)
+                            .font(ChatFontScale.body(chatFontScale))
+                            .foregroundStyle(ScarfColor.onAccent)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(
+                            topLeading: 14,
+                            bottomLeading: 14,
+                            bottomTrailing: 4,
+                            topTrailing: 14
                         )
-                        .fill(ScarfColor.accent)
                     )
+                    .fill(ScarfColor.accent)
+                )
             }
             if let time = message.timestamp {
                 HStack(spacing: 4) {

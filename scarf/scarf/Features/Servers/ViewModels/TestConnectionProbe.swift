@@ -68,12 +68,53 @@ struct TestConnectionProbe {
             primary = "$HOME/.hermes"
         }
 
+        // When the user supplied a manual `hermesBinaryHint` (gh#105
+        // Advanced override) the probe trusts it verbatim: a wrapper
+        // function defined in `~/.zshrc` or a `docker compose exec`
+        // alias won't survive a non-interactive /bin/sh PATH lookup,
+        // so the auto-detect would always fail for those setups.
+        // Source the common login rc files first so a function the
+        // user defined there has a chance to load; then check the
+        // first word against `command -v` (handles bare paths AND
+        // shell functions). Fall back to reporting the raw hint even
+        // if the lookup doesn't resolve — Hermes is invoked via
+        // `/bin/sh -c "<hint> …"` downstream, where a `~/.zshrc`-
+        // sourced shell may resolve the same string the probe
+        // couldn't reach (we can't replicate the runtime shell here).
+        let hintEnv: String
+        if let hint = config.hermesBinaryHint, !hint.isEmpty {
+            let escaped = hint
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            hintEnv = "HERMES_HINT=\"\(escaped)\"\n"
+        } else {
+            hintEnv = "HERMES_HINT=\"\"\n"
+        }
+
         let script = #"""
-        hpath=$(command -v hermes 2>/dev/null)
+        \#(hintEnv)
+        # Always source login rc files first so functions/aliases the
+        # user defined in their interactive shell at least have a
+        # chance to be visible in the lookups below.
+        for rc in "$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+            [ -f "$rc" ] && . "$rc" 2>/dev/null
+        done
+        hpath=""
+        if [ -n "$HERMES_HINT" ]; then
+            # Resolve the first token of the hint via `command -v` so
+            # `hermes` (a function) → that function's display path,
+            # `/abs/path` → itself, etc. Failing that, surface the
+            # hint verbatim — downstream callers run it through a
+            # shell which may resolve it even when this probe can't.
+            first=$(printf '%s\n' "$HERMES_HINT" | awk '{print $1}')
+            resolved=$(command -v "$first" 2>/dev/null)
+            if [ -n "$resolved" ]; then
+                hpath="$resolved"
+            else
+                hpath="$HERMES_HINT"
+            fi
+        fi
         if [ -z "$hpath" ]; then
-            for rc in "$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.bash_profile" "$HOME/.profile"; do
-                [ -f "$rc" ] && . "$rc" 2>/dev/null
-            done
             hpath=$(command -v hermes 2>/dev/null)
         fi
         if [ -z "$hpath" ]; then

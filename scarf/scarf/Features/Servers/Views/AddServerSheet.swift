@@ -103,6 +103,30 @@ struct AddServerSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // Advanced override for `hermesBinaryHint`. Hidden behind a
+            // disclosure so the common case (PATH-resolvable hermes)
+            // stays uncluttered. Surfaces the workaround for shell
+            // functions / aliases / Docker wrappers that the auto-probe
+            // can't see because it runs in a non-interactive /bin/sh
+            // (gh#105 — user with a `hermes` zsh function wrapping
+            // `docker compose exec` got blocked by "hermes binary not
+            // found" with nowhere to override).
+            DisclosureGroup("Advanced") {
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledField("Hermes binary") {
+                        TextField("Default: resolved via remote PATH probe", text: $viewModel.hermesBinary)
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                    }
+                    Text("Override the remote command Scarf uses to invoke Hermes. Useful when `hermes` is a shell function (e.g. `docker compose exec hermes hermes`), an alias, or installed at a non-standard path. Anything `/bin/sh -c \"<value> …\"` can run is accepted — absolute paths, bare command names, or short shell fragments. Leave blank to let Test Connection auto-detect.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 6)
+            }
+            .padding(.top, 4)
+
             Text("Scarf uses ssh-agent for authentication. If your key has a passphrase, run `ssh-add` before connecting — Scarf never prompts for or stores passphrases.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

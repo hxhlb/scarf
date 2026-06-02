@@ -22,6 +22,19 @@ final class AddServerViewModel {
     /// if missing.
     var projectsRoot: String = ""
 
+    /// Manual override for the remote command/path used to invoke
+    /// Hermes. Filled in when the auto-probe can't find `hermes` on
+    /// the remote `$PATH` — e.g., it's exposed as a zsh shell function
+    /// wrapping `docker compose exec`, an alias, or lives in an
+    /// unusual location. Empty = let the probe decide (the previous
+    /// behavior, still the default). When set, persisted to
+    /// `SSHConfig.hermesBinaryHint`; downstream ACP/CLI calls invoke
+    /// this verbatim via `/bin/sh -c "<hint> …"`, so any string a
+    /// non-interactive shell can resolve works (absolute path, bare
+    /// command name, function loaded via a sourced rc, etc.).
+    /// gh#105.
+    var hermesBinary: String = ""
+
     var isTesting: Bool = false
     /// Outcome of the most recent Test Connection run. `nil` = not yet run.
     var testResult: TestResult?
@@ -49,7 +62,7 @@ final class AddServerViewModel {
             identityFile: nonEmpty(identityFile),
             remoteHome: nonEmpty(remoteHome),
             projectsRoot: nonEmpty(projectsRoot),
-            hermesBinaryHint: nil
+            hermesBinaryHint: nonEmpty(hermesBinary)
         )
     }
 
@@ -104,9 +117,12 @@ final class AddServerViewModel {
 
     /// If the test succeeded, we prefer to save the probed binary path into
     /// `hermesBinaryHint` so subsequent calls don't need to re-resolve it.
+    /// A user-supplied `hermesBinary` override (gh#105) always wins — that's
+    /// the point of the field — so we only fall back to the probe value when
+    /// the user left it blank.
     func configForSave() -> SSHConfig {
         var cfg = draftConfig
-        if case .success(let path, _, _) = testResult {
+        if cfg.hermesBinaryHint == nil, case .success(let path, _, _) = testResult {
             cfg.hermesBinaryHint = path
         }
         return cfg

@@ -10,6 +10,7 @@ Every Scarf release in chronological order. The notes themselves live in `releas
 
 | Version | Date | GitHub release | Notes file |
 |---|---|---|---|
+| **v2.10.1** | 2026-05-29 | [v2.10.1](https://github.com/awizemann/scarf/releases/tag/v2.10.1) | [`releases/v2.10.1/RELEASE_NOTES.md`](https://github.com/awizemann/scarf/blob/main/releases/v2.10.1/RELEASE_NOTES.md) |
 | **v2.10.0** | 2026-05-28 | [v2.10.0](https://github.com/awizemann/scarf/releases/tag/v2.10.0) | [`releases/v2.10.0/RELEASE_NOTES.md`](https://github.com/awizemann/scarf/blob/main/releases/v2.10.0/RELEASE_NOTES.md) |
 | **v2.9.2** | 2026-05-26 | [v2.9.2](https://github.com/awizemann/scarf/releases/tag/v2.9.2) | [`releases/v2.9.2/RELEASE_NOTES.md`](https://github.com/awizemann/scarf/blob/main/releases/v2.9.2/RELEASE_NOTES.md) |
 | **v2.9.1** | 2026-05-26 | [v2.9.1](https://github.com/awizemann/scarf/releases/tag/v2.9.1) | [`releases/v2.9.1/RELEASE_NOTES.md`](https://github.com/awizemann/scarf/blob/main/releases/v2.9.1/RELEASE_NOTES.md) |

@@ -77,4 +77,4 @@ If a new Hermes release breaks something in Scarf, please file an issue includin
 - The relevant log snippet from `~/.hermes/logs/errors.log` (filter sensitive content first).
 
 ---
-_Last updated: 2026-05-28 — Scarf v2.10.0 + Hermes v0.15.0_
+_Last updated: 2026-05-29 — Scarf v2.10.1 + Hermes v0.15.0 (v2.10.1 is a Scarf-side fix release; no change to the Hermes capability matrix)_

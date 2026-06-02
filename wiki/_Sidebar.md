@@ -5,6 +5,7 @@ permalink: scarf-wiki/sidebar
 ---
 
 **Getting Started**
+- [Home](Home)
 - [Installation](Installation)
 - [First Run](First-Run)
 - [Updating](Updating)
@@ -17,31 +18,31 @@ permalink: scarf-wiki/sidebar
 
 **User Guide**
 - [Dashboard](Dashboard)
-- [Insights & Activity](Insights-and-Activity)
+- [Insights & Activity](Insights-&-Activity)
 - [Chat](Chat)
 - [Slash Commands](Slash-Commands)
-- [Memory & Skills](Memory-and-Skills)
-- [Projects & Profiles](Projects-and-Profiles)
+- [Memory & Skills](Memory-&-Skills)
+- [Projects & Profiles](Projects-&-Profiles)
 - [Project Templates](Project-Templates)
 - [Template Catalog](Template-Catalog)
 - [Template Ideas](Template-Ideas)
-- [Platforms / Personalities / Quick Commands](Platforms-Personalities-QuickCommands)
-- [Servers & Remote](Servers-and-Remote)
-- [MCP, Plugins, Webhooks, Tools](MCP-Servers-Plugins-Webhooks-Tools)
-- [Gateway / Cron / Health / Logs](Gateway-Cron-Health-Logs)
+- [Platforms / Personalities / Quick Commands](Platforms-/-Personalities-/-Quick-Commands)
+- [Servers & Remote](Servers-&-Remote)
+- [MCP, Plugins, Webhooks, Tools](MCP,-Plugins,-Webhooks,-Tools)
+- [Gateway / Cron / Health / Logs](Gateway-/-Cron-/-Health-/-Logs)
 
 **Architecture**
-- [Overview](Architecture-Overview)
+- [Overview](Overview)
 - [Core Services](Core-Services)
 - [Design System](Design-System)
 - [Data Model](Data-Model)
 - [Transport Layer](Transport-Layer)
 - [ScarfCore Package](ScarfCore-Package)
-- [Sidebar & Navigation](Sidebar-and-Navigation)
+- [Sidebar & Navigation](Sidebar-&-Navigation)
 - [ACP Subprocess](ACP-Subprocess)
 
 **Developer Guide**
-- [Build & Run](Build-and-Run)
+- [Build & Run](Build-&-Run)
 - [Adding a Feature Module](Adding-a-Feature-Module)
 - [Adding a Service](Adding-a-Service)
 - [Testing](Testing)
@@ -54,12 +55,12 @@ permalink: scarf-wiki/sidebar
 - [Keyboard Shortcuts](Keyboard-Shortcuts)
 
 **Troubleshooting**
-- [Slow Chat Startup](Troubleshooting-Slow-Chat-Startup)
+- [Slow Chat Startup](Slow-Chat-Startup)
 
 **Contributing**
 - [Contributing](Contributing)
 - [Wiki Maintenance](Wiki-Maintenance)
-- [ScarfGo Roadmap](ScarfGo-Roadmap) (dev reference)
+- [ScarfGo Roadmap](ScarfGo-Roadmap)
 
 **Release History**
 - [Release Notes Index](Release-Notes-Index)
@@ -68,3 +69,8 @@ permalink: scarf-wiki/sidebar
 **Legal & Support**
 - [Privacy Policy](Privacy-Policy)
 - [Support](Support)
+
+**Unsorted**
+- [Hermes Proxy](Hermes-Proxy)
+- [Localization](Localization)
+- [Performance Monitoring](Performance-Monitoring)

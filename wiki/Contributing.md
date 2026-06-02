@@ -64,9 +64,19 @@ Two paths:
 - **Larger wiki changes** — clone the wiki directly (`git clone git@github.com:awizemann/scarf.wiki.git`) or open an issue describing what needs adding. See [Wiki Maintenance](Wiki-Maintenance) for the full workflow including the secret-scan policy.
 - **Internal dev docs** (PRD, Hermes API discovery, raw architecture notes) live in `scarf/docs/` in the main repo and follow the normal PR flow.
 
+## Repo memory (Memophant)
+
+As of v2.10.1 Scarf's repo-resident memory for AI coding sessions is managed by **Memophant** — a memory manager I built for exactly this. You'll see it in three places:
+
+- A managed block at the bottom of `CLAUDE.md` describing the layered memory system (`.memory/` for atomic facts via the `basic-memory` CLI, `wiki/` for long-form reference, `design/` for design system docs, `TASKS.md` for the work kanban).
+- Commits on `main` titled "via Memophant" (memory migrations, consolidations, wiki/design syncs) — those are repo-memory housekeeping, not Scarf app changes; you can ignore them when reading history for app work.
+- A `wiki/` working directory + a `TASKS.md` kanban file at the repo root.
+
+Memophant will be open-sourced shortly. Until then, nothing in Scarf the app depends on it; it's a workflow tool for the repo. PRs don't need to touch any Memophant artifact — keep doing the normal `feat:` / `fix:` commits and the maintainer handles memory updates on the side.
+
 ## Code of conduct
 
 Be kind, be specific, assume good faith. Disagreements about technical direction are welcome; personal attacks aren't.
 
 ---
-_Last updated: 2026-04-25 — Scarf v2.5.0 (two targets, ScarfCore tests, iOS contribution areas)_
+_Last updated: 2026-05-29 — Scarf v2.10.1 (Memophant memory system note)_

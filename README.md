@@ -19,6 +19,19 @@
   <a href="https://www.buymeacoffee.com/awizemann"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="28"></a>
 </p>
 
+## What's New in 2.10.1
+
+A "projects fundamentals" maintenance release on top of v2.10.0. Six interlocking fixes from user feedback:
+
+- **Global `/scarf-*` slash commands** — six bundled commands (`scarf-new`, `scarf-help`, `scarf-dashboard`, `scarf-widget`, `scarf-cron`, `scarf-export`) available in every chat, not just per-project. Loaded from `~/.hermes/scarf/slash-commands/` and bootstrapped on launch with the same version-gated upgrade pattern as bundled skills.
+- **Skills sidebar finally shows `scarf-template-author`** — `SkillBootstrapService` installs into `~/.hermes/skills/scarf/` (matching `SkillsScanner`'s `<category>/<skill>/SKILL.md` layout) and auto-migrates the old flat install. One-time migration runs at first launch.
+- **Pre-session slash menu** — typing `/` before opening a chat now shows the full agent-command set greyed-out (`"Available once a chat is open"`) instead of collapsing to just `/new`.
+- **New-project wizard hand-off** — kickoff prompt rewritten with `SKILL:` / `PROJECT_PATH:` anchors that agents reliably treat as invocation markers (vs. the polite "use the skill" sentence agents routinely ignored). Skill-presence preflight in `commit()` guarantees the bundled skill is on disk before `session/new`.
+- **AGENTS.md `scarf-project` block: Scarf platform reference** — the managed block now describes Scarf's dashboard widget vocabulary, project slash commands, Kanban tenant, model presets, typed config, cron `--workdir`, skill loading, and template export. Idempotent + secret-safe + capped to ~30 lines. Now refreshed on template install too (previously chat-start only).
+- **Health: capabilities diagnostic panel** — raw `hermes --version` line, parsed semver/date, per-release flag list, and a Re-detect button. Capabilities auto-refresh on `NSApplication.didBecomeActive` so `hermes update` outside Scarf is picked up without a relaunch.
+
+See the full [v2.10.1 release notes](https://github.com/awizemann/scarf/releases/tag/v2.10.1).
+
 ## What's New in 2.10
 
 A coordinated catch-up to **Hermes v0.15.0** ("The Velocity Release"). v2.10 surfaces the Scarf-relevant slice of the largest Hermes release yet — OpenAI as a first-class provider, the 104-PR **Kanban maturation wave**, **Bitwarden Secrets Manager**, **MCP mTLS**, **skill bundles**, **per-session edit-approval modes**, plus ntfy, xAI Web Search, and the xAI model-retirement migration. New v0.15 capability flags gate every surface; pre-v0.15 hosts render byte-identical to v2.9.x. (All flag/config/wire shapes were verified against the `v2026.5.28` Hermes source before implementation.)
@@ -376,7 +389,7 @@ Create `.scarf/dashboard.json` in any project folder:
 
 **2. Register your project**
 
-In Scarf, go to **Projects** in the sidebar and click the **+** button to add your project folder. Or have your agent add it directly to the registry at `~/.hermes/scarf/projects.json`:
+Have your agent append a `{name, path}` entry directly to the registry at `~/.hermes/scarf/projects.json` — Scarf watches the file and picks up the change on the next sidebar refresh, no manual UI step needed:
 
 ```json
 {
@@ -385,6 +398,8 @@ In Scarf, go to **Projects** in the sidebar and click the **+** button to add yo
   ]
 }
 ```
+
+(You can also add the folder by hand in Scarf via **Projects → +** if you'd rather click than edit JSON — both paths write to the same file.)
 
 **3. View in Scarf**
 
@@ -426,7 +441,7 @@ When a dashboard includes a webview widget, Scarf adds a tabbed interface: **Das
 
 The real power is letting your Hermes agent build and update dashboards automatically. Add instructions like this to your agent's context:
 
-> Analyze this project and create a `.scarf/dashboard.json` dashboard with relevant metrics and status. Use stat widgets for key numbers, charts for trends, tables for structured data, lists for task tracking, and a webview widget if the project has a local web server or HTML reports. Register the project in `~/.hermes/scarf/projects.json` if not already registered.
+> Analyze this project and create a `.scarf/dashboard.json` dashboard with relevant metrics and status. Use stat widgets for key numbers, charts for trends, tables for structured data, lists for task tracking, and a webview widget if the project has a local web server or HTML reports. Register the project by appending a `{name, path}` entry to `~/.hermes/scarf/projects.json` if not already registered — Scarf picks up the change on next sidebar refresh.
 
 Your agent can update the dashboard as part of cron jobs, after builds, or whenever project state changes. Since Scarf watches the file, updates appear in real-time.
 

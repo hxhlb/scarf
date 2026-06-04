@@ -18,6 +18,8 @@ tags:
 - [canonical-prompts] Triggering phrases: 'Release v1.6.2', 'Release v1.6.2 as draft', 'Prepare v1.6.2 release notes from recent commits, then release' #release
 - [prereqs] One-time setup on Alan's machine: Developer ID Application cert in login Keychain (team 3Q6X2L86C4), notarytool keychain profile `scarf-notary`, Sparkle EdDSA private key in Keychain item `https://sparkle-project.org`, gh-pages branch + GitHub Pages enabled #setup
 - [distribution] Two artifacts per release: Scarf-vX.X.X-Universal.zip (arm64+x86_64) and Scarf-vX.X.X-ARM64.zip (smaller, Apple Silicon only). Auto-updates via Sparkle (daily check + manual) #distribution
+- [icloud-gotcha] Repo lives in iCloud Drive — `release.sh` must build under `${TMPDIR}/scarf-release-build`, NOT `$REPO_ROOT/build`, or codesign verify fails with `"Disallowed xattr com.apple.FinderInfo"`. See [[Releases under iCloud Drive]] for the full story #gotcha
 
 ## Relations
 - documented_in [[Wiki Maintenance Workflow]]
+- constrained_by [[Releases under iCloud Drive]]

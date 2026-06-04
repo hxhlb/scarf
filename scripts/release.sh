@@ -100,20 +100,29 @@ SIGN_UPDATE="$(find ~/Library/Developer/Xcode/DerivedData -name sign_update -typ
 [[ -x "${SIGN_UPDATE:-}" ]] || die "sign_update not found — build the project once in Xcode so Sparkle artifacts resolve, then re-run"
 
 # ---------- bump version ----------
-log "Bumping version to $VERSION"
+# NOTES_FILE is referenced later (appcast + GitHub release), so resolve it
+# unconditionally — even when the bump is skipped on a resume run.
 PBXPROJ="$PROJECT/project.pbxproj"
-# CURRENT_PROJECT_VERSION (build number) bumps by 1 from existing
-CUR_BUILD="$(awk -F'= ' '/CURRENT_PROJECT_VERSION/ {gsub(/[; ]/,"",$2); print $2; exit}' "$PBXPROJ")"
-NEW_BUILD=$((CUR_BUILD + 1))
-sed -i '' -E "s/MARKETING_VERSION = [0-9]+\.[0-9]+\.[0-9]+;/MARKETING_VERSION = ${VERSION};/g" "$PBXPROJ"
-sed -i '' -E "s/CURRENT_PROJECT_VERSION = [0-9]+;/CURRENT_PROJECT_VERSION = ${NEW_BUILD};/g" "$PBXPROJ"
-git add "$PBXPROJ"
-# Include release notes in the bump commit if user prepared them ahead of time.
 NOTES_FILE="$RELEASE_DIR/RELEASE_NOTES.md"
-if [[ -f "$NOTES_FILE" ]]; then
-  git add "$NOTES_FILE"
+CUR_MV="$(awk -F'= ' '/MARKETING_VERSION = [0-9]+\.[0-9]+\.[0-9]+/ {gsub(/[; ]/,"",$2); print $2; exit}' "$PBXPROJ")"
+if [[ "$CUR_MV" == "$VERSION" ]]; then
+  # Resume mode: the bump commit was already made on an earlier run that
+  # failed later in the pipeline. Reuse the existing build number rather than
+  # bumping again, and skip the commit (the tree is already clean against it).
+  log "Version already $VERSION — skipping bump (resume mode)"
+  NEW_BUILD="$(awk -F'= ' '/CURRENT_PROJECT_VERSION/ {gsub(/[; ]/,"",$2); print $2; exit}' "$PBXPROJ")"
+else
+  log "Bumping version to $VERSION"
+  CUR_BUILD="$(awk -F'= ' '/CURRENT_PROJECT_VERSION/ {gsub(/[; ]/,"",$2); print $2; exit}' "$PBXPROJ")"
+  NEW_BUILD=$((CUR_BUILD + 1))
+  sed -i '' -E "s/MARKETING_VERSION = [0-9]+\.[0-9]+\.[0-9]+;/MARKETING_VERSION = ${VERSION};/g" "$PBXPROJ"
+  sed -i '' -E "s/CURRENT_PROJECT_VERSION = [0-9]+;/CURRENT_PROJECT_VERSION = ${NEW_BUILD};/g" "$PBXPROJ"
+  git add "$PBXPROJ"
+  if [[ -f "$NOTES_FILE" ]]; then
+    git add "$NOTES_FILE"
+  fi
+  git commit -m "chore: Bump version to ${VERSION}"
 fi
-git commit -m "chore: Bump version to ${VERSION}"
 
 # ---------- build variants ----------
 # Each release produces two zips: a Universal binary (recommended — works on
@@ -169,6 +178,22 @@ build_variant() {
   fi
   [[ -d "$app_path" ]] || die "[$label] exported app not found at $app_path"
 
+  # Strip xattrs that get added by iCloud Drive (com.apple.fileprovider.fpfs#*)
+  # and Finder (com.apple.FinderInfo) as soon as the bundle materializes under
+  # ~/Library/Mobile Documents/. Neither is part of the code signature, but
+  # `codesign --strict` rejects any xattr not in its allow-list and fails the
+  # verify with "resource fork, Finder information, or similar detritus not
+  # allowed". Per-attribute deletion (not `xattr -cr`) so legitimate
+  # com.apple.cs.* signing metadata is preserved.
+  log "[$label] Strip iCloud/Finder xattrs (project lives in iCloud Drive)"
+  for x in com.apple.FinderInfo \
+           com.apple.ResourceFork \
+           "com.apple.fileprovider.fpfs#P" \
+           "com.apple.fileprovider.fpfs#N" \
+           com.apple.metadata:_kTimeMachineNewestSnapshot; do
+    xattr -drs "$x" "$app_path" 2>/dev/null || true
+  done
+
   log "[$label] Verify signature"
   codesign --verify --deep --strict --verbose=2 "$app_path"
 
@@ -185,6 +210,18 @@ build_variant() {
   xcrun stapler staple "$app_path"
   xcrun stapler validate "$app_path"
   spctl --assess --type execute --verbose "$app_path"
+
+  # Staple mutates the bundle, which re-triggers iCloud sync and re-adds the
+  # same xattrs stripped above. Strip again before the distribution zip so the
+  # zip — and every user's extracted copy — is clean.
+  log "[$label] Strip iCloud/Finder xattrs again before packaging"
+  for x in com.apple.FinderInfo \
+           com.apple.ResourceFork \
+           "com.apple.fileprovider.fpfs#P" \
+           "com.apple.fileprovider.fpfs#N" \
+           com.apple.metadata:_kTimeMachineNewestSnapshot; do
+    xattr -drs "$x" "$app_path" 2>/dev/null || true
+  done
 
   log "[$label] Package $(basename "$out_zip")"
   ditto -c -k --keepParent "$app_path" "$out_zip"

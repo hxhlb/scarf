@@ -53,7 +53,13 @@ SIGNING_IDENTITY="Developer ID Application"
 APPCAST_URL="https://awizemann.github.io/scarf/appcast.xml"
 DOWNLOAD_URL_BASE="https://github.com/awizemann/scarf/releases/download"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="$REPO_ROOT/build"
+# BUILD_DIR must live OUTSIDE the repo when the repo is under iCloud Drive.
+# iCloud's file-provider extension (fpfs) actively stamps com.apple.FinderInfo
+# and com.apple.fileprovider.fpfs#* xattrs onto any bundle directory it sees,
+# and re-attaches them within a second or two if you strip them. `codesign
+# --strict` rejects those xattrs, so verify fails. TMPDIR is per-user
+# (/var/folders/.../T on a normal shell), outside iCloud, and ephemeral.
+BUILD_DIR="${TMPDIR:-/tmp}/scarf-release-build"
 EXPORT_OPTIONS="$REPO_ROOT/scripts/ExportOptions.plist"
 RELEASE_DIR="$REPO_ROOT/releases/v${VERSION}"
 GH_PAGES_WORKTREE="${GH_PAGES_WORKTREE:-$REPO_ROOT/.gh-pages-worktree}"

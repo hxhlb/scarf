@@ -16,6 +16,13 @@ import Foundation
         #expect(caps.detected)
     }
 
+    @Test func parseV015ReleaseLine() {
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.15.0 (2026.5.28)")
+        #expect(caps.semver == HermesCapabilities.SemVer(major: 0, minor: 15, patch: 0))
+        #expect(caps.dateVersion == HermesCapabilities.DateVersion(year: 2026, month: 5, day: 28))
+        #expect(caps.detected)
+    }
+
     @Test func parseV012ReleaseLine() {
         let caps = HermesCapabilities.parseLine("Hermes Agent v0.12.0 (2026.4.30)")
         #expect(caps.semver == HermesCapabilities.SemVer(major: 0, minor: 12, patch: 0))
@@ -278,6 +285,81 @@ import Foundation
         #expect(caps.hasGoogleChatPlatform)
     }
 
+    @Test func v015FlagsAllOn() {
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.15.0 (2026.5.28)")
+        // Earlier-version surfaces stay on.
+        #expect(caps.hasCurator)
+        #expect(caps.hasACPImagePrompts)
+        #expect(caps.hasGoals)
+        #expect(caps.hasKanbanDiagnostics)
+        #expect(caps.hasACPSetSessionModel)
+        #expect(caps.hasSubgoal)
+        #expect(caps.hasYOLOSlashCommand)
+        #expect(caps.hasGrokOAuthProvider)
+        #expect(caps.hasHermesProxy)
+        #expect(caps.hasCrossSessionClaudeCache)
+        // v0.15 Kanban surfaces.
+        #expect(caps.hasKanbanSessionFilter)
+        #expect(caps.hasKanbanV015)
+        // v0.15 web + TTS.
+        #expect(caps.hasXAIWebSearchBackend)
+        #expect(caps.hasXAITTSAutoSpeechTags)
+        // v0.15 platform + auth + secrets.
+        #expect(caps.hasNtfyPlatform)
+        #expect(caps.hasAzureEntraAuth)
+        #expect(caps.hasBitwarden)
+        // v0.15 verbs.
+        #expect(caps.hasHermesAudit)
+        #expect(caps.hasXAIModelRetirement)
+        // v0.15 MCP + skill surfaces.
+        #expect(caps.hasMCPClientCerts)
+        #expect(caps.hasMCPCatalog)
+        #expect(caps.hasSkillBundles)
+        #expect(caps.hasSkillHubFreshness)
+        // v0.15 ACP additions.
+        #expect(caps.hasSessionEditAutoApproval)
+        // Convenience predicate.
+        #expect(caps.isV015OrLater)
+    }
+
+    @Test func v014HostHidesV015Flags() {
+        // Every v0.15 flag must stay off on a pristine v0.14 host so the
+        // UI degrades silently. v0.14 flags themselves remain on as a
+        // belt-and-braces guard against accidental gate flipping.
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.5.16)")
+        #expect(!caps.hasKanbanSessionFilter)
+        #expect(!caps.hasKanbanV015)
+        #expect(!caps.hasXAIWebSearchBackend)
+        #expect(!caps.hasNtfyPlatform)
+        #expect(!caps.hasXAITTSAutoSpeechTags)
+        #expect(!caps.hasAzureEntraAuth)
+        #expect(!caps.hasBitwarden)
+        #expect(!caps.hasHermesAudit)
+        #expect(!caps.hasXAIModelRetirement)
+        #expect(!caps.hasMCPClientCerts)
+        #expect(!caps.hasMCPCatalog)
+        #expect(!caps.hasSkillBundles)
+        #expect(!caps.hasSkillHubFreshness)
+        #expect(!caps.hasSessionEditAutoApproval)
+        #expect(!caps.isV015OrLater)
+        // v0.14 surfaces stay alive on a v0.14 host.
+        #expect(caps.hasSubgoal)
+        #expect(caps.hasHermesProxy)
+        #expect(caps.isV014OrLater)
+    }
+
+    @Test func v0_15_patchReleaseStillEnablesAllFlags() {
+        // v0.15.2 (the latest patch as of 2026-06-05) should still enable
+        // every v0.15 flag — patches don't roll back capability gates.
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.15.2 (2026.5.29)")
+        #expect(caps.hasKanbanSessionFilter)
+        #expect(caps.hasKanbanV015)
+        #expect(caps.hasBitwarden)
+        #expect(caps.hasMCPCatalog)
+        #expect(caps.hasSessionEditAutoApproval)
+        #expect(caps.isV015OrLater)
+    }
+
     // MARK: - isV013OrLater convenience predicate
 
     @Test func isV013OrLater_v013HostTrue() {
@@ -315,5 +397,22 @@ import Foundation
     @Test func isV014OrLater_emptyFalse() {
         let caps = HermesCapabilities.empty
         #expect(!caps.isV014OrLater)
+    }
+
+    // MARK: - isV015OrLater convenience predicate
+
+    @Test func isV015OrLater_v015HostTrue() {
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.15.0 (2026.5.28)")
+        #expect(caps.isV015OrLater)
+    }
+
+    @Test func isV015OrLater_v014HostFalse() {
+        let caps = HermesCapabilities.parseLine("Hermes Agent v0.14.0 (2026.5.16)")
+        #expect(!caps.isV015OrLater)
+    }
+
+    @Test func isV015OrLater_emptyFalse() {
+        let caps = HermesCapabilities.empty
+        #expect(!caps.isV015OrLater)
     }
 }

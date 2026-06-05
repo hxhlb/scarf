@@ -513,14 +513,52 @@ public actor ACPClient {
         return "\(raw.lowercased()):\(model)"
     }
 
+    /// Respond to a `session/request_permission` from the agent.
+    ///
+    /// Wire format MUST match Zed's Agent Client Protocol
+    /// `RequestPermissionOutcome`:
+    ///
+    ///     { "outcome": { "outcome": "selected", "optionId": "<id>" } }
+    ///
+    /// The inner discriminator field is literally named `outcome` —
+    /// NOT `kind` and NOT `type`. Values are `"selected"` (a user
+    /// pick — whether allow OR reject, since reject options are still
+    /// SELECTED options the agent reads as "reject_once" / "reject_always"
+    /// via their own optionId) or `"cancelled"` (the prompt was
+    /// dismissed without a pick). See:
+    /// https://agentclientprotocol.com/protocol/schema —
+    /// `RequestPermissionOutcome`.
+    ///
+    /// We previously sent `{"kind":"allowed"|"rejected"}` here, which
+    /// Hermes (correctly per spec) didn't recognize: with no valid
+    /// discriminator the response fell through to the cancelled-style
+    /// default and every Allow tap was reported as "blocked from
+    /// executing". Reported via TestFlight feedback on ScarfGo
+    /// 2.9.0(36), Jun 5 2026 — sudo prompts on a remote SSH host.
     public func respondToPermission(requestId: Int, optionId: String) async {
         let response: [String: Any] = [
             "jsonrpc": "2.0",
             "id": requestId,
             "result": [
                 "outcome": [
-                    "kind": optionId == "deny" ? "rejected" : "allowed",
+                    "outcome": "selected",
                     "optionId": optionId,
+                ] as [String: Any],
+            ] as [String: Any],
+        ]
+        await writeJSON(response)
+    }
+
+    /// Respond to a `session/request_permission` by cancelling — i.e.,
+    /// the user dismissed the prompt without picking any option. Per
+    /// ACP spec, `optionId` is omitted in this case.
+    public func cancelPermission(requestId: Int) async {
+        let response: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": requestId,
+            "result": [
+                "outcome": [
+                    "outcome": "cancelled",
                 ] as [String: Any],
             ] as [String: Any],
         ]

@@ -171,12 +171,42 @@ import Foundation
         #expect(req.options.count == 2)
 
         // Respond → we send a response JSON back over the channel.
+        // The shape MUST match the ACP spec for RequestPermissionOutcome:
+        //   { "outcome": { "outcome": "selected", "optionId": "..." } }
+        // The discriminator field is literally named "outcome" inside
+        // outcome. Anything else (e.g. "kind") makes Hermes treat the
+        // response as cancelled and the user sees "blocked from
+        // executing" — the field-failure mode that produced the
+        // TestFlight bug on ScarfGo 2.9.0(36).
         let prevSentCount = await channel.sent.count
         await client.respondToPermission(requestId: reqId, optionId: "allow_once")
         try await waitFor { await channel.sent.count > prevSentCount }
-        let response = await channel.sent.last ?? ""
-        #expect(response.contains("\"id\":42"))
-        #expect(response.contains("allow_once") || response.contains("allowed"))
+        let raw = await channel.sent.last ?? ""
+        #expect(raw.contains("\"id\":42"))
+        // Decode and validate the actual structure rather than substring.
+        let parsed = try #require(
+            try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+        )
+        let result = try #require(parsed["result"] as? [String: Any])
+        let outerOutcome = try #require(result["outcome"] as? [String: Any])
+        #expect(outerOutcome["outcome"] as? String == "selected")
+        #expect(outerOutcome["optionId"] as? String == "allow_once")
+        #expect(outerOutcome["kind"] == nil,
+                "must not emit a 'kind' field — pre-fix shape that Hermes rejected")
+
+        // Cancel path: the prompt was dismissed without a pick.
+        let prevSentCount2 = await channel.sent.count
+        await client.cancelPermission(requestId: reqId)
+        try await waitFor { await channel.sent.count > prevSentCount2 }
+        let cancelRaw = await channel.sent.last ?? ""
+        let cancelParsed = try #require(
+            try JSONSerialization.jsonObject(with: Data(cancelRaw.utf8)) as? [String: Any]
+        )
+        let cancelResult = try #require(cancelParsed["result"] as? [String: Any])
+        let cancelOutcome = try #require(cancelResult["outcome"] as? [String: Any])
+        #expect(cancelOutcome["outcome"] as? String == "cancelled")
+        #expect(cancelOutcome["optionId"] == nil,
+                "cancelled outcome must NOT carry optionId per ACP spec")
 
         await client.stop()
     }

@@ -457,8 +457,19 @@ final class ServerLiveStatus: Identifiable {
             if case .failure = gateway { gatewayOK = false } else { gatewayOK = true }
             return ProbeResult(running: running, gatewayRunning: gatewayRunning, ok: pgrepOK && gatewayOK)
         }.value
-        hermesRunning = probe.running
-        gatewayRunning = probe.gatewayRunning
+        // Only republish when the value actually changed. `@Observable`
+        // setters invalidate every dependent view on assignment, not on
+        // change — without this guard the menu-bar chrome (and any
+        // SwiftUI surface that observes `hermesRunning`) re-renders
+        // every 10 s even when nothing moved. See gh#105: users with a
+        // healthy steady-state server reported a visible flash every
+        // poll cycle.
+        if hermesRunning != probe.running {
+            hermesRunning = probe.running
+        }
+        if gatewayRunning != probe.gatewayRunning {
+            gatewayRunning = probe.gatewayRunning
+        }
         return probe.ok
     }
 }

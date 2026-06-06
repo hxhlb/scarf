@@ -3,29 +3,46 @@ import SwiftUI
 struct MarkdownContentView: View {
     let content: String
 
+    /// Skip the block-AST pipeline mid-stream. `parseBlocks()` walks the
+    /// full content on every body re-eval; at Hermes's ~30–60 chunks/sec
+    /// that's quadratic over the message lifetime and was a dominant
+    /// per-token render cost (cross-reference with the bubble-level
+    /// `parseContentBlocks` skip in `RichMessageBubble.contentView`).
+    /// Inline bold/italic/code/links still render via
+    /// `MarkdownRenderer.inlineAttributedString`; tables, code fences,
+    /// headings, lists materialize on finalize when the caller flips
+    /// this back to the full pipeline.
+    var streaming: Bool = false
+
     /// Chat font scale plumbed from `RichChatView` (issue #68). Defaults
     /// to 1.0 when this view is used outside the chat surface so other
     /// callers see the un-scaled rendering.
     @Environment(\.chatFontScale) private var chatFontScale: Double
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Coalesce consecutive `.paragraph` blocks (with optional
-            // `.blank` between them) into a single `Text(AttributedString)`
-            // so the cursor can select across paragraphs (issue #93).
-            // SwiftUI's `.textSelection(.enabled)` is per-Text — without
-            // this pre-pass, every `\n\n` in the agent's reply silently
-            // terminates the selection.
-            let units = Self.coalesceParagraphs(parseBlocks())
-            ForEach(Array(units.enumerated()), id: \.offset) { _, unit in
-                unitView(unit)
+        if streaming {
+            Text(MarkdownRenderer.inlineAttributedString(content))
+                .textSelection(.enabled)
+                .font(ChatFontScale.body(chatFontScale))
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                // Coalesce consecutive `.paragraph` blocks (with optional
+                // `.blank` between them) into a single `Text(AttributedString)`
+                // so the cursor can select across paragraphs (issue #93).
+                // SwiftUI's `.textSelection(.enabled)` is per-Text — without
+                // this pre-pass, every `\n\n` in the agent's reply silently
+                // terminates the selection.
+                let units = Self.coalesceParagraphs(parseBlocks())
+                ForEach(Array(units.enumerated()), id: \.offset) { _, unit in
+                    unitView(unit)
+                }
             }
+            // Paragraphs are rendered as plain `Text(AttributedString)` and
+            // inherit whatever font is set on the enclosing scope. Pin the
+            // scope to the scaled body font so the chat slider actually
+            // moves the visible text.
+            .font(ChatFontScale.body(chatFontScale))
         }
-        // Paragraphs are rendered as plain `Text(AttributedString)` and
-        // inherit whatever font is set on the enclosing scope. Pin the
-        // scope to the scaled body font so the chat slider actually
-        // moves the visible text.
-        .font(ChatFontScale.body(chatFontScale))
     }
 
     @ViewBuilder

@@ -2024,6 +2024,14 @@ public final class RichChatViewModel {
         hasMoreHistory = moreHistory
         ScarfMon.event(.sessionLoad, "mac.hydrateMessages.rows", count: messages.count)
         buildMessageGroups()
+        // Session activation: `.defaultScrollAnchor(.bottom)` only fires
+        // on initial ScrollView mount. When the user activates a
+        // different session while the chat surface stays on screen,
+        // the existing ScrollView keeps its prior offset and the new
+        // transcript appears wherever the last one happened to scroll
+        // to. Bump the trigger so the bottom sentinel re-anchors —
+        // mirrors the `addUserMessage` / `handlePromptComplete` bumps.
+        requestScrollToBottom()
 
         // Partial-result detection — if a fetch tripped a transport
         // failure (SSH timeout / ControlMaster drop) the user is now

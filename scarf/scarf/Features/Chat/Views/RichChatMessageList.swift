@@ -114,6 +114,18 @@ struct RichChatMessageList: View {
                         typingIndicator
                             .id("typing-indicator")
                     }
+
+                    // Stable bottom-of-content marker. `.defaultScroll-
+                    // Anchor(.bottom)` covers cold mount; this sentinel
+                    // covers the imperative path (`scrollTrigger` bumps
+                    // from `addUserMessage`, `handlePromptComplete`, and
+                    // `loadSessionHistory`'s session-activate hop).
+                    // Always-last id is sturdier than tracking the last
+                    // group / typing-indicator id, which churn as groups
+                    // append and `isWorking` flips.
+                    Color.clear
+                        .frame(height: 1)
+                        .id(Self.bottomAnchorID)
                 }
                 .padding()
                 // Intentionally NO `.animation(_:value:)` on this VStack.
@@ -132,22 +144,16 @@ struct RichChatMessageList: View {
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: scrollTrigger) {
-                let target = lastAnchorID
                 withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo(target, anchor: .bottom)
+                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
             }
         }
     }
 
-    /// Anchor ID used by the explicit scrollTrigger path. Prefers the typing
-    /// indicator when visible (so we scroll to the very bottom of the
-    /// current turn), otherwise the last group.
-    private var lastAnchorID: String {
-        if isWorking { return "typing-indicator" }
-        if let last = groups.last { return "group-\(last.id)" }
-        return "group-0"
-    }
+    /// Stable scroll target for the imperative path. See the sentinel
+    /// `Color.clear` row at the end of the VStack.
+    static let bottomAnchorID = "scarf.chat.bottom"
 
     private var emptyState: some View {
         VStack(spacing: 12) {

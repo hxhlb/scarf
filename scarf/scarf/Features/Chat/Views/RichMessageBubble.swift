@@ -217,7 +217,7 @@ struct RichMessageBubble: View, Equatable {
         // then memoizes the parsed blocks for the lifetime of the
         // bubble — no per-render cache needed.
         if message.id == 0 {
-            MarkdownContentView(content: message.content)
+            MarkdownContentView(content: message.content, streaming: true)
         } else {
             let blocks = parseContentBlocks(message.content)
             VStack(alignment: .leading, spacing: 8) {

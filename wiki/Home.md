@@ -33,6 +33,7 @@ A native macOS companion app for the [Hermes AI agent](https://github.com/hermes
 - [Servers & Remote](Servers-and-Remote) — adding remote Hermes hosts over SSH
 - [Localization](Localization) — supported languages + how to contribute a new one
 - [Release Notes Index](Release-Notes-Index) — every version's notes
+- [Troubleshooting: Update "improperly signed"](Troubleshooting-Sparkle-Update) — recovery if Sparkle rejects an update
 - [Privacy Policy](Privacy-Policy) · [Support](Support) — what data the apps access; how to get help
 - [Wiki Maintenance](Wiki-Maintenance) — how this wiki is edited and kept in sync
 

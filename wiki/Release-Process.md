@@ -38,7 +38,17 @@ After running with `--draft`:
 
 ## Sparkle signing key
 
-Releases are EdDSA-signed by Sparkle. The private key lives in the user's macOS Keychain under `https://sparkle-project.org`; the public key is embedded in `Info.plist` as `SUPublicEDKey`. **If the private key is lost, no installed Scarf can ever update again.** There is no recovery — every existing user would have to manually download a new build.
+Releases are EdDSA-signed by Sparkle. The private key lives in the macOS login Keychain under generic-password item `https://sparkle-project.org` (account `ed25519`); the public key is embedded in `Info.plist` as `SUPublicEDKey`. **If the private key is lost, no installed Scarf can ever update again** — every existing user would have to manually download a new build, because every shipped binary verifies signatures against its *baked-in* public key, and rotating `SUPublicEDKey` only affects future installs.
+
+### Releasing from a fresh machine
+
+Keychain items don't sync between Macs by default. A fresh release machine has **no** Sparkle key until you import the production one — and if you run Sparkle's `generate_keys` instead of importing, you'll get an unrelated auto-generated keypair. Signing a release with that wrong key produces an appcast every installed Sparkle correctly rejects. _This happened with v2.10.2 (2026-06-05) and was corrected within a few hours by re-signing the appcast; see [Troubleshooting: Update is improperly signed](Troubleshooting-Sparkle-Update) for the user-facing recovery._
+
+The release script enforces the constraint:
+
+- **Preflight.** Before any state mutation (version bump, build, archive), `release.sh` reads `SUPublicEDKey` from `Info.plist` and compares it to the public key stored in the Keychain item's comment field (Sparkle's `generate_keys` writes the pubkey there automatically). Mismatch → `die` with a pointer to the import runbook.
+- **Postflight.** After `sign_update` produces the signature, the script base64-decodes it and asserts it's exactly 64 bytes (Ed25519 size). Catches malformed-but-non-empty output.
+- **Recovery runbook.** The exact `security add-generic-password` import command, the canonical public-key fingerprint to verify against, and the incident history live in `.memory/ops/Sparkle Key Recovery.md`. Operators setting up a new release machine read that note first.
 
 ## Where things live
 
@@ -66,4 +76,4 @@ ScarfGo ships through:
 The iOS `MARKETING_VERSION` should match the Mac `MARKETING_VERSION` for the same release; the iOS `CURRENT_PROJECT_VERSION` (build number) increments independently per Apple's monotonic-build-number rule. There's no automation for iOS bumping yet — manual edit in the Xcode target before archiving.
 
 ---
-_Last updated: 2026-04-27 — Scarf v2.5.1 (post-package verification gate)_
+_Last updated: 2026-06-06 — Scarf v2.10.2 (Sparkle keypair preflight after a fresh-machine signing incident)_

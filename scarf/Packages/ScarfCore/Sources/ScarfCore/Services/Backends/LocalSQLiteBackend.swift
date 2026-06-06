@@ -74,10 +74,18 @@ public actor LocalSQLiteBackend: HermesQueryBackend {
 
     @discardableResult
     public func refresh(forceFresh: Bool) async -> Bool {
-        // Local always close-and-reopen — the file may have been swapped
-        // by Hermes (rare) or we want to pick up a schema migration.
-        // `forceFresh` is irrelevant locally; included for protocol
-        // parity with the remote backend.
+        // Keep the connection open across loads. SQLite's read-only
+        // handle picks up Hermes' WAL writes automatically — there's
+        // nothing to "refresh" in steady state. Close+reopen on every
+        // tick was the dominant cost on a 285 MB state.db + 114 MB WAL
+        // (see gh#102): reopening forces SQLite to re-index the WAL
+        // page map, and the Dashboard's `.onChange(fileWatcher)` fires
+        // that work on every coalesced FSEvent burst.
+        //
+        // `forceFresh: true` remains the schema-migration escape hatch
+        // (rare; only when the user upgrades Hermes and table_info
+        // changes mid-session).
+        if !forceFresh, db != nil { return true }
         await close()
         return await open()
     }
@@ -88,6 +96,17 @@ public actor LocalSQLiteBackend: HermesQueryBackend {
         }
         db = nil
         openedAtPath = nil
+    }
+
+    deinit {
+        // Backstop the file descriptor when the backend is deallocated
+        // without an explicit close (e.g., DashboardViewModel teardown
+        // on server switch). Actors don't run async cleanup in deinit,
+        // but `sqlite3_close` is safe to call from any thread on a
+        // pointer no one else holds.
+        if let db {
+            sqlite3_close(db)
+        }
     }
 
     // MARK: - Schema detection

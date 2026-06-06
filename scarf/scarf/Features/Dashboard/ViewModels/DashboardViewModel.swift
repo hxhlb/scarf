@@ -76,11 +76,13 @@ final class DashboardViewModel {
 
     private func loadImpl() async {
         isLoading = true
-        // refresh() is essentially free for the streaming remote backend
-        // (no transfer — every query is fresh) and a cheap reopen for
-        // local. The four data-service queries below are batched
-        // through `dashboardSnapshot` so a remote load is one SSH
-        // round-trip instead of four.
+        // `refresh()` is a no-op for the streaming remote backend (every
+        // query is already fresh) and — after gh#102 — a no-op for the
+        // local backend too when the SQLite handle is already open.
+        // SQLite read-only sees Hermes' WAL writes transparently, so
+        // there's nothing to reopen each tick. The four data-service
+        // queries below are batched through `dashboardSnapshot` so a
+        // remote load is one SSH round-trip instead of four.
         let opened = await dataService.refresh()
         var collectedErrors: [String] = []
         if opened {
@@ -108,7 +110,12 @@ final class DashboardViewModel {
             }
             .prefix(6)
             .map { $0 }
-            await dataService.close()
+            // Keep the handle open across loads. Closing here forced the
+            // next `refresh()` to reopen the 285 MB state.db (gh#102),
+            // which on a host with a multi-hundred-MB uncheckpointed WAL
+            // is exactly the cost we're trying to avoid running on every
+            // FSEvent-coalesced tick. Backend `deinit` releases the
+            // handle when the ViewModel is deallocated.
         } else if let msg = await dataService.lastOpenError {
             collectedErrors.append(msg)
         }

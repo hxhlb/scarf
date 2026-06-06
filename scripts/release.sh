@@ -105,6 +105,30 @@ xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" --output-format js
 SIGN_UPDATE="$(find ~/Library/Developer/Xcode/DerivedData -name sign_update -type f -perm +111 2>/dev/null | head -n1 || true)"
 [[ -x "${SIGN_UPDATE:-}" ]] || die "sign_update not found — build the project once in Xcode so Sparkle artifacts resolve, then re-run"
 
+# Sparkle EdDSA keypair sanity check. v2.10.2 shipped an unverifiable
+# signature because a fresh machine had a `generate_keys`-minted keypair
+# whose public key did NOT match the SUPublicEDKey baked into Info.plist:
+# sign_update produced a clean signature against the wrong private key,
+# so every installed Sparkle rejected the update. Sparkle's generate_keys
+# stores the public key in the Keychain item's comment field; compare it
+# against Info.plist and refuse to proceed on mismatch. Recovery procedure
+# (key import on a fresh machine) lives in .memory/ops/sparkle-key-recovery.md.
+EMBEDDED_PUBKEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$REPO_ROOT/scarf/scarf/Info.plist")"
+[[ -n "$EMBEDDED_PUBKEY" ]] || die "SUPublicEDKey missing from Info.plist"
+KEYCHAIN_PUBKEY="$(security find-generic-password -s "https://sparkle-project.org" -a ed25519 -g 2>&1 \
+  | grep '"icmt"' \
+  | grep -oE '[A-Za-z0-9+/]{43}=' \
+  | tail -1)"
+[[ -n "$KEYCHAIN_PUBKEY" ]] || die "Sparkle Keychain item missing public-key comment — re-import with -j '<pubkey>'. See .memory/ops/sparkle-key-recovery.md."
+if [[ "$EMBEDDED_PUBKEY" != "$KEYCHAIN_PUBKEY" ]]; then
+  die "Sparkle key mismatch — refusing to release.
+  Info.plist SUPublicEDKey:           $EMBEDDED_PUBKEY
+  Keychain private key signs against: $KEYCHAIN_PUBKEY
+Releasing now would ship an unverifiable signature.
+See .memory/ops/sparkle-key-recovery.md for the import procedure."
+fi
+log "Sparkle keypair OK ($EMBEDDED_PUBKEY)"
+
 # ---------- bump version ----------
 # NOTES_FILE is referenced later (appcast + GitHub release), so resolve it
 # unconditionally — even when the bump is skipped on a resume run.
@@ -261,6 +285,14 @@ SIG_OUTPUT="$("$SIGN_UPDATE" "$UNIVERSAL_ZIP")"
 ED_SIGNATURE="$(echo "$SIG_OUTPUT" | sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p')"
 FILE_LENGTH="$(echo "$SIG_OUTPUT" | sed -nE 's/.*length="([^"]+)".*/\1/p')"
 [[ -n "$ED_SIGNATURE" && -n "$FILE_LENGTH" ]] || die "sign_update did not produce signature: $SIG_OUTPUT"
+
+# Postflight: catches the case where sign_update returned SOMETHING but
+# the signature is the wrong shape (multiple matching Keychain items,
+# truncated output, mid-stderr leak). Ed25519 sigs are exactly 64 raw
+# bytes; the preflight above is the load-bearing key-mismatch check,
+# this is belt-and-suspenders on the binary's output itself.
+python3 -c "import base64,sys; sig=base64.b64decode(sys.argv[1]); sys.exit(0 if len(sig)==64 else 1)" "$ED_SIGNATURE" \
+  || die "EdDSA signature did not decode to 64 bytes (got: $ED_SIGNATURE) — sign_update output is malformed"
 
 DOWNLOAD_URL="$DOWNLOAD_URL_BASE/v${VERSION}/Scarf-v${VERSION}-Universal.zip"
 PUB_DATE="$(LC_TIME=en_US.UTF-8 date -u +"%a, %d %b %Y %H:%M:%S +0000")"

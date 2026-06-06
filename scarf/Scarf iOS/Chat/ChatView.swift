@@ -1344,25 +1344,43 @@ final class ChatController {
             PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.hermes/bin:$PATH" \
             \(hermes) config set 'model.provider' '\(Self.escapeShellArg(trimmedProvider))'
             """
-            let providerOK = (try? ctx.makeTransport().runProcess(
+            let providerResult: ProcessResult? = try? ctx.makeTransport().runProcess(
                 executable: "/bin/sh",
                 args: ["-c", providerScript],
                 stdin: nil,
                 timeout: 15
-            ))?.exitCode == 0
+            )
+            let providerOK = providerResult?.exitCode == 0
+            var modelResult: ProcessResult? = nil
             var modelOK = true
             if providerOK, !trimmedModel.isEmpty {
                 let modelScript = """
                 PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.hermes/bin:$PATH" \
                 \(hermes) config set 'model.default' '\(Self.escapeShellArg(trimmedModel))'
                 """
-                modelOK = (try? ctx.makeTransport().runProcess(
+                modelResult = try? ctx.makeTransport().runProcess(
                     executable: "/bin/sh",
                     args: ["-c", modelScript],
                     stdin: nil,
                     timeout: 15
-                ))?.exitCode == 0
+                )
+                modelOK = modelResult?.exitCode == 0
             }
+
+            // Build the diagnostic message before hopping to MainActor so
+            // we don't lose stderr if everything fails. gh#112: Docker
+            // users with `hermes` wrapped in `docker compose exec` saw
+            // only the generic "Couldn't save" message — surfacing the
+            // wrapper's stderr makes the failure mode self-diagnostic
+            // (missing config dir in the container, wrapper needs a TTY,
+            // PATH miss, etc.) instead of a black box.
+            let failureMessage = Self.preflightFailureMessage(
+                hermes: hermes,
+                providerOK: providerOK,
+                providerResult: providerResult,
+                modelOK: modelOK,
+                modelResult: modelResult
+            )
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -1378,10 +1396,44 @@ final class ChatController {
                         }
                     }
                 } else if !(providerOK && modelOK) {
-                    self.state = .failed("Couldn't save model+provider to config.yaml.")
+                    self.state = .failed(failureMessage)
                 }
             }
         }
+    }
+
+    /// Compose a self-diagnostic error message for the preflight save
+    /// failure path. Includes which command failed, the hermes binary
+    /// that was invoked (so a misconfigured `hermesBinaryHint` is
+    /// visible), exit code, and the first line of stderr. gh#112.
+    nonisolated private static func preflightFailureMessage(
+        hermes: String,
+        providerOK: Bool,
+        providerResult: ProcessResult?,
+        modelOK: Bool,
+        modelResult: ProcessResult?
+    ) -> String {
+        let failed: (String, ProcessResult?) = !providerOK
+            ? ("model.provider", providerResult)
+            : ("model.default", modelResult)
+        let (key, result) = failed
+        var lines = ["Couldn't save \(key) to config.yaml via `\(hermes) config set`."]
+        if let result {
+            let stderr = result.stderrString.trimmingCharacters(in: .whitespacesAndNewlines)
+            let stdout = result.stdoutString.trimmingCharacters(in: .whitespacesAndNewlines)
+            let payload = [stderr, stdout].filter { !$0.isEmpty }.joined(separator: "\n")
+            lines.append("Exit code \(result.exitCode).")
+            if !payload.isEmpty {
+                // Truncate runaway output so the failure banner stays
+                // legible; full output is in Console.app via the
+                // transport's own logging.
+                let trimmed = payload.count > 400 ? String(payload.prefix(400)) + "…" : payload
+                lines.append(trimmed)
+            }
+        } else {
+            lines.append("Transport refused the command — check that the SSH server is reachable.")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Single-quote escape a shell argument. Handles embedded single

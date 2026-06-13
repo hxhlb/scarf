@@ -285,7 +285,7 @@ public struct LocalTransport: ServerTransport {
                 let stderrTail: String
                 if proc.terminationStatus != 0 {
                     stderrTail = (try? errPipe.fileHandleForReading.readToEnd())
-                        .flatMap { String(data: $0 ?? Data(), encoding: .utf8) } ?? ""
+                        .flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 } else {
                     stderrTail = ""
                 }
@@ -349,7 +349,7 @@ public struct LocalTransport: ServerTransport {
                 let stderrTail: String
                 if proc.terminationStatus != 0 {
                     stderrTail = (try? errPipe.fileHandleForReading.readToEnd())
-                        .flatMap { String(data: $0 ?? Data(), encoding: .utf8) } ?? ""
+                        .flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 } else {
                     stderrTail = ""
                 }

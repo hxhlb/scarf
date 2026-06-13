@@ -54,7 +54,6 @@ public enum GatewayConfigWriter {
         let itemIndent = 8
 
         let lines = yaml.components(separatedBy: "\n")
-        let blockHeaderText = "      \(key):"   // indented match for find()
         let trimmedItems = items.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
 
         // Locate `      <key>:` whose lineage is gateway → platforms → <platform>.
@@ -100,9 +99,6 @@ public enum GatewayConfigWriter {
                 items: trimmedItems
             )
         }
-
-        // (unreachable — switch is exhaustive)
-        _ = blockHeaderText
     }
 
     /// Async wrapper that reads, mutates, writes via the given context.

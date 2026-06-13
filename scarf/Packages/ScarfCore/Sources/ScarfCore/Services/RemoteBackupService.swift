@@ -520,7 +520,7 @@ public final class RemoteBackupService: @unchecked Sendable {
         proc.waitUntilExit()
         if proc.terminationStatus != 0 {
             let tail = (try? errPipe.fileHandleForReading.readToEnd())
-                .flatMap { String(data: $0 ?? Data(), encoding: .utf8) } ?? ""
+                .flatMap { String(data: $0, encoding: .utf8) } ?? ""
             throw BackupError.zipFailed("zip exited \(proc.terminationStatus): \(tail)")
         }
         #endif

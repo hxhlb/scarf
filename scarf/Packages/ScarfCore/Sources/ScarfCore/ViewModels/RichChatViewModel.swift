@@ -1819,7 +1819,7 @@ public final class RichChatViewModel {
             // transaction pattern — empty-finalize used to ripple the
             // ForEach diff to every following bubble.
             withTransaction(Transaction(animation: nil)) {
-                messages.remove(at: idx)
+                _ = messages.remove(at: idx)
             }
         }
 

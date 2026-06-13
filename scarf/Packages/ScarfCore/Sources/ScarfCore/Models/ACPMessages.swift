@@ -141,7 +141,12 @@ public struct AnyCodable: Codable, @unchecked Sendable {
 
 // MARK: - ACP Events (parsed from session/update notifications)
 
-public enum ACPEvent: Sendable {
+/// `@unchecked Sendable` because `.availableCommands` carries `[[String: Any]]`
+/// parsed straight from the ACP JSON notification — an immutable value graph
+/// (`JSONSerialization` output / string literals), never mutated after the
+/// event is constructed. Same rationale + treatment as `AnyCodable` above; we
+/// keep the raw `Any` rather than box every consumer in macOS + iOS + tests.
+public enum ACPEvent: @unchecked Sendable {
     case messageChunk(sessionId: String, text: String)
     case thoughtChunk(sessionId: String, text: String)
     case toolCallStart(sessionId: String, call: ACPToolCallEvent)
@@ -174,7 +179,11 @@ public enum ACPEvent: Sendable {
     }
 }
 
-public struct ACPToolCallEvent: Sendable {
+/// `@unchecked Sendable` because `rawInput` is the tool call's `[String: Any]?`
+/// JSON arguments parsed from the ACP notification — an immutable value graph
+/// re-serialized verbatim in `argumentsJSON`. Same rationale as `ACPEvent` /
+/// `AnyCodable`.
+public struct ACPToolCallEvent: @unchecked Sendable {
     public let toolCallId: String
     public let title: String
     public let kind: String

@@ -161,9 +161,16 @@ public actor HermesDataService {
         if hasV07Schema {
             cols += ", reasoning"
         }
-        // v0.11+ `reasoning_content` is intentionally excluded.
-        // `messageFromRow` defaults it to nil; callers that need it
-        // call `fetchReasoningContent(for:)` to lazy-load.
+        // v0.11+ `reasoning_content` BLOB stays excluded (heavy). We select a
+        // NULL placeholder — keeps index 11 == reasoning_content to match
+        // `messageColumns` / `messageFromRow` — plus a cheap boolean
+        // `hasReasoningContent` (index 12, read by NAME) so the REASONING
+        // disclosure renders on resume for messages that have reasoning_content
+        // but a NULL legacy `reasoning` (v0.16 thinking models — t-aud27). The
+        // blob itself still lazy-loads via `reasoningContent(for:)`.
+        if hasV011Schema {
+            cols += ", NULL AS reasoning_content, (reasoning_content IS NOT NULL AND reasoning_content != '') AS hasReasoningContent"
+        }
         return cols
     }
 
@@ -197,6 +204,13 @@ public actor HermesDataService {
             """
         if hasV07Schema {
             cols += ", reasoning"
+        }
+        // Same shape as `messageColumnsLight`: NULL placeholder at index 11 to
+        // hold the reasoning_content slot, plus the cheap `hasReasoningContent`
+        // boolean so the disclosure shows on resume for reasoning_content-only
+        // messages (t-aud27). Blob excluded; lazy-loads on disclosure open.
+        if hasV011Schema {
+            cols += ", NULL AS reasoning_content, (reasoning_content IS NOT NULL AND reasoning_content != '') AS hasReasoningContent"
         }
         return cols
     }
@@ -1159,6 +1173,15 @@ public actor HermesDataService {
         // when v0.11 schema is present. Both columns can carry text
         // simultaneously — UI prefers `reasoningContent`.
         let reasoningContent: String? = hasV011Schema ? row.optionalString(at: 11) : nil
+        // Read the cheap availability flag by NAME (order-safe, independent of
+        // the schema-conditional column positions): the light/skeleton SELECTs
+        // carry `hasReasoningContent` as 0/1; the full SELECT omits it, so fall
+        // back to the loaded blob being non-empty. Drives `hasReasoning` so the
+        // disclosure shows on resume for reasoning_content-only rows (t-aud27).
+        let reasoningContentAvailable: Bool = {
+            if case .integer(let n) = row["hasReasoningContent"] { return n != 0 }
+            return reasoningContent?.isEmpty == false
+        }()
         return HermesMessage(
             id: row.int(at: 0),
             sessionId: row.string(at: 1),
@@ -1171,7 +1194,8 @@ public actor HermesDataService {
             tokenCount: row.optionalInt(at: 8),
             finishReason: row.optionalString(at: 9),
             reasoning: hasV07Schema ? row.optionalString(at: 10) : nil,
-            reasoningContent: reasoningContent
+            reasoningContent: reasoningContent,
+            reasoningContentAvailable: reasoningContentAvailable
         )
     }
 

@@ -18,6 +18,15 @@ public struct HermesMessage: Identifiable, Sendable {
     /// message during the v0.10 → v0.11 transition. UI prefers
     /// `reasoningContent` when set, falls back to `reasoning`.
     public let reasoningContent: String?
+    /// True when this message has v0.11 `reasoning_content` on disk that the
+    /// lightweight / skeleton fetch deliberately did NOT load (the blob can be
+    /// 20+ KB per message). Lets the REASONING disclosure render on resume for
+    /// thinking-model messages that populate ONLY `reasoning_content` — Hermes
+    /// v0.16 leaves the legacy `reasoning` column NULL for them, so without
+    /// this flag `hasReasoning` is false and the disclosure (plus t-aud21's
+    /// on-open lazy fetch) never appears. Derived from a cheap boolean column
+    /// (`reasoning_content IS NOT NULL …`), never the blob itself. (t-aud27)
+    public let reasoningContentAvailable: Bool
 
 
     public init(
@@ -32,7 +41,8 @@ public struct HermesMessage: Identifiable, Sendable {
         tokenCount: Int?,
         finishReason: String?,
         reasoning: String?,
-        reasoningContent: String? = nil
+        reasoningContent: String? = nil,
+        reasoningContentAvailable: Bool = false
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -46,6 +56,7 @@ public struct HermesMessage: Identifiable, Sendable {
         self.finishReason = finishReason
         self.reasoning = reasoning
         self.reasoningContent = reasoningContent
+        self.reasoningContentAvailable = reasoningContentAvailable
     }
     public var isUser: Bool { role == "user" }
     public var isAssistant: Bool { role == "assistant" }
@@ -55,7 +66,11 @@ public struct HermesMessage: Identifiable, Sendable {
     public var hasReasoning: Bool {
         let r = reasoning ?? ""
         let rc = reasoningContent ?? ""
-        return !r.isEmpty || !rc.isEmpty
+        // `reasoningContentAvailable` covers the light/skeleton fetch: the
+        // blob isn't loaded (so `rc` is empty) but it exists on disk, and on
+        // v0.16 thinking models the legacy `reasoning` column is NULL too — so
+        // without this the disclosure would never show on resume (t-aud27).
+        return !r.isEmpty || !rc.isEmpty || reasoningContentAvailable
     }
     /// Preferred reasoning text for rendering — `reasoningContent`
     /// (newer, richer) wins over the legacy `reasoning` blob when
@@ -109,7 +124,8 @@ public struct HermesMessage: Identifiable, Sendable {
             tokenCount: tokenCount,
             finishReason: finishReason,
             reasoning: reasoning,
-            reasoningContent: reasoningContent
+            reasoningContent: reasoningContent,
+            reasoningContentAvailable: reasoningContentAvailable
         )
     }
 }

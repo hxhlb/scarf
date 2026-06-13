@@ -216,11 +216,93 @@ import Foundation
         _ = await service.fetchSkeletonMessages(sessionId: "s1", limit: 200)
 
         let sql = await mock.queryLog[0].sql
-        #expect(sql.contains("NULL AS tool_calls"))   // tool_calls still NULLed
-        #expect(!sql.contains("NULL AS reasoning"))    // reasoning no longer NULLed
-        #expect(sql.contains(", reasoning"))           // real reasoning column selected
-        #expect(!sql.contains("reasoning_content"))    // heavy blob still excluded
+        #expect(sql.contains("NULL AS tool_calls"))        // tool_calls still NULLed
+        #expect(sql.contains(", reasoning,"))              // real reasoning column selected, not NULLed (t-aud01)
+        // t-aud27: the heavy reasoning_content BLOB is still NOT fetched — we
+        // select a NULL placeholder (keeps index 11 == reasoning_content) plus a
+        // cheap `hasReasoningContent` boolean so the disclosure can render on
+        // resume for reasoning_content-only messages.
+        #expect(sql.contains("NULL AS reasoning_content")) // blob not fetched (placeholder)
+        #expect(sql.contains("hasReasoningContent"))       // cheap availability boolean
         #expect(sql.contains("role IN ('user','assistant')"))
+    }
+
+    @Test func fetchSkeletonMessagesBareSchemaOmitsReasoningContentFlag() async {
+        // No v0.11 schema → no reasoning_content column exists, so neither the
+        // placeholder nor the availability boolean may be referenced (it would
+        // be a "no such column" SQL error).
+        let mock = MockHermesQueryBackend()
+        await mock.setHasV07Schema(true)
+        await mock.setHasV011Schema(false)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchSkeletonMessages(sessionId: "s1", limit: 200)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(!sql.contains("reasoning_content"))    // column doesn't exist pre-v0.11
+        #expect(!sql.contains("hasReasoningContent"))
+        #expect(sql.contains(", reasoning"))           // legacy reasoning still selected (last column here, no trailing comma)
+    }
+
+    // MARK: - reasoning_content availability flag (t-aud27)
+
+    @Test func fetchMessagesLightAddsReasoningContentAvailabilityFlag() async {
+        // The light fetch must NOT pull the heavy reasoning_content blob, but it
+        // SHOULD select the cheap `hasReasoningContent` boolean so the REASONING
+        // disclosure shows on resume for reasoning_content-only messages.
+        let mock = MockHermesQueryBackend()
+        await mock.setHasV07Schema(true)
+        await mock.setHasV011Schema(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchMessages(sessionId: "s1", limit: 10, before: nil)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("NULL AS reasoning_content")) // blob excluded (placeholder)
+        #expect(sql.contains("hasReasoningContent"))       // availability flag present
+    }
+
+    @Test func messageFromRowSurfacesReasoningContentAvailability() async {
+        // A reasoning_content-only row (legacy `reasoning` NULL, blob not loaded,
+        // `hasReasoningContent` = 1) must parse to a message whose `hasReasoning`
+        // is true via `reasoningContentAvailable` — so the disclosure renders and
+        // t-aud21's on-open lazy fetch has something to trigger. (t-aud27)
+        let mock = MockHermesQueryBackend()
+        await mock.setHasV07Schema(true)
+        await mock.setHasV011Schema(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        let available = makeRow([
+            ("id", .integer(7)), ("session_id", .text("s1")), ("role", .text("assistant")),
+            ("content", .text("answer")), ("tool_call_id", .null), ("tool_calls", .null),
+            ("tool_name", .null), ("timestamp", .real(1_700_000_005.0)), ("token_count", .integer(20)),
+            ("finish_reason", .text("stop")),
+            ("reasoning", .null),               // index 10 — v0.16 thinking model leaves this NULL
+            ("reasoning_content", .null),       // index 11 — light/skeleton placeholder (blob not loaded)
+            ("hasReasoningContent", .integer(1)) // cheap flag: blob EXISTS on disk
+        ])
+        let notAvailable = makeRow([
+            ("id", .integer(8)), ("session_id", .text("s1")), ("role", .text("assistant")),
+            ("content", .text("plain")), ("tool_call_id", .null), ("tool_calls", .null),
+            ("tool_name", .null), ("timestamp", .real(1_700_000_006.0)), ("token_count", .integer(5)),
+            ("finish_reason", .text("stop")),
+            ("reasoning", .null), ("reasoning_content", .null), ("hasReasoningContent", .integer(0))
+        ])
+        await mock._seedRows(forSQLPrefix: "SELECT id, session_id", [notAvailable, available])
+
+        let result = await service.fetchMessages(sessionId: "s1", limit: 10, before: nil)
+        #expect(result.count == 2)
+        // Reversed to chronological: [available (id 7), notAvailable (id 8)].
+        let avail = result.first { $0.id == 7 }
+        #expect(avail?.reasoningContentAvailable == true)
+        #expect(avail?.reasoningContent == nil)       // blob NOT loaded by the light fetch
+        #expect(avail?.hasReasoning == true)          // disclosure shows via the flag
+        let plain = result.first { $0.id == 8 }
+        #expect(plain?.reasoningContentAvailable == false)
+        #expect(plain?.hasReasoning == false)
     }
 
     @Test func fetchSkeletonMessagesBareSchemaOmitsReasoning() async {

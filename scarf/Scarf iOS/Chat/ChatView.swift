@@ -2470,10 +2470,15 @@ private struct MessageBubble: View, Equatable {
                 if message.isUser { Spacer(minLength: 40) }
                 VStack(alignment: message.isUser ? .trailing : .leading, spacing: 4) {
                     // v2.5: prefer reasoning_content (Hermes v0.11+);
-                    // fall back to legacy reasoning when only it's set.
-                    if message.hasReasoning, let r = message.preferredReasoning, !r.isEmpty {
+                    // fall back to legacy reasoning when only it's set. t-aud27:
+                    // gate on `hasReasoning` ALONE (not `preferredReasoning`) so
+                    // the disclosure shows on resume for reasoning_content-only
+                    // messages whose blob isn't loaded yet (preferredReasoning is
+                    // nil there) — `ReasoningDisclosure` renders the header and
+                    // lazy-loads the content on first open via `loadFull`.
+                    if message.hasReasoning {
                         ReasoningDisclosure(
-                            reasoning: r,
+                            reasoning: message.preferredReasoning ?? "",
                             hasFullContent: !(message.reasoningContent ?? "").isEmpty,
                             loadFull: loadFullReasoning
                         )

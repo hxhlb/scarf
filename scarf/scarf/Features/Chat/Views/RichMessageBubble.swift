@@ -256,7 +256,14 @@ struct RichMessageBubble: View, Equatable {
         case .disclosure:
             reasoningDisclosure
         case .inline:
-            reasoningInline
+            // Inline can't lazy-load (no open affordance), so only show it when
+            // there's already text. A reasoning_content-only message whose blob
+            // isn't loaded (t-aud27) has empty `preferredReasoning` — skip it
+            // here so we don't render a brain icon with no text; the disclosure
+            // style handles that case via its on-open lazy fetch.
+            if !(message.preferredReasoning ?? "").isEmpty {
+                reasoningInline
+            }
         case .hidden:
             EmptyView()
         }

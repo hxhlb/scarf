@@ -153,15 +153,30 @@ import Foundation
     }
 
     @Test @MainActor func richChatViewModelInitsEmpty() {
-        let vm = RichChatViewModel(context: .local)
+        // Inject a temp home so nothing in the developer's real ~/.hermes
+        // can leak into this init (t-aud25). The dir need not exist —
+        // `RichChatViewModel.init` loads nothing from disk; this just
+        // guarantees machine-independence if an init-time read is ever added.
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scarf-richchat-test-\(UUID().uuidString)", isDirectory: true)
+        let vm = RichChatViewModel(context: .local(home: home))
         #expect(vm.context.id == ServerContext.local.id)
         #expect(vm.messages.isEmpty)
         #expect(vm.isAgentWorking == false)
         #expect(vm.hasMessages == false)
-        // supportsCompress defers to `availableCommands`, which is empty at
-        // start → false.
+        // Nothing is loaded from a session or from disk at init: every
+        // session/ACP/project/global/quick command source is empty. We
+        // assert those *loaded* sources rather than the derived menu size,
+        // because `availableCommands` is NOT empty at start — it always
+        // surfaces the static `/new` + `/steer` fallbacks (the latter is
+        // unconditionally visible pre-session, see `availableCommands`).
+        #expect(vm.acpCommands.isEmpty)
+        #expect(vm.projectScopedCommands.isEmpty)
+        #expect(vm.globalScopedCommands.isEmpty)
+        #expect(vm.quickCommands.isEmpty)
+        // `/compress` only appears via an active session's ACP advertisement,
+        // so a fresh VM never reports it.
         #expect(vm.supportsCompress == false)
-        #expect(vm.hasBroaderCommandMenu == false)
         // v0.13: compression count starts at 0 so the SessionInfoBar chip
         // stays hidden on fresh sessions.
         #expect(vm.acpCompressionCount == 0)

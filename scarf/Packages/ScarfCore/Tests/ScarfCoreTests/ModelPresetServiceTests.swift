@@ -75,56 +75,37 @@ import Foundation
     }
 }
 
-/// Disk-integration tests for `ModelPresetService`. Each test stages a
-/// fresh `~/.hermes/scarf/model_presets.json` under a tmpdir-backed
-/// `ServerContext` and tears down after. We use `.local` with the real
-/// `HermesPathSet`-derived path under a tmp HOME via a small helper
-/// that backs up + restores the user's actual file.
+/// Disk-integration tests for `ModelPresetService`. Each test runs against
+/// a fresh per-test temp Hermes home injected via `ServerContext.local(home:)`
+/// (t-aud25), so the service's reads/writes land in an isolated tmpdir and
+/// NEVER touch the developer's real `~/.hermes/scarf/model_presets.json`.
 ///
-/// **Why not subclass ServerContext.** `ServerContext.paths` derives
-/// from `HermesPathSet.defaultLocalHome` which is computed from
-/// `NSHomeDirectory()` and is not test-injectable. Rather than reshape
-/// the production API for testability, we serialize through one suite
-/// and back up + restore the user's real file. This is the same
-/// compromise `M5FeatureVMTests` makes for `ServerContext.sshTransportFactory`.
-@Suite(.serialized) struct ModelPresetServiceDiskTests {
+/// This replaces the earlier back-up-and-restore-the-real-file compromise,
+/// which forced the suite to be `.serialized`. Per-instance home injection
+/// gives each test its own home, so they run in parallel with no shared state.
+@Suite struct ModelPresetServiceDiskTests {
 
-    /// Back up the user's real file if it exists, run the body, restore
-    /// the backup. Always restores even on test failure.
-    static func sandboxed(_ body: () async throws -> Void) async throws {
-        let path = ServerContext.local.paths.modelPresetsJSON
-        let backupURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("model_presets_backup_\(UUID().uuidString).json")
-        let hadOriginal = FileManager.default.fileExists(atPath: path)
-        if hadOriginal {
-            try FileManager.default.copyItem(atPath: path, toPath: backupURL.path)
-        }
-        defer {
-            try? FileManager.default.removeItem(atPath: path)
-            if hadOriginal {
-                try? FileManager.default.copyItem(atPath: backupURL.path, toPath: path)
-                try? FileManager.default.removeItem(at: backupURL)
-            }
-        }
-        try await body()
+    /// Run `body` against a `.local` context rooted at a unique temp home,
+    /// removing the directory afterwards. The home starts empty, so
+    /// `model_presets.json` is absent until a test writes it.
+    static func withTempHome(_ body: (ServerContext) async throws -> Void) async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scarf-modelpreset-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try await body(ServerContext.local(home: home))
     }
 
     @Test func listReturnsEmptyWhenFileMissing() async throws {
-        try await Self.sandboxed {
-            // Make sure the file is absent.
-            let path = ServerContext.local.paths.modelPresetsJSON
-            try? FileManager.default.removeItem(atPath: path)
-            let svc = ModelPresetService(context: .local)
+        try await Self.withTempHome { ctx in
+            let svc = ModelPresetService(context: ctx)
             let presets = try await svc.list()
             #expect(presets.isEmpty)
         }
     }
 
     @Test func upsertThenListRoundTrips() async throws {
-        try await Self.sandboxed {
-            let path = ServerContext.local.paths.modelPresetsJSON
-            try? FileManager.default.removeItem(atPath: path)
-            let svc = ModelPresetService(context: .local)
+        try await Self.withTempHome { ctx in
+            let svc = ModelPresetService(context: ctx)
             let preset = ModelPreset(name: "Sonnet", modelID: "claude-sonnet-4.6", providerID: "anthropic")
             try await svc.upsert(preset)
             let presets = try await svc.list()
@@ -136,10 +117,8 @@ import Foundation
     }
 
     @Test func upsertExistingIdUpdatesInPlace() async throws {
-        try await Self.sandboxed {
-            let path = ServerContext.local.paths.modelPresetsJSON
-            try? FileManager.default.removeItem(atPath: path)
-            let svc = ModelPresetService(context: .local)
+        try await Self.withTempHome { ctx in
+            let svc = ModelPresetService(context: ctx)
             let id = UUID()
             try await svc.upsert(
                 ModelPreset(id: id, name: "Sonnet", modelID: "claude-sonnet-4.6", providerID: "anthropic")
@@ -156,10 +135,8 @@ import Foundation
     }
 
     @Test func deleteRemovesPreset() async throws {
-        try await Self.sandboxed {
-            let path = ServerContext.local.paths.modelPresetsJSON
-            try? FileManager.default.removeItem(atPath: path)
-            let svc = ModelPresetService(context: .local)
+        try await Self.withTempHome { ctx in
+            let svc = ModelPresetService(context: ctx)
             let id = UUID()
             try await svc.upsert(
                 ModelPreset(id: id, name: "Sonnet", modelID: "claude-sonnet-4.6", providerID: "anthropic")
@@ -171,10 +148,8 @@ import Foundation
     }
 
     @Test func deleteMissingIdIsNoOp() async throws {
-        try await Self.sandboxed {
-            let path = ServerContext.local.paths.modelPresetsJSON
-            try? FileManager.default.removeItem(atPath: path)
-            let svc = ModelPresetService(context: .local)
+        try await Self.withTempHome { ctx in
+            let svc = ModelPresetService(context: ctx)
             try await svc.delete(id: UUID())  // Should not throw.
             let presets = try await svc.list()
             #expect(presets.isEmpty)
@@ -182,10 +157,8 @@ import Foundation
     }
 
     @Test func getById() async throws {
-        try await Self.sandboxed {
-            let path = ServerContext.local.paths.modelPresetsJSON
-            try? FileManager.default.removeItem(atPath: path)
-            let svc = ModelPresetService(context: .local)
+        try await Self.withTempHome { ctx in
+            let svc = ModelPresetService(context: ctx)
             let id = UUID()
             try await svc.upsert(
                 ModelPreset(id: id, name: "Sonnet", modelID: "claude-sonnet-4.6", providerID: "anthropic")
@@ -199,10 +172,8 @@ import Foundation
     }
 
     @Test func listSortsByNameCaseInsensitive() async throws {
-        try await Self.sandboxed {
-            let path = ServerContext.local.paths.modelPresetsJSON
-            try? FileManager.default.removeItem(atPath: path)
-            let svc = ModelPresetService(context: .local)
+        try await Self.withTempHome { ctx in
+            let svc = ModelPresetService(context: ctx)
             try await svc.upsert(ModelPreset(name: "zeta", modelID: "z", providerID: "p"))
             try await svc.upsert(ModelPreset(name: "Alpha", modelID: "a", providerID: "p"))
             try await svc.upsert(ModelPreset(name: "beta", modelID: "b", providerID: "p"))
@@ -212,12 +183,12 @@ import Foundation
     }
 
     @Test func corruptStoreThrows() async throws {
-        try await Self.sandboxed {
-            let path = ServerContext.local.paths.modelPresetsJSON
+        try await Self.withTempHome { ctx in
+            let path = ctx.paths.modelPresetsJSON
             let dir = (path as NSString).deletingLastPathComponent
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             try "not json".write(toFile: path, atomically: true, encoding: .utf8)
-            let svc = ModelPresetService(context: .local)
+            let svc = ModelPresetService(context: ctx)
             await #expect(throws: ModelPresetServiceError.self) {
                 _ = try await svc.list()
             }

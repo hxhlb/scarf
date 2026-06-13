@@ -78,6 +78,19 @@ public struct ServerContext: Sendable, Hashable, Identifiable {
     public var displayName: String
     public var kind: ServerKind
 
+    /// Per-instance override for the **local** Hermes home, consulted only
+    /// by `paths` when `kind == .local`. Production is always `nil` → the
+    /// local context resolves `HermesPathSet.defaultLocalHome` (the real
+    /// `~/.hermes`) exactly as before. Tests set it via `ServerContext
+    /// .local(home:)` so ScarfCore suites read/write an isolated temp dir
+    /// and never touch the developer's real install.
+    ///
+    /// Deliberately per-instance (not a process-global like the
+    /// `SCARF_HERMES_HOME` env override the E2E harness uses): parallel
+    /// Swift-Testing suites each construct their own context, so there's
+    /// no shared mutable home for them to race on.
+    public private(set) var localHomeOverride: String?
+
     public init(
         id: ServerID,
         displayName: String,
@@ -86,6 +99,7 @@ public struct ServerContext: Sendable, Hashable, Identifiable {
         self.id = id
         self.displayName = displayName
         self.kind = kind
+        self.localHomeOverride = nil
     }
 
     /// Path layout for this server. Cheap — all path components are computed
@@ -94,7 +108,7 @@ public struct ServerContext: Sendable, Hashable, Identifiable {
         switch kind {
         case .local:
             return HermesPathSet(
-                home: HermesPathSet.defaultLocalHome,
+                home: localHomeOverride ?? HermesPathSet.defaultLocalHome,
                 isRemote: false,
                 binaryHint: nil
             )
@@ -200,6 +214,23 @@ public struct ServerContext: Sendable, Hashable, Identifiable {
         displayName: "Local",
         kind: .local
     )
+
+    /// A `.local`-kind context rooted at an explicit `home` directory rather
+    /// than the process-wide `HermesPathSet.defaultLocalHome` (the real
+    /// `~/.hermes`). **Test seam** — production always uses the `.local`
+    /// singleton above.
+    ///
+    /// Keeps `id == ServerContext.local.id` so existing `vm.context.id ==
+    /// ServerContext.local.id` assertions still hold; the ONLY difference
+    /// from `.local` is `paths.home`. `UserHomeCache` keys on `id` but
+    /// resolves a non-remote context to `NSHomeDirectory()` regardless of
+    /// the override, so sharing `localID` causes no cross-test pollution,
+    /// and every derived path flows through `paths` → the temp home.
+    public nonisolated static func local(home: URL) -> ServerContext {
+        var ctx = ServerContext(id: localID, displayName: "Local", kind: .local)
+        ctx.localHomeOverride = home.path
+        return ctx
+    }
 }
 
 // MARK: - Remote user-home resolution

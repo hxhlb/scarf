@@ -528,20 +528,19 @@ import Foundation
         #expect(dash?.version == 1)
     }
 
-    @Test func projectDashboardServiceReturnsEmptyRegistryOnMissingFile() async {
-        // When `projectsRegistry` path doesn't exist, loadRegistry returns
-        // an empty ProjectRegistry rather than crashing.
-        //
-        // We use the real .local context — its registry path is
-        // `$HOME/.hermes/scarf/projects.json`. On CI this probably doesn't
-        // exist (no Hermes install under $HOME/.hermes), so we get the
-        // empty-on-missing path for free. If it DOES exist (e.g., a dev
-        // machine), we skip the assertion to avoid flakiness.
-        let svc = ProjectDashboardService(context: .local)
-        let registryPath = ServerContext.local.paths.projectsRegistry
-        if !FileManager.default.fileExists(atPath: registryPath) {
-            let reg = svc.loadRegistry()
-            #expect(reg.projects.isEmpty)
-        }
+    @Test func projectDashboardServiceReturnsEmptyRegistryOnMissingFile() async throws {
+        // When `projectsRegistry` doesn't exist, loadRegistry returns an
+        // empty ProjectRegistry rather than crashing. t-aud25: inject a temp
+        // home so the registry is genuinely absent and the assertion runs
+        // unconditionally — this used to skip on dev machines that have a
+        // real `~/.hermes/scarf/projects.json`.
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scarf-registry-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let ctx = ServerContext.local(home: home)
+        let svc = ProjectDashboardService(context: ctx)
+        #expect(!FileManager.default.fileExists(atPath: ctx.paths.projectsRegistry))
+        let reg = svc.loadRegistry()
+        #expect(reg.projects.isEmpty)
     }
 }

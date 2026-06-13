@@ -27,6 +27,16 @@ struct RichMessageBubble: View, Equatable {
     private var toolCardStyleRaw: String = ToolCardStyle.full.rawValue
     @AppStorage(ChatDensityKeys.reasoningStyle)
     private var reasoningStyleRaw: String = ReasoningStyle.disclosure.rawValue
+
+    /// Lazy-loaded rich `reasoning_content` (v0.11), fetched when the
+    /// REASONING disclosure is first expanded. The bulk fetch excludes it
+    /// (issue #74), so on resume the bubble starts with the lighter
+    /// `reasoning` channel and upgrades on demand. View-local @State so the
+    /// update re-renders this bubble without fighting the Equatable
+    /// short-circuit (issue #46) a message-splice would hit. (t-aud21)
+    @State private var reasoningExpanded = false
+    @State private var lazyReasoningContent: String?
+
     private var toolCardStyle: ToolCardStyle {
         ToolCardStyle(rawValue: toolCardStyleRaw) ?? .full
     }
@@ -253,8 +263,8 @@ struct RichMessageBubble: View, Equatable {
     }
 
     private var reasoningDisclosure: some View {
-        DisclosureGroup {
-            Text(message.preferredReasoning ?? "")
+        DisclosureGroup(isExpanded: $reasoningExpanded) {
+            Text(lazyReasoningContent ?? message.preferredReasoning ?? "")
                 .font(ChatFontScale.monoSmall(chatFontScale))
                 .foregroundStyle(ScarfColor.foregroundMuted)
                 .italic()
@@ -283,6 +293,26 @@ struct RichMessageBubble: View, Equatable {
                 .overlay(RoundedRectangle(cornerRadius: 7)
                     .strokeBorder(ScarfColor.warning.opacity(0.30), lineWidth: 1))
         )
+        // Upgrade to the richer reasoning_content the first time the user
+        // opens the disclosure (it's excluded from the bulk fetch). (t-aud21)
+        .onChange(of: reasoningExpanded) { _, expanded in
+            guard expanded else { return }
+            Task { await loadFullReasoningIfNeeded() }
+        }
+    }
+
+    /// Fetch the richer `reasoning_content` on first disclosure-open if it
+    /// wasn't in the bulk-loaded message. No-op for live/streaming bubbles
+    /// (id == 0, which already carry reasoning_content) and pre-v0.11 hosts
+    /// (the fetch returns nil). (t-aud21)
+    private func loadFullReasoningIfNeeded() async {
+        guard message.id > 0,
+              (message.reasoningContent ?? "").isEmpty,
+              lazyReasoningContent == nil else { return }
+        if let full = await chatViewModel.richChatViewModel.reasoningContent(for: message.id),
+           !full.isEmpty {
+            lazyReasoningContent = full
+        }
     }
 
     /// Inline reasoning: italic foregroundFaint caption with a 9pt

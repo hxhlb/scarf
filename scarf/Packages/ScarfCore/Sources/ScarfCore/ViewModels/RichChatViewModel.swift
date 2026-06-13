@@ -2153,6 +2153,17 @@ public final class RichChatViewModel {
         }
     }
 
+    /// Lazy-load the rich `reasoning_content` (v0.11) for a settled
+    /// message on demand. The bulk/skeleton fetch excludes it (issue #74)
+    /// and carries only the lighter `reasoning` channel, so the chat bubble
+    /// upgrades to the full chain-of-thought when the user opens the
+    /// REASONING disclosure. Returns nil on pre-v0.11 hosts or when the
+    /// message has no reasoning_content. (t-aud21)
+    @MainActor
+    public func reasoningContent(for messageId: Int) async -> String? {
+        await dataService.fetchReasoningContent(for: messageId)
+    }
+
     /// Lazy-load the content of a single tool result by call id and
     /// splice it into `messages` / `messageGroups` as a synthetic
     /// `role='tool'` row. Used by `ChatInspectorPane` when the user

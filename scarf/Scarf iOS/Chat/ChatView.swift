@@ -357,7 +357,8 @@ struct ChatView: View {
                 ForEach(controller.vm.messages) { msg in
                     MessageBubble(
                         message: msg,
-                        turnDuration: controller.vm.turnDuration(forMessageId: msg.id)
+                        turnDuration: controller.vm.turnDuration(forMessageId: msg.id),
+                        loadFullReasoning: { await controller.vm.reasoningContent(for: msg.id) }
                     )
                     .equatable()
                     .id(msg.id)
@@ -2420,6 +2421,12 @@ private struct MessageBubble: View, Equatable {
     /// resumed messages.
     var turnDuration: TimeInterval? = nil
 
+    /// Lazy loader for the richer `reasoning_content` (v0.11), invoked when
+    /// the REASONING disclosure is first opened. nil → no lazy upgrade
+    /// (live/streaming bubbles already carry it). Excluded from `==` below
+    /// (closures aren't Equatable; identity follows the message). (t-aud21)
+    var loadFullReasoning: (() async -> String?)? = nil
+
     /// SwiftUI body short-circuit (issue #46 — iOS path). On iOS the
     /// chat list is `LazyVStack` over `controller.vm.messages` directly
     /// (no message-group layer), so every visible bubble re-evaluates
@@ -2462,7 +2469,11 @@ private struct MessageBubble: View, Equatable {
                     // v2.5: prefer reasoning_content (Hermes v0.11+);
                     // fall back to legacy reasoning when only it's set.
                     if message.hasReasoning, let r = message.preferredReasoning, !r.isEmpty {
-                        ReasoningDisclosure(reasoning: r)
+                        ReasoningDisclosure(
+                            reasoning: r,
+                            hasFullContent: !(message.reasoningContent ?? "").isEmpty,
+                            loadFull: loadFullReasoning
+                        )
                     }
                     // Only render the bubble when there's actual text
                     // to show. Assistant messages can exist in a
@@ -2655,11 +2666,18 @@ private struct CodeBlockView: View {
 /// position.
 private struct ReasoningDisclosure: View {
     let reasoning: String
+    /// True when the rich `reasoning_content` is already in `reasoning`
+    /// (live/streaming or already-hydrated). When false, fetch on open. (t-aud21)
+    var hasFullContent: Bool = true
+    /// Fetches the richer reasoning_content on first expand. (t-aud21)
+    var loadFull: (() async -> String?)? = nil
+
     @State private var isExpanded = false
+    @State private var lazyContent: String?
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
-            Text(reasoning)
+            Text(lazyContent ?? reasoning)
                 .font(.caption)
                 .foregroundStyle(ScarfColor.foregroundMuted)
                 .italic()
@@ -2686,6 +2704,11 @@ private struct ReasoningDisclosure: View {
                         .strokeBorder(ScarfColor.warning.opacity(0.30), lineWidth: 1)
                 )
         )
+        // Upgrade to reasoning_content on first open if it wasn't bulk-loaded. (t-aud21)
+        .onChange(of: isExpanded) { _, expanded in
+            guard expanded, !hasFullContent, lazyContent == nil, let loadFull else { return }
+            Task { if let full = await loadFull(), !full.isEmpty { lazyContent = full } }
+        }
     }
 }
 

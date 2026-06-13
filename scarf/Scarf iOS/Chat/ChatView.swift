@@ -1383,7 +1383,10 @@ final class ChatController {
                 modelResult: modelResult
             )
 
-            await MainActor.run { [weak self] in
+            // Capture `modelOK` by value (it's a `var` finalized above) so the
+            // closure holds an immutable copy — avoids "reference to captured
+            // var in concurrently-executing code" (Swift-6 error-class).
+            await MainActor.run { [weak self, modelOK] in
                 guard let self else { return }
                 if providerOK, modelOK, let intent {
                     Task { @MainActor in

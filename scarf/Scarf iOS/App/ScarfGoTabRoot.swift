@@ -27,8 +27,8 @@ struct ScarfGoTabRoot: View {
     let serverID: ServerID
     let config: IOSServerConfig
     let key: SSHKeyBundle
-    let onSoftDisconnect: @MainActor () async -> Void
-    let onForget: @MainActor () async -> Void
+    let onSoftDisconnect: @MainActor @Sendable () async -> Void
+    let onForget: @MainActor @Sendable () async -> Void
 
     /// Stable per-tab context UUID — used for the System tab's Curator
     /// row so its CuratorViewModel reuses the cached SSH connection
@@ -55,8 +55,8 @@ struct ScarfGoTabRoot: View {
         serverID: ServerID,
         config: IOSServerConfig,
         key: SSHKeyBundle,
-        onSoftDisconnect: @escaping @MainActor () async -> Void,
-        onForget: @escaping @MainActor () async -> Void
+        onSoftDisconnect: @escaping @MainActor @Sendable () async -> Void,
+        onForget: @escaping @MainActor @Sendable () async -> Void
     ) {
         self.serverID = serverID
         self.config = config
@@ -177,8 +177,8 @@ struct ScarfGoTabRoot: View {
 /// deliberate design decision.
 private struct SystemTab: View {
     let config: IOSServerConfig
-    let onSoftDisconnect: @MainActor () async -> Void
-    let onForget: @MainActor () async -> Void
+    let onSoftDisconnect: @MainActor @Sendable () async -> Void
+    let onForget: @MainActor @Sendable () async -> Void
 
     @Environment(\.hermesCapabilities) private var capabilitiesStore
 
@@ -192,6 +192,19 @@ private struct SystemTab: View {
     @State private var iCloudSyncEnabled: Bool = SSHKeyICloudPreference.isEnabled
     @State private var iCloudMigrationInFlight = false
     @State private var iCloudMigrationError: String?
+
+    // Explicit init so the closure params keep their `@Sendable` annotation —
+    // the synthesized memberwise init dropped it, forcing a non-Sendable→
+    // Sendable conversion at the call site (Swift-6 data-race warning).
+    init(
+        config: IOSServerConfig,
+        onSoftDisconnect: @escaping @MainActor @Sendable () async -> Void,
+        onForget: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        self.config = config
+        self.onSoftDisconnect = onSoftDisconnect
+        self.onForget = onForget
+    }
 
     var body: some View {
         List {

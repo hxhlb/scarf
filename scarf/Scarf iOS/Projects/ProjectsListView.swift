@@ -135,15 +135,13 @@ struct ProjectsListView: View {
         isLoading = true
         defer { isLoading = false }
         let ctx = serverContext
-        do {
-            let loaded: [ProjectEntry] = try await Task.detached {
-                let service = ProjectDashboardService(context: ctx)
-                return service.loadRegistry().projects
-            }.value
-            projects = loaded
-            loadError = nil
-        } catch {
-            loadError = error.localizedDescription
-        }
+        // `loadRegistry()` is non-throwing (returns an empty registry on any
+        // read failure), so the detached task can't throw — no do/catch.
+        let loaded: [ProjectEntry] = await Task.detached {
+            let service = ProjectDashboardService(context: ctx)
+            return service.loadRegistry().projects
+        }.value
+        projects = loaded
+        loadError = nil
     }
 }

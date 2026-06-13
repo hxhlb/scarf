@@ -14,11 +14,15 @@ stays consistent and nothing is lost. Keep `AGENTS.md` and the per-agent shims (
 `GEMINI.md` / `.github/copilot-instructions.md` / `.cursor/rules/memophant.mdc`) **minimal**:
 they point at the memory system, they don't BE the memory system.
 
-**Memory engine.** Memophant ships an in-repo native MCP server (`memophant-mcp`) that owns the
-memory backend end-to-end. When the server is loaded by your agent, the tools below show up
-directly — call them. The basic-memory CLI was retired from production on 2026-06-06; if the
-MCP tools aren't present in this session, fall back to grep over `.memory/` and `wiki/` until
-the server is restored, rather than reaching for `basic-memory`.
+**Memory engine — get to know these tools before you start.** Memophant ships an in-repo
+native MCP server (`memophant-mcp`) that owns the memory backend end-to-end. When the server
+is loaded by your agent, the tools below show up directly. **Before you begin a task, take
+stock of the `memophant` MCP tools available in this session and read their descriptions so
+you know what each does** — they're how you read and write every tier here, so reach for them
+first rather than ad-hoc file reads, greps, or hand-edits. The basic-memory CLI was retired
+from production on 2026-06-06; if the MCP tools aren't present in this session, fall back to
+grep over `.memory/` and `wiki/` until the server is restored, rather than reaching
+for `basic-memory`.
 
 - Native MCP tools (preferred): `search_memories`, `read_memory`, `view_memory`, `write_memory`,
   `edit_memory`, `move_memory`, `delete_memory`, `list_directory`, `list_memory_projects`,

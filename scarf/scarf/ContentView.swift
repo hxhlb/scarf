@@ -63,7 +63,7 @@ struct ContentView: View {
         case .memory:           MemoryView(context: serverContext)
         case .curator:          CuratorView(context: serverContext)
         case .skills:           SkillsView(context: serverContext)
-        case .platforms:        PlatformsView(context: serverContext)
+        case .platforms:        PlatformsView(viewModel: cachedVM(.platforms) { PlatformsViewModel(context: serverContext) })
         case .personalities:    PersonalitiesView(context: serverContext)
         case .quickCommands:    QuickCommandsView(context: serverContext)
         case .credentialPools:  CredentialPoolsView(context: serverContext)
@@ -81,5 +81,14 @@ struct ContentView: View {
         case .logs:             LogsView(context: serverContext)
         case .settings:         SettingsView(context: serverContext)
         }
+    }
+
+    /// Resolve a feature view model from the per-window/-server cache in
+    /// `AppCoordinator` so switching sidebar sections reuses the existing
+    /// instance (and its loaded data) instead of rebuilding it and re-running
+    /// `load()` over SSH on every re-entry (t-aud24). `make` runs only on a
+    /// cache miss.
+    private func cachedVM<VM: AnyObject>(_ section: SidebarSection, _ make: () -> VM) -> VM {
+        coordinator.featureViewModel(for: section, make: make)
     }
 }

@@ -3,7 +3,11 @@ import ScarfCore
 import ScarfDesign
 
 struct PlatformsView: View {
-    @State private var viewModel: PlatformsViewModel
+    // Owned by `AppCoordinator`'s feature-VM cache (t-aud24), not `@State`,
+    // so the instance + its loaded data survive sidebar section switches.
+    // Still observed: SwiftUI's Observation tracks property reads in `body`
+    // regardless of how the `@Observable` reference is held.
+    let viewModel: PlatformsViewModel
     @Environment(HermesFileWatcher.self) private var fileWatcher
     @Environment(\.hermesCapabilities) private var capabilitiesStore
 
@@ -33,8 +37,8 @@ struct PlatformsView: View {
         }
     }
 
-    init(context: ServerContext) {
-        _viewModel = State(initialValue: PlatformsViewModel(context: context))
+    init(viewModel: PlatformsViewModel) {
+        self.viewModel = viewModel
     }
 
 
@@ -55,11 +59,15 @@ struct PlatformsView: View {
         }
         .background(ScarfColor.backgroundPrimary)
         .navigationTitle("Platforms")
-        .onAppear { viewModel.load() }
+        .onAppear { viewModel.load(changeToken: fileWatcher.lastChangeDate) }
         // Re-read config.yaml / .env / gateway_state.json when any of them
         // changes on disk. This is how the left-side connectivity dots refresh
-        // after the user saves in a per-platform setup form.
-        .onChange(of: fileWatcher.lastChangeDate) { viewModel.load() }
+        // after the user saves in a per-platform setup form. The token guard in
+        // `load()` skips the re-read on a plain section re-entry but always
+        // honors a real on-disk change (the token advances).
+        .onChange(of: fileWatcher.lastChangeDate) { _, newValue in
+            viewModel.load(changeToken: newValue)
+        }
     }
 
     private var platformList: some View {

@@ -26,7 +26,18 @@ final class PlatformsViewModel {
 
     var platforms: [HermesToolPlatform] { KnownPlatforms.all }
 
-    func load() {
+    /// Tracks the file-watcher change token this VM last loaded for, so a
+    /// plain section re-entry (same token) skips the remote re-read while a
+    /// real on-disk change (advanced token) or a `force` still reloads
+    /// (t-aud24). The VM instance is cached in `AppCoordinator`, so this
+    /// state persists across section switches.
+    @ObservationIgnored private var loadedChangeToken: Date?
+    @ObservationIgnored private var hasLoaded = false
+
+    func load(changeToken: Date? = nil, force: Bool = false) {
+        if !force, hasLoaded, loadedChangeToken == changeToken { return }
+        hasLoaded = true
+        loadedChangeToken = changeToken
         gatewayState = fileService.loadGatewayState()
     }
 
@@ -94,7 +105,7 @@ final class PlatformsViewModel {
             await MainActor.run {
                 self.restartInProgress = false
                 self.message = result.exitCode == 0 ? "Gateway restarted" : "Restart failed"
-                self.load()
+                self.load(force: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.message = nil
                 }

@@ -145,6 +145,40 @@ final class AppCoordinator {
     /// "All project tasks" toggle). Cleared after consumption so a sidebar
     /// return to the same Kanban surface doesn't re-apply a stale scope.
     var pendingKanbanHandoff: KanbanHandoff?
+
+    // MARK: - Feature view-model cache (t-aud24)
+
+    /// Per-window, per-server cache of feature view models.
+    ///
+    /// `ContentView`'s detail `switch` produces a *different view type per
+    /// section*, so SwiftUI tears down + recreates the section view on every
+    /// sidebar switch — which re-ran each VM's remote `load()` over SSH on
+    /// every re-entry. Caching the VM here lets it (and its already-loaded
+    /// data) survive section switches; the VM's `load()` then guards on a
+    /// freshness token so re-entry is a no-op instead of a re-fetch.
+    ///
+    /// Scope is correct for free: this coordinator lives inside
+    /// `ContextBoundRoot`, which is keyed `.id(context.id)`, so the whole
+    /// coordinator — and this cache — is recreated when the window's server
+    /// changes, and each window owns its own coordinator. No per-server
+    /// invalidation needed. `@ObservationIgnored` so cache mutation never
+    /// trips a view-update cycle.
+    @ObservationIgnored private var featureViewModels: [SidebarSection: AnyObject] = [:]
+
+    /// Returns the cached view model for `section`, building + caching one
+    /// via `make()` on first request. The returned instance is stable across
+    /// section switches for the life of this window/server.
+    func featureViewModel<VM: AnyObject>(
+        for section: SidebarSection,
+        make: () -> VM
+    ) -> VM {
+        if let existing = featureViewModels[section] as? VM {
+            return existing
+        }
+        let created = make()
+        featureViewModels[section] = created
+        return created
+    }
 }
 
 /// Snapshot of "where did this Kanban view come from?" passed across

@@ -274,7 +274,14 @@ private struct LocalSQLite3Transport: ServerTransport {
     /// "~/.hermes/state.db"` because the backend single-quoted the
     /// path and sqlite3 doesn't expand `~` itself. Verify the
     /// $HOME-rewrite path works against a real shell.
-    @Test func openWithDefaultTildeHomeExpands() async throws {
+    // SAFETY (t-aud22): this test manipulates the REAL ~/.hermes (moves
+    // state.db aside, symlinks a fixture, restores). On a machine with a
+    // live Hermes install that races the running agent + other parallel
+    // suites and risks the user's real state.db. `.enabled(if:)` SKIPS it
+    // (not fails) when ~/.hermes exists; it still runs on clean CI. Proper
+    // fix is a temp-$HOME harness (tracked in t-aud22).
+    @Test(.enabled(if: !FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.hermes")))
+    func openWithDefaultTildeHomeExpands() async throws {
         try requireSqlite3()
         let dbURL = try makeFixtureStateDB()
         let fixture = try makeDefaultHomeFixtureContext(dbURL: dbURL)

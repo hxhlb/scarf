@@ -107,10 +107,12 @@ import Foundation
             return 42
         }
         #expect(result == 42)
-        let samples = ring.samples()
-        #expect(samples.count == 1)
-        #expect(samples[0].kind == .interval)
-        #expect(samples[0].name.description == "unit")
+        // Filter by this call's name: ScarfMon's backend is process-global,
+        // so concurrent suites' samples can also land in `ring` under the
+        // parallel test runner. (t-aud22)
+        let unit = ring.samples().filter { $0.name.description == "unit" }
+        #expect(unit.count == 1)
+        #expect(unit[0].kind == .interval)
     }
 
     /// `measureAsync` records duration even when the body throws — the
@@ -126,9 +128,10 @@ import Foundation
                 throw Boom()
             }
         }
-        let samples = ring.samples()
-        #expect(samples.count == 1)
-        #expect(samples[0].name.description == "throws")
+        // Filter by name — backend is process-global; other parallel suites
+        // may also record into `ring`. (t-aud22)
+        let thrown = ring.samples().filter { $0.name.description == "throws" }
+        #expect(thrown.count == 1)
     }
 
     /// `event(...)` records a count entry without taking a clock reading.
@@ -138,12 +141,13 @@ import Foundation
         defer { ScarfMon.install([]) }
 
         ScarfMon.event(.chatStream, "token", count: 1, bytes: 32)
-        let samples = ring.samples()
-        #expect(samples.count == 1)
-        #expect(samples[0].kind == .event)
-        #expect(samples[0].count == 1)
-        #expect(samples[0].bytes == 32)
-        #expect(samples[0].durationNanos == 0)
+        // Filter by name — backend is process-global. (t-aud22)
+        let tokens = ring.samples().filter { $0.name.description == "token" }
+        #expect(tokens.count == 1)
+        #expect(tokens[0].kind == .event)
+        #expect(tokens[0].count == 1)
+        #expect(tokens[0].bytes == 32)
+        #expect(tokens[0].durationNanos == 0)
     }
 
     /// Boot configure flips the active backend set without leaking

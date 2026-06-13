@@ -10,7 +10,7 @@ import ScarfCore
 /// ships; the installer verifies the claim against the actual unpacked files
 /// before showing the preview sheet so a malicious bundle can't hide extra
 /// files from the user.
-struct ProjectTemplateManifest: Codable, Sendable, Equatable {
+nonisolated struct ProjectTemplateManifest: Codable, Sendable, Equatable {
     let schemaVersion: Int
     let id: String
     let name: String
@@ -67,12 +67,12 @@ struct ProjectTemplateManifest: Codable, Sendable, Equatable {
     }
 }
 
-struct TemplateAuthor: Codable, Sendable, Equatable {
+nonisolated struct TemplateAuthor: Codable, Sendable, Equatable {
     let name: String
     let url: String?
 }
 
-struct TemplateContents: Codable, Sendable, Equatable {
+nonisolated struct TemplateContents: Codable, Sendable, Equatable {
     let dashboard: Bool
     let agentsMd: Bool
     let instructions: [String]?
@@ -93,7 +93,7 @@ struct TemplateContents: Codable, Sendable, Equatable {
     let slashCommands: [String]?
 }
 
-struct TemplateMemoryClaim: Codable, Sendable, Equatable {
+nonisolated struct TemplateMemoryClaim: Codable, Sendable, Equatable {
     let append: Bool
 }
 
@@ -102,7 +102,7 @@ struct TemplateMemoryClaim: Codable, Sendable, Equatable {
 /// Result of unpacking a `.scarftemplate` into a temp directory and validating
 /// it. Callers hand this to `buildInstallPlan` to produce the concrete
 /// filesystem plan.
-struct TemplateInspection: Sendable {
+nonisolated struct TemplateInspection: Sendable {
     let manifest: ProjectTemplateManifest
     /// Absolute path to the temp directory holding the unpacked bundle. The
     /// installer reads files from here; the caller is responsible for
@@ -120,7 +120,7 @@ struct TemplateInspection: Sendable {
 /// the `hermes cron create` CLI accepts are included; runtime state
 /// (`enabled`, `state`, `next_run_at`, …) is deliberately omitted so a
 /// template can't arrive already-running.
-struct TemplateCronJobSpec: Codable, Sendable, Equatable {
+nonisolated struct TemplateCronJobSpec: Codable, Sendable, Equatable {
     let name: String
     let schedule: String
     let prompt: String?
@@ -139,7 +139,7 @@ struct TemplateCronJobSpec: Codable, Sendable, Equatable {
 /// Concrete, reviewed-before-apply filesystem operations the installer will
 /// perform. Every side effect the installer can cause is represented here so
 /// the preview sheet is an honest accounting of what's about to happen.
-struct TemplateInstallPlan: Sendable {
+nonisolated struct TemplateInstallPlan: Sendable {
     let manifest: ProjectTemplateManifest
     let unpackedDir: String
 
@@ -207,7 +207,7 @@ struct TemplateInstallPlan: Sendable {
 }
 
 /// A single file to copy from the unpacked bundle into a target directory.
-struct TemplateFileCopy: Sendable, Equatable {
+nonisolated struct TemplateFileCopy: Sendable, Equatable {
     /// Path inside `unpackedDir`, e.g. `"AGENTS.md"` or
     /// `"skills/timer/SKILL.md"`.
     let sourceRelativePath: String
@@ -220,7 +220,7 @@ struct TemplateFileCopy: Sendable, Equatable {
 /// Dropped at `<project>/.scarf/template.lock.json` after a successful
 /// install. Records exactly what was written so a future "Uninstall Template"
 /// action can reverse it without guessing.
-struct TemplateLock: Codable, Sendable {
+nonisolated struct TemplateLock: Codable, Sendable {
     let templateId: String
     let templateVersion: String
     let templateName: String
@@ -271,7 +271,7 @@ struct TemplateLock: Codable, Sendable {
 /// `<project>/.scarf/template.lock.json` the installer wrote. The preview
 /// sheet lists every path the uninstall would touch; the uninstaller
 /// executes the listed ops and nothing else.
-struct TemplateUninstallPlan: Sendable {
+nonisolated struct TemplateUninstallPlan: Sendable {
     /// The parsed lock file that seeded this plan. Kept so the sheet can
     /// display the template id, version, and install timestamp.
     let lock: TemplateLock
@@ -324,7 +324,7 @@ struct TemplateUninstallPlan: Sendable {
 
 // MARK: - Errors
 
-enum ProjectTemplateError: LocalizedError, Sendable {
+nonisolated enum ProjectTemplateError: LocalizedError, Sendable {
     case unzipFailed(String)
     case manifestMissing
     case manifestParseFailed(String)

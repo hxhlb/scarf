@@ -16,7 +16,7 @@ import os
 /// files, the dir itself is removed; otherwise the dir (with user content)
 /// stays.
 struct ProjectTemplateUninstaller: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "ProjectTemplateUninstaller")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "ProjectTemplateUninstaller")
 
     let context: ServerContext
 

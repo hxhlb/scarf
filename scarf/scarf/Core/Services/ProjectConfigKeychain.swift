@@ -29,7 +29,7 @@ import os
 /// User approves; subsequent reads in that session are silent. We
 /// never bypass this — the prompt is the user's trust boundary.
 struct ProjectConfigKeychain: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "ProjectConfigKeychain")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "ProjectConfigKeychain")
 
     /// Which Keychain to target. The default is the login Keychain
     /// (`nil` uses the user's default chain). Tests pass an explicit

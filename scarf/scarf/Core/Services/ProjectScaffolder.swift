@@ -27,7 +27,7 @@ import ScarfCore
 /// so the Configuration sheet correctly degrades when missing.
 /// No `template.lock.json` — there's no template install to undo.
 struct ProjectScaffolder: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "ProjectScaffolder")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "ProjectScaffolder")
 
     let context: ServerContext
 

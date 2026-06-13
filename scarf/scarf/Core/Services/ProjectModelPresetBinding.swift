@@ -18,7 +18,7 @@ import ScarfCore
 /// - Empty / nil preset id removes the binding (back to global default).
 /// - Idempotent: writing the same preset id twice produces no diff.
 struct ProjectModelPresetBinding: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "ProjectModelPresetBinding")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "ProjectModelPresetBinding")
 
     let context: ServerContext
 

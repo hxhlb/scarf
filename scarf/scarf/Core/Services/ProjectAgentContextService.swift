@@ -39,12 +39,12 @@ import ScarfCore
 /// must have landed on disk first. Non-blocking on failure — a
 /// failed refresh logs and the chat proceeds without the block.
 struct ProjectAgentContextService: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "ProjectAgentContextService")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "ProjectAgentContextService")
 
     /// Marker strings. Delegated to ScarfCore's `ProjectContextBlock`
     /// in M9 #4.2 so both Mac and ScarfGo use identical markers.
-    static let beginMarker = ProjectContextBlock.beginMarker
-    static let endMarker = ProjectContextBlock.endMarker
+    nonisolated static let beginMarker = ProjectContextBlock.beginMarker
+    nonisolated static let endMarker = ProjectContextBlock.endMarker
 
     let context: ServerContext
 

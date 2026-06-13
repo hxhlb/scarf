@@ -31,7 +31,7 @@ import ScarfCore
 /// hand-edited the command keeps their version). Missing frontmatter
 /// `version` falls back to "0.0.0".
 struct SlashCommandBootstrapService: Sendable {
-    private static let logger = Logger(
+    private nonisolated static let logger = Logger(
         subsystem: "com.scarf",
         category: "SlashCommandBootstrapService"
     )

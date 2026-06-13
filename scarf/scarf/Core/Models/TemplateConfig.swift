@@ -8,7 +8,7 @@ import ScarfCore
 /// in values at install time via `TemplateConfigSheet`; values land in
 /// `<project>/.scarf/config.json` with secrets resolved through the
 /// macOS Keychain.
-struct TemplateConfigSchema: Codable, Sendable, Equatable {
+nonisolated struct TemplateConfigSchema: Codable, Sendable, Equatable {
     let fields: [TemplateConfigField]
     let modelRecommendation: TemplateModelRecommendation?
 
@@ -30,7 +30,7 @@ struct TemplateConfigSchema: Codable, Sendable, Equatable {
 /// We keep one flat struct rather than an enum-associated-value encoding
 /// so JSON reads cleanly as a record and authors can hand-edit manifests
 /// without fighting Swift's `"case"` discriminator syntax.
-struct TemplateConfigField: Codable, Sendable, Equatable, Identifiable {
+nonisolated struct TemplateConfigField: Codable, Sendable, Equatable, Identifiable {
     nonisolated var id: String { key }
 
     let key: String
@@ -88,7 +88,7 @@ struct TemplateConfigField: Codable, Sendable, Equatable, Identifiable {
 /// catalog detail page. Purely advisory — Scarf never auto-switches the
 /// active model. Individual cron jobs can override via
 /// `HermesCronJob.model` if the author wants enforcement.
-struct TemplateModelRecommendation: Codable, Sendable, Equatable {
+nonisolated struct TemplateModelRecommendation: Codable, Sendable, Equatable {
     let preferred: String
     let rationale: String?
     let alternatives: [String]?
@@ -100,7 +100,7 @@ struct TemplateModelRecommendation: Codable, Sendable, Equatable {
 /// Keychain reference of the form `"keychain://<service>/<account>"` so
 /// serialising config.json to disk never leaks the secret into git or
 /// into backups.
-enum TemplateConfigValue: Codable, Sendable, Equatable {
+nonisolated enum TemplateConfigValue: Codable, Sendable, Equatable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -168,7 +168,7 @@ enum TemplateConfigValue: Codable, Sendable, Equatable {
 /// values appear inline; secrets are `"keychain://<service>/<account>"`
 /// references that `ProjectConfigService` resolves through the Keychain
 /// on demand.
-struct ProjectConfigFile: Codable, Sendable {
+nonisolated struct ProjectConfigFile: Codable, Sendable {
     let schemaVersion: Int
     let templateId: String
     var values: [String: TemplateConfigValue]
@@ -188,7 +188,7 @@ struct ProjectConfigFile: Codable, Sendable {
 /// (service + account) from the template slug + project-path hash so two
 /// installs of the same template in different dirs don't collide in the
 /// login Keychain.
-struct TemplateKeychainRef: Sendable, Equatable {
+nonisolated struct TemplateKeychainRef: Sendable, Equatable {
     /// Macro service name, e.g. `com.scarf.template.awizemann-site-status-checker`.
     let service: String
     /// Account name: `<fieldKey>:<projectPathHashShort>`. The hash suffix
@@ -244,12 +244,12 @@ struct TemplateKeychainRef: Sendable, Equatable {
 /// One schema- or value-validation problem. Carries `fieldKey` so the
 /// UI can surface the error inline with the field rather than at the
 /// top of the form.
-struct TemplateConfigValidationError: Error, Sendable, Equatable {
+nonisolated struct TemplateConfigValidationError: Error, Sendable, Equatable {
     let fieldKey: String?
     let message: String
 }
 
-enum TemplateConfigSchemaError: LocalizedError, Sendable {
+nonisolated enum TemplateConfigSchemaError: LocalizedError, Sendable {
     case duplicateKey(String)
     case unsupportedType(String)
     case emptyEnumOptions(String)

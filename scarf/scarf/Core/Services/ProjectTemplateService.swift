@@ -17,7 +17,7 @@ import os
 ///    op the installer will perform, given a parent directory the user
 ///    picked.
 struct ProjectTemplateService: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "ProjectTemplateService")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "ProjectTemplateService")
 
     let context: ServerContext
 

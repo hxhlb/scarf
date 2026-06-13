@@ -41,7 +41,7 @@ struct HermesFileService: Sendable {
         }
     }
 
-    private static let perfLogger = Logger(subsystem: "com.scarf.mon", category: "HermesFileService")
+    private nonisolated static let perfLogger = Logger(subsystem: "com.scarf.mon", category: "HermesFileService")
 
     /// Error-surfacing config load. Used by Dashboard to show the user a
     /// specific reason when config.yaml can't be read on a remote host

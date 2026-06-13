@@ -32,7 +32,7 @@ final class OAuthKeepaliveCronService {
     /// template-installed cron jobs (`[tmpl:<id>] …`) so future
     /// inspection tools can distinguish Scarf-owned schedules from
     /// user-authored ones at a glance.
-    static let jobName = "[scarf:oauth-keepalive] OAuth token refresh"
+    nonisolated static let jobName = "[scarf:oauth-keepalive] OAuth token refresh"
 
     /// 4am local daily. Off-peak avoids contending with interactive
     /// usage and is a reasonable default; users can reschedule from

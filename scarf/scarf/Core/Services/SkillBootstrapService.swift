@@ -23,7 +23,7 @@ import ScarfCore
 /// `scarf-template-author`; future built-in skills can drop their dir
 /// next to it and be picked up automatically.
 struct SkillBootstrapService: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "SkillBootstrapService")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "SkillBootstrapService")
 
     let context: ServerContext
 
@@ -87,7 +87,7 @@ struct SkillBootstrapService: Sendable {
     /// (`~/.hermes/skills/scarf/<skill>/SKILL.md`) and migrating any
     /// flat install in place. The migration is one-way; once the user
     /// is on the new layout, the flat path is never re-created.
-    private static let bundledSkillCategory = "scarf"
+    private nonisolated static let bundledSkillCategory = "scarf"
 
     private nonisolated func installSkill(
         from sourceDir: URL,

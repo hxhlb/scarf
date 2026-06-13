@@ -9,7 +9,7 @@ import os
 /// file exists at target paths, so by the time we start writing, the
 /// expected-error surface is small (mostly I/O failures).
 struct ProjectTemplateInstaller: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "ProjectTemplateInstaller")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "ProjectTemplateInstaller")
 
     let context: ServerContext
 

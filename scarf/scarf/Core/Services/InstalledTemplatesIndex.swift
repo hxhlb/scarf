@@ -15,7 +15,7 @@ import os
 /// catalog-sheet open instead of caching with invalidation rules —
 /// the cost of a stale "Installed" badge would surprise users far more
 /// than the cost of one extra `[String:Data]` walk on each refresh.
-struct InstalledTemplatesIndex: Sendable {
+nonisolated struct InstalledTemplatesIndex: Sendable {
 
     private static let logger = Logger(subsystem: "com.scarf", category: "InstalledTemplatesIndex")
 

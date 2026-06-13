@@ -26,7 +26,7 @@ import os
 ///   by definition — agents on remote Hermes installs would fetch
 ///   values via Scarf's channel, same as today).
 struct ProjectConfigService: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "ProjectConfigService")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "ProjectConfigService")
 
     let context: ServerContext
     let keychain: ProjectConfigKeychain

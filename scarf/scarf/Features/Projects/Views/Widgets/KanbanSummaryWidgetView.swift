@@ -131,7 +131,7 @@ struct KanbanSummaryWidgetView: View {
     private func loadOnce() async {
         guard let projectRoot, !projectRoot.isEmpty else { return }
         if tenant == nil {
-            tenant = readTenant(at: projectRoot)
+            tenant = readTenant(at: projectRoot, context: serverContext)
         }
         guard let tenant, !tenant.isEmpty else {
             tasks = []
@@ -174,7 +174,10 @@ struct KanbanSummaryWidgetView: View {
         }
     }
 
-    private nonisolated func readTenant(at projectPath: String) -> String? {
+    // `context` passed in (read on MainActor by the caller) instead of
+    // touching the View's MainActor-isolated `serverContext` from this
+    // nonisolated method. (t-aud23)
+    private nonisolated func readTenant(at projectPath: String, context serverContext: ServerContext) -> String? {
         let manifestPath = projectPath + "/.scarf/manifest.json"
         let transport = serverContext.makeTransport()
         guard transport.fileExists(manifestPath),

@@ -13,7 +13,7 @@ import os
 @Observable
 @MainActor
 final class TemplateConfigEditorViewModel {
-    private static let logger = Logger(subsystem: "com.scarf", category: "TemplateConfigEditorViewModel")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "TemplateConfigEditorViewModel")
 
     enum Stage: Sendable {
         case idle

@@ -19,12 +19,12 @@ import ScarfCore
 /// - Bare projects (no manifest) get a minimal `manifest.json`
 ///   with only `kanbanTenant` set on first mint.
 struct KanbanTenantResolver: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "KanbanTenantResolver")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "KanbanTenantResolver")
 
     /// Prefix that distinguishes Scarf-minted tenants from hand-typed
     /// ones. Public for callers that group "scarf-managed" projects in
     /// the global tenant filter.
-    static let prefix = "scarf:"
+    nonisolated static let prefix = "scarf:"
 
     let context: ServerContext
 

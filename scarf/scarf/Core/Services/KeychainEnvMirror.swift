@@ -30,7 +30,7 @@ import ScarfCore
 /// on disk matches the existing trust model for `ANTHROPIC_API_KEY`
 /// and other Hermes-side credentials in the same file.
 struct KeychainEnvMirror: Sendable {
-    private static let logger = Logger(subsystem: "com.scarf", category: "KeychainEnvMirror")
+    private nonisolated static let logger = Logger(subsystem: "com.scarf", category: "KeychainEnvMirror")
 
     let context: ServerContext
 

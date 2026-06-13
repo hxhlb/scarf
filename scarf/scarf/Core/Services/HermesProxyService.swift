@@ -26,9 +26,9 @@ import os
 final class HermesProxyService {
     /// Default port from `hermes_cli/proxy/server.py` (`DEFAULT_PORT`).
     /// Kept here in sync with Hermes; bump if upstream changes.
-    static let defaultPort: Int = 8645
+    nonisolated static let defaultPort: Int = 8645
     /// Default host from `hermes_cli/proxy/server.py` (`DEFAULT_HOST`).
-    static let defaultHost: String = "127.0.0.1"
+    nonisolated static let defaultHost: String = "127.0.0.1"
 
     private let logger = Logger(subsystem: "com.scarf", category: "HermesProxyService")
     private let context: ServerContext

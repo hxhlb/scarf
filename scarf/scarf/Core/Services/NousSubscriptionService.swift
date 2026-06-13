@@ -6,7 +6,7 @@ import ScarfCore
 /// `providers.nous` entry in `~/.hermes/auth.json`. Read-only — Scarf never
 /// writes the subscription record; `hermes model` + `hermes auth` own that
 /// path.
-struct NousSubscriptionState: Sendable, Hashable {
+nonisolated struct NousSubscriptionState: Sendable, Hashable {
     /// True when `providers.nous` exists and has a usable access token.
     /// Mirrors the `nous_auth_present` field on
     /// `NousSubscriptionFeatures` in `hermes_cli/nous_subscription.py`.
@@ -19,7 +19,7 @@ struct NousSubscriptionState: Sendable, Hashable {
     /// view to tell the user when their subscription state was last refreshed.
     let updatedAt: Date?
 
-    static let absent = NousSubscriptionState(present: false, providerIsNous: false, updatedAt: nil)
+    nonisolated static let absent = NousSubscriptionState(present: false, providerIsNous: false, updatedAt: nil)
 
     /// Overall subscription active for Tool Gateway routing. Both halves have
     /// to line up: auth record present *and* `nous` is the active provider.

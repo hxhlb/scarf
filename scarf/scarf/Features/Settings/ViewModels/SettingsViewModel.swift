@@ -56,7 +56,14 @@ final class SettingsViewModel {
     var saveMessage: String?
     var isLoading = false
 
-    func load() {
+    /// `hasLoaded` lets a plain section re-entry skip the config/env re-read
+    /// (the VM is cached in `AppCoordinator` and persists across switches);
+    /// Reload and post-save reloads pass `force: true` (t-aud24).
+    @ObservationIgnored private var hasLoaded = false
+
+    func load(force: Bool = false) {
+        if !force, hasLoaded || isLoading { return }
+        hasLoaded = true
         isLoading = true
         let svc = fileService
         let ctx = context
@@ -385,7 +392,7 @@ final class SettingsViewModel {
                 self.backupInProgress = false
                 self.saveMessage = result.exitCode == 0 ? "Restore complete — restart Scarf" : "Restore failed"
                 if result.exitCode == 0 {
-                    self.load()
+                    self.load(force: true)
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.saveMessage = nil

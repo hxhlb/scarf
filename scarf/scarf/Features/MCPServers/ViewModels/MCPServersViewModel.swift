@@ -57,7 +57,15 @@ final class MCPServersViewModel {
         return servers.first(where: { $0.name == name })
     }
 
-    func load() {
+    /// `hasLoaded` lets a plain section re-entry skip the config.yaml +
+    /// mcp-tokens read (the VM is cached in `AppCoordinator` and persists
+    /// across switches); Reload and post-mutation reloads pass `force: true`
+    /// (t-aud24).
+    @ObservationIgnored private var hasLoaded = false
+
+    func load(force: Bool = false) {
+        if !force, hasLoaded || isLoading { return }
+        hasLoaded = true
         isLoading = true
         let svc = fileService
         Task.detached { [weak self] in
@@ -103,7 +111,7 @@ final class MCPServersViewModel {
                         self.selectedServerName = nil
                     }
                     self.testResults.removeValue(forKey: name)
-                    self.load()
+                    self.load(force: true)
                     self.showRestartBanner = true
                 } else {
                     self.activeError = "Remove failed: \(result.output)"
@@ -122,7 +130,7 @@ final class MCPServersViewModel {
                 guard let self else { return }
                 if ok {
                     self.flashStatus(newValue ? "Enabled \(name)" : "Disabled \(name)")
-                    self.load()
+                    self.load(force: true)
                     self.showRestartBanner = true
                 } else {
                     self.activeError = "Could not update \(name)"
@@ -199,7 +207,7 @@ final class MCPServersViewModel {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.flashStatus("Added \(name)")
-                self.load()
+                self.load(force: true)
                 self.selectedServerName = name
                 self.showRestartBanner = true
                 self.showPresetPicker = false
@@ -226,7 +234,7 @@ final class MCPServersViewModel {
                 guard let self else { return }
                 if result.exitCode == 0 {
                     self.flashStatus("Added \(name)")
-                    self.load()
+                    self.load(force: true)
                     self.selectedServerName = name
                     self.showRestartBanner = true
                     self.showAddCustom = false
@@ -249,7 +257,7 @@ final class MCPServersViewModel {
                 guard let self else { return }
                 if result.exitCode == 0 {
                     self.flashStatus("Added \(name)")
-                    self.load()
+                    self.load(force: true)
                     self.selectedServerName = name
                     self.showRestartBanner = true
                     self.showAddCustom = false

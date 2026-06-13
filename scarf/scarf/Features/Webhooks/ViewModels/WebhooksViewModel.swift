@@ -33,7 +33,14 @@ final class WebhooksViewModel {
     /// trying to parse the output as webhook entries.
     var webhookPlatformNotEnabled: Bool = false
 
-    func load() {
+    /// `hasLoaded` lets a plain section re-entry skip the `webhook list` SSH
+    /// call (the VM is cached in `AppCoordinator` and persists across switches);
+    /// Reload and post-mutation reloads pass `force: true` (t-aud24).
+    @ObservationIgnored private var hasLoaded = false
+
+    func load(force: Bool = false) {
+        if !force, hasLoaded || isLoading { return }
+        hasLoaded = true
         isLoading = true
         Task.detached { [fileService] in
             let result = fileService.runHermesCLI(args: ["webhook", "list"], timeout: 30)
@@ -91,7 +98,7 @@ final class WebhooksViewModel {
             let result = fileService.runHermesCLI(args: args, timeout: 60)
             await MainActor.run {
                 self.message = result.exitCode == 0 ? success : "Failed"
-                self.load()
+                self.load(force: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                     self?.message = nil
                 }

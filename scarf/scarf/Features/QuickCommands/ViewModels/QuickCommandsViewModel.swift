@@ -23,7 +23,14 @@ final class QuickCommandsViewModel {
     var commands: [HermesQuickCommand] = []
     var message: String?
 
-    func load() {
+    /// `hasLoaded` lets a plain section re-entry skip the re-read (the VM is
+    /// cached in `AppCoordinator` and persists across switches); Reload and
+    /// post-save reloads pass `force: true` (t-aud24).
+    @ObservationIgnored private var hasLoaded = false
+
+    func load(force: Bool = false) {
+        if !force, hasLoaded { return }
+        hasLoaded = true
         let ctx = context
         Task.detached { [weak self] in
             let result = Self.loadQuickCommands(context: ctx)
@@ -70,7 +77,7 @@ final class QuickCommandsViewModel {
         let cmdResult = runHermes(["config", "set", "quick_commands.\(sanitizedName).command", command])
         if typeResult.exitCode == 0 && cmdResult.exitCode == 0 {
             message = "Saved /\(sanitizedName)"
-            load()
+            load(force: true)
         } else {
             logger.warning("Failed to save quick command: type=\(typeResult.output) cmd=\(cmdResult.output)")
             message = "Save failed"

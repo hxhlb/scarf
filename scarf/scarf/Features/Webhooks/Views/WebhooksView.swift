@@ -4,12 +4,13 @@ import ScarfDesign
 import AppKit
 
 struct WebhooksView: View {
-    @State private var viewModel: WebhooksViewModel
+    // Coordinator-cached (t-aud24) so it survives section switches.
+    let viewModel: WebhooksViewModel
     @State private var showAddSheet = false
     @State private var pendingRemove: HermesWebhook?
 
-    init(context: ServerContext) {
-        _viewModel = State(initialValue: WebhooksViewModel(context: context))
+    init(viewModel: WebhooksViewModel) {
+        self.viewModel = viewModel
     }
 
 
@@ -63,7 +64,7 @@ struct WebhooksView: View {
                         .scarfStyle(.caption)
                         .foregroundStyle(ScarfColor.success)
                 }
-                Button("Reload") { viewModel.load() }
+                Button("Reload") { viewModel.load(force: true) }
                     .buttonStyle(ScarfGhostButton())
                 Button {
                     resetAddForm()

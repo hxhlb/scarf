@@ -31,7 +31,14 @@ final class ModelPresetsViewModel {
 
     // MARK: - Load
 
-    func load() {
+    /// `hasLoaded` lets a plain section re-entry skip the preset re-read (the
+    /// VM is cached in `AppCoordinator` and persists across switches); post-
+    /// mutation reloads pass `force: true` (t-aud24).
+    @ObservationIgnored private var hasLoaded = false
+
+    func load(force: Bool = false) {
+        if !force, hasLoaded || isLoading { return }
+        hasLoaded = true
         isLoading = true
         let svc = service
         let ctx = context
@@ -59,7 +66,7 @@ final class ModelPresetsViewModel {
                 try await svc.upsert(preset)
                 self?.statusMessage = "Saved \"\(preset.name)\""
                 self?.statusIsError = false
-                self?.load()
+                self?.load(force: true)
             } catch {
                 self?.statusMessage = "Save failed: \(error.localizedDescription)"
                 self?.statusIsError = true
@@ -74,7 +81,7 @@ final class ModelPresetsViewModel {
                 try await svc.delete(id: id)
                 self?.statusMessage = "Deleted preset"
                 self?.statusIsError = false
-                self?.load()
+                self?.load(force: true)
             } catch {
                 self?.statusMessage = "Delete failed: \(error.localizedDescription)"
                 self?.statusIsError = true

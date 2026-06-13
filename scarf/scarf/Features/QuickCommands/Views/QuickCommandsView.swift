@@ -3,12 +3,13 @@ import ScarfCore
 import ScarfDesign
 
 struct QuickCommandsView: View {
-    @State private var viewModel: QuickCommandsViewModel
+    // Coordinator-cached (t-aud24) so it survives section switches.
+    let viewModel: QuickCommandsViewModel
     @State private var showAddSheet = false
     @State private var editTarget: HermesQuickCommand?
 
-    init(context: ServerContext) {
-        _viewModel = State(initialValue: QuickCommandsViewModel(context: context))
+    init(viewModel: QuickCommandsViewModel) {
+        self.viewModel = viewModel
     }
 
 
@@ -60,7 +61,7 @@ struct QuickCommandsView: View {
                         .scarfStyle(.caption)
                         .foregroundStyle(ScarfColor.success)
                 }
-                Button("Reload") { viewModel.load() }
+                Button("Reload") { viewModel.load(force: true) }
                     .buttonStyle(ScarfGhostButton())
                 Button {
                     showAddSheet = true

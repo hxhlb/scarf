@@ -37,7 +37,17 @@ final class CronViewModel {
         return ACPErrorHint.classify(errorMessage: lastError, stderrTail: "")
     }
 
-    func load() {
+    /// Re-entry guard (t-aud24): the VM is cached in `AppCoordinator`, so a
+    /// plain section switch reuses it. Skip the SSH re-read when the
+    /// file-watcher token is unchanged; a real on-disk change (advanced token),
+    /// a `force`, or an in-flight load still proceeds/blocks appropriately.
+    @ObservationIgnored private var loadedChangeToken: Date?
+    @ObservationIgnored private var hasLoaded = false
+
+    func load(changeToken: Date? = nil, force: Bool = false) {
+        if !force, hasLoaded, loadedChangeToken == changeToken { return }
+        hasLoaded = true
+        loadedChangeToken = changeToken
         isLoading = true
         let svc = fileService
         let selectedID = selectedJob?.id
@@ -114,14 +124,14 @@ final class CronViewModel {
                 if runResult.exitCode != 0 {
                     self.message = "Run failed to queue: \(runResult.output.prefix(200))"
                     self.logger.warning("cron run failed: \(runResult.output)")
-                    self.load()
+                    self.load(force: true)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                         self?.message = nil
                     }
                     return
                 }
                 self.message = "Agent started — dashboard will update when it finishes"
-                self.load()
+                self.load(force: true)
             }
             // `cron run` is queued; now force the tick. The 300s
             // timeout catches truly stuck processes without killing
@@ -136,7 +146,7 @@ final class CronViewModel {
                 if tickResult.exitCode != 0 {
                     self.logger.warning("cron tick exited non-zero (job may still complete via scheduler): \(tickResult.output)")
                 }
-                self.load()
+                self.load(force: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.message = nil
                 }
@@ -224,7 +234,7 @@ final class CronViewModel {
                     self.message = "Failed: \(result.output.prefix(200))"
                     self.logger.warning("cron command failed: args=\(arguments) output=\(result.output)")
                 }
-                self.load()
+                self.load(force: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.message = nil
                 }

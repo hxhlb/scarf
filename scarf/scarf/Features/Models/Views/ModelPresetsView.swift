@@ -11,13 +11,14 @@ import ScarfDesign
 /// so the user knows what'll fall back to the global default if they
 /// delete one.
 struct ModelPresetsView: View {
-    @State private var viewModel: ModelPresetsViewModel
+    // Coordinator-cached (t-aud24) so it survives section switches.
+    let viewModel: ModelPresetsViewModel
     @State private var editingPreset: ModelPreset?
     @State private var isCreating = false
     @State private var pendingDelete: ModelPreset?
 
-    init(context: ServerContext) {
-        _viewModel = State(initialValue: ModelPresetsViewModel(context: context))
+    init(viewModel: ModelPresetsViewModel) {
+        self.viewModel = viewModel
     }
 
     var body: some View {

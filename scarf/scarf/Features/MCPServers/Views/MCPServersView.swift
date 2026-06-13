@@ -3,11 +3,15 @@ import ScarfCore
 import ScarfDesign
 
 struct MCPServersView: View {
-    @State private var viewModel: MCPServersViewModel
+    // Coordinator-cached (t-aud24) so it survives section switches.
+    // `@Bindable` (not `let`) because the view needs `$viewModel` bindings
+    // (`$viewModel.searchText`, `$viewModel.showPresetPicker`, …); the instance
+    // is still coordinator-owned, not view-owned.
+    @Bindable var viewModel: MCPServersViewModel
     @Environment(\.hermesCapabilities) private var capabilitiesStore
 
-    init(context: ServerContext) {
-        _viewModel = State(initialValue: MCPServersViewModel(context: context))
+    init(viewModel: MCPServersViewModel) {
+        self.viewModel = viewModel
     }
 
 
@@ -32,7 +36,7 @@ struct MCPServersView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    viewModel.load()
+                    viewModel.load(force: true)
                 } label: {
                     Label("Reload", systemImage: "arrow.clockwise")
                 }

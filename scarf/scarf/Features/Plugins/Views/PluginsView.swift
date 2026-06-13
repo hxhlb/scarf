@@ -3,13 +3,15 @@ import ScarfCore
 import ScarfDesign
 
 struct PluginsView: View {
-    @State private var viewModel: PluginsViewModel
+    // Coordinator-cached (t-aud24) so it survives section switches; still
+    // observed via Observation (property reads in `body`).
+    let viewModel: PluginsViewModel
     @State private var installIdentifier = ""
     @State private var showInstall = false
     @State private var pendingRemove: HermesPlugin?
 
-    init(context: ServerContext) {
-        _viewModel = State(initialValue: PluginsViewModel(context: context))
+    init(viewModel: PluginsViewModel) {
+        self.viewModel = viewModel
     }
 
 
@@ -56,7 +58,7 @@ struct PluginsView: View {
                         .scarfStyle(.caption)
                         .foregroundStyle(ScarfColor.success)
                 }
-                Button("Reload") { viewModel.load() }
+                Button("Reload") { viewModel.load(force: true) }
                     .buttonStyle(ScarfGhostButton())
                 Button {
                     installIdentifier = ""

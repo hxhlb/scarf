@@ -36,7 +36,14 @@ final class PluginsViewModel {
     /// Source of truth is the `~/.hermes/plugins/` directory. Each plugin is a
     /// subdirectory — we read its `plugin.json` (if present) for source/version
     /// metadata. Parsing `hermes plugins list` box-drawn output is fragile.
-    func load() {
+    /// `hasLoaded` lets a plain section re-entry skip the remote walk (the VM
+    /// instance is cached in `AppCoordinator`, so it persists across switches);
+    /// Reload and post-mutation reloads pass `force: true` (t-aud24).
+    @ObservationIgnored private var hasLoaded = false
+
+    func load(force: Bool = false) {
+        if !force, hasLoaded || isLoading { return }
+        hasLoaded = true
         isLoading = true
         let dir = pluginsDir
         let ctx = context
@@ -113,7 +120,7 @@ final class PluginsViewModel {
                 guard let self else { return }
                 self.isLoading = false
                 self.message = result.exitCode == 0 ? "Installed" : "Install failed"
-                self.load()
+                self.load(force: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.message = nil
                 }
@@ -143,7 +150,7 @@ final class PluginsViewModel {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.message = result.exitCode == 0 ? success : "Failed"
-                self.load()
+                self.load(force: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                     self?.message = nil
                 }

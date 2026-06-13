@@ -12,12 +12,13 @@ import ScarfDesign
 /// keep our tabs (General/Display/Agent/Terminal/Browser/Voice/Memory/Aux
 /// Models/Security/Advanced) and only adopt the visual chrome.
 struct SettingsView: View {
-    @State private var viewModel: SettingsViewModel
+    // Coordinator-cached (t-aud24) so it survives section switches.
+    let viewModel: SettingsViewModel
     @State private var selectedTab: SettingsTab = .general
     @Environment(\.hermesCapabilities) private var capabilitiesStore
 
-    init(context: ServerContext) {
-        _viewModel = State(initialValue: SettingsViewModel(context: context))
+    init(viewModel: SettingsViewModel) {
+        self.viewModel = viewModel
     }
 
     /// Tabs visible for the connected host. The Secrets (Bitwarden) tab is
@@ -127,7 +128,7 @@ struct SettingsView: View {
             HStack(spacing: ScarfSpace.s2) {
                 Button("Open in Editor") { viewModel.openConfigInEditor() }
                     .buttonStyle(ScarfGhostButton())
-                Button("Reload") { viewModel.load() }
+                Button("Reload") { viewModel.load(force: true) }
                     .buttonStyle(ScarfSecondaryButton())
             }
             .fixedSize(horizontal: true, vertical: false)

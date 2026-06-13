@@ -10,15 +10,19 @@ import ScarfDesign
 /// architecture is preserved (matches the mockup's 360 px list + flex
 /// detail).
 struct CronView: View {
-    @State private var viewModel: CronViewModel
+    // Coordinator-cached (t-aud24) so it survives section switches.
+    // `@Bindable` (not `let`) because the view needs `$viewModel` bindings
+    // (e.g. `$viewModel.showCreateSheet`); the instance is still coordinator-
+    // owned, not view-owned.
+    @Bindable var viewModel: CronViewModel
     @State private var pendingDelete: HermesCronJob?
     @State private var showOutputPanel: Bool = false
     @Environment(\.hermesCapabilities) private var capabilitiesStore
     @Environment(AppCoordinator.self) private var coordinator
     @Environment(HermesFileWatcher.self) private var fileWatcher
 
-    init(context: ServerContext) {
-        _viewModel = State(initialValue: CronViewModel(context: context))
+    init(viewModel: CronViewModel) {
+        self.viewModel = viewModel
     }
 
     private var hasCronWorkdir: Bool {
@@ -48,14 +52,14 @@ struct CronView: View {
         .background(ScarfColor.backgroundPrimary)
         .navigationTitle("Cron Jobs")
         .loadingOverlay(viewModel.isLoading, label: "Loading cron jobs…", isEmpty: viewModel.jobs.isEmpty)
-        .onAppear { viewModel.load() }
+        .onAppear { viewModel.load(changeToken: fileWatcher.lastChangeDate) }
         // Reload on Hermes file mutations — Hermes flips `state` between
         // "scheduled" and "running" inside `~/.hermes/cron/jobs.json`
         // when a job starts/finishes, and writes a new run-output file
         // under `~/.hermes/cron/output/`. The watcher gives us the
         // running indicator + log tail refresh "for free" without a
         // polling timer. Same wiring ActivityView uses.
-        .onChange(of: fileWatcher.lastChangeDate) { viewModel.load() }
+        .onChange(of: fileWatcher.lastChangeDate) { _, newValue in viewModel.load(changeToken: newValue) }
         .sheet(isPresented: $viewModel.showCreateSheet) {
             CronJobEditor(mode: .create, availableSkills: viewModel.availableSkills, supportsWorkdir: hasCronWorkdir, supportsNoAgent: hasCronNoAgent, supportsDeliverAll: hasCronDeliverAll) { form in
                 viewModel.createJob(
@@ -132,7 +136,7 @@ struct CronView: View {
             }
             HStack(spacing: ScarfSpace.s2) {
                 Button {
-                    viewModel.load()
+                    viewModel.load(force: true)
                 } label: {
                     Label("Reload", systemImage: "arrow.clockwise")
                 }

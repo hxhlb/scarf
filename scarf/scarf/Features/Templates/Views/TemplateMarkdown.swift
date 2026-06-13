@@ -59,7 +59,7 @@ enum TemplateMarkdown {
 
     fileprivate static func parse(_ source: String) -> [Block] {
         var blocks: [Block] = []
-        var lines = source.components(separatedBy: "\n")
+        let lines = source.components(separatedBy: "\n")
         var i = 0
         while i < lines.count {
             let line = lines[i]

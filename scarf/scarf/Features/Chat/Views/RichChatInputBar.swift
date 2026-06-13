@@ -499,7 +499,8 @@ struct RichChatInputBar: View {
         // for the attachment chip's tooltip.
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             isEncodingAttachment = true
-            provider.loadObject(ofClass: URL.self) { url, _ in
+            // Fire-and-forget drag-load; the returned NSProgress is unused.
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url, let data = try? Data(contentsOf: url) else {
                     Task { @MainActor in
                         isEncodingAttachment = false

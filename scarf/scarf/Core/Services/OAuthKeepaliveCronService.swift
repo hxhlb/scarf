@@ -39,7 +39,10 @@ final class OAuthKeepaliveCronService {
     /// the Cron tab if they prefer a different cadence. The cron
     /// window must stay <= the shortest refresh-token lifetime among
     /// the user's configured OAuth providers (~30d for Nous).
-    static let defaultSchedule = "0 4 * * *"
+    ///
+    /// `nonisolated` so the detached `enable()` closure can read it
+    /// without an await-hop to the main actor — matches `jobName`.
+    nonisolated static let defaultSchedule = "0 4 * * *"
 
     /// Minimal prompt. The point is to boot a session — not to do
     /// useful work — so we want the LLM call to terminate fast. A
@@ -48,7 +51,10 @@ final class OAuthKeepaliveCronService {
     /// per-call cost; for API-key users, a single trivial turn per
     /// day is negligible compared to the alternative of full re-auth
     /// every month.
-    static let defaultPrompt = "Reply with the single word 'ok'."
+    ///
+    /// `nonisolated` so the detached `enable()` closure can read it
+    /// without an await-hop to the main actor — matches `jobName`.
+    nonisolated static let defaultPrompt = "Reply with the single word 'ok'."
 
     private let logger = Logger(subsystem: "com.scarf", category: "OAuthKeepaliveCronService")
     let context: ServerContext

@@ -684,7 +684,7 @@ final class HealthViewModel {
                     if await Self.probeDashboard(port: port) {
                         if let url = URL(string: "http://127.0.0.1:\(port)") {
                             await MainActor.run {
-                                NSWorkspace.shared.open(url)
+                                _ = NSWorkspace.shared.open(url)
                             }
                         }
                         break

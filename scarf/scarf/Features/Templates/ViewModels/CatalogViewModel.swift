@@ -118,7 +118,7 @@ final class CatalogViewModel {
         let result = await catalogService.loadCatalog(forceRefresh: forceRefresh)
         let indexService = self.indexService
         let index = await Task.detached { indexService.build() }.value
-        await applyLoad(result: result, index: index)
+        applyLoad(result: result, index: index)
     }
 
     /// Classify a row's install state from the current index. Used by

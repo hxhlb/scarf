@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Runs multi-line shell scripts on a server (local or SSH) without
 /// going through `ServerTransport.runProcess`.
@@ -37,16 +38,11 @@ public enum SSHScriptRunner {
     /// chain of stale 30s ssh subprocesses behind, blocking the
     /// dashboard's queryBatch and producing a "spinning" load.
     private final class CancelFlag: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _cancelled = false
-        var isCancelled: Bool {
-            lock.lock(); defer { lock.unlock() }
-            return _cancelled
-        }
-        func cancel() {
-            lock.lock(); defer { lock.unlock() }
-            _cancelled = true
-        }
+        // os_unfair_lock (via OSAllocatedUnfairLock) per the project's lock
+        // convention — cheaper than NSLock for this once-per-run flag. (t-aud15)
+        private let lock = OSAllocatedUnfairLock(initialState: false)
+        var isCancelled: Bool { lock.withLock { $0 } }
+        func cancel() { lock.withLock { $0 = true } }
     }
 
     /// Lock-protected `Data` accumulator used by the stdout/stderr
@@ -65,16 +61,11 @@ public enum SSHScriptRunner {
     /// any user with ~150+ sessions. Draining concurrently with
     /// `readabilityHandler` removes the back-pressure.
     private final class LockedData: @unchecked Sendable {
-        private let lock = NSLock()
-        private var buf = Data()
-        func append(_ chunk: Data) {
-            lock.lock(); defer { lock.unlock() }
-            buf.append(chunk)
-        }
-        func snapshot() -> Data {
-            lock.lock(); defer { lock.unlock() }
-            return buf
-        }
+        // os_unfair_lock (via OSAllocatedUnfairLock) per the project's lock
+        // convention. (t-aud15)
+        private let lock = OSAllocatedUnfairLock(initialState: Data())
+        func append(_ chunk: Data) { lock.withLock { $0.append(chunk) } }
+        func snapshot() -> Data { lock.withLock { $0 } }
     }
 
     public enum Outcome: Sendable {

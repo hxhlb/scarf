@@ -26,15 +26,24 @@ import Foundation
 /// * `.blob(d)` → `X'<hex>'`
 public enum SQLValueInliner {
 
+    /// Error thrown when a caller's `?` placeholder count doesn't match
+    /// the number of `params` provided. This is a caller bug, but it's
+    /// reachable from `RemoteSQLiteBackend.query`/`queryBatch`, which
+    /// already sit inside `try`/catch — so throw a recoverable error
+    /// rather than `fatalError`-crashing the whole app. (t-aud08)
+    public enum InlineError: Error, Equatable {
+        case placeholderParamMismatch(String)
+    }
+
     /// Walk `sql`, replacing each `?` (outside SQL string literals) with
-    /// the corresponding `params` entry's encoded form. Throws via
-    /// fatalError if the placeholder count doesn't match `params.count`
-    /// — a programmer error, not a runtime condition.
+    /// the corresponding `params` entry's encoded form. Throws
+    /// `InlineError.placeholderParamMismatch` if the placeholder count
+    /// doesn't match `params.count`.
     ///
     /// `?` inside string literals (e.g. `WHERE name = '?'`) is preserved
     /// unchanged. We track quote state with a tiny scanner so existing
     /// SQL with literal `?` chars in strings doesn't get mis-bound.
-    public static func inline(_ sql: String, params: [SQLValue]) -> String {
+    public static func inline(_ sql: String, params: [SQLValue]) throws -> String {
         var out = ""
         out.reserveCapacity(sql.count + params.count * 16)
         var paramIndex = 0
@@ -68,7 +77,9 @@ public enum SQLValueInliner {
             if c == "?" && !inSingleQuote && !inDoubleQuote {
                 // Bind placeholder.
                 if paramIndex >= params.count {
-                    fatalError("SQLValueInliner: more `?` placeholders in SQL than provided params (\(params.count)). SQL: \(sql)")
+                    throw InlineError.placeholderParamMismatch(
+                        "more `?` placeholders in SQL than provided params (\(params.count)). SQL: \(sql)"
+                    )
                 }
                 out.append(encode(params[paramIndex]))
                 paramIndex += 1
@@ -79,7 +90,9 @@ public enum SQLValueInliner {
             i = sql.index(after: i)
         }
         if paramIndex != params.count {
-            fatalError("SQLValueInliner: \(params.count) params provided but only \(paramIndex) `?` placeholders consumed. SQL: \(sql)")
+            throw InlineError.placeholderParamMismatch(
+                "\(params.count) params provided but only \(paramIndex) `?` placeholders consumed. SQL: \(sql)"
+            )
         }
         return out
     }

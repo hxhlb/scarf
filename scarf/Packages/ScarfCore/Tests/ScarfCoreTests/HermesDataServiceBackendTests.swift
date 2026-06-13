@@ -199,6 +199,45 @@ import Foundation
         #expect(result.map { $0.id } == [1, 2, 3])
     }
 
+    // MARK: - fetchSkeletonMessages (t-aud01 regression)
+
+    @Test func fetchSkeletonMessagesSelectsReasoningButExcludesReasoningContent() async {
+        // Regression (t-aud01): the v2.8 skeleton loader used to emit
+        // `NULL AS reasoning`, which hid the REASONING disclosure on
+        // every resumed thinking-model chat. It must now select the real
+        // `reasoning` column (matching messageColumnsLight) while still
+        // NULLing `tool_calls` and excluding the heavy `reasoning_content`.
+        let mock = MockHermesQueryBackend()
+        await mock.setHasV07Schema(true)
+        await mock.setHasV011Schema(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchSkeletonMessages(sessionId: "s1", limit: 200)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("NULL AS tool_calls"))   // tool_calls still NULLed
+        #expect(!sql.contains("NULL AS reasoning"))    // reasoning no longer NULLed
+        #expect(sql.contains(", reasoning"))           // real reasoning column selected
+        #expect(!sql.contains("reasoning_content"))    // heavy blob still excluded
+        #expect(sql.contains("role IN ('user','assistant')"))
+    }
+
+    @Test func fetchSkeletonMessagesBareSchemaOmitsReasoning() async {
+        // No v0.7 schema → no reasoning column selected at all.
+        let mock = MockHermesQueryBackend()
+        await mock.setHasV07Schema(false)
+        await mock.setHasV011Schema(false)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchSkeletonMessages(sessionId: "s1", limit: 200)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(!sql.contains("reasoning"))            // "finish_reason" doesn't match "reasoning"
+        #expect(sql.contains("NULL AS tool_calls"))
+    }
+
     // MARK: - dashboardSnapshot
 
     @Test func dashboardSnapshotUsesQueryBatchNotIndividualQueries() async {

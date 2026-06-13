@@ -21,6 +21,9 @@ final class SessionsViewModel {
     }
 
 
+    /// True while `load()` runs so the view can show a `.loadingOverlay`
+    /// instead of a blank table on first open / refresh. (t-aud07)
+    var isLoading = false
     var sessions: [HermesSession] = []
     var sessionPreviews: [String: String] = [:]
     var selectedSession: HermesSession?
@@ -72,6 +75,8 @@ final class SessionsViewModel {
     }
 
     func load() async {
+        isLoading = true
+        defer { isLoading = false }
         // refresh() forces a fresh snapshot on remote contexts. The DB stays
         // open after load() so selectSession()/search() can query without
         // re-opening — cleanup() closes on disappear.

@@ -174,7 +174,7 @@ public actor RemoteSQLiteBackend: HermesQueryBackend {
 
     public func query(_ sql: String, params: [SQLValue]) async throws -> [Row] {
         guard isOpen else { throw BackendError.notOpen }
-        let inlined = SQLValueInliner.inline(sql, params: params)
+        let inlined = try SQLValueInliner.inline(sql, params: params)
         // In-flight coalescing — if a query with the exact same
         // inlined SQL is already pending, await its task instead
         // of spawning a new SSH subprocess. Surfaces in ScarfMon as
@@ -241,7 +241,7 @@ public actor RemoteSQLiteBackend: HermesQueryBackend {
         // emits a one-row JSON array we use as a sentinel.
         var sqlBlocks: [String] = []
         for (i, stmt) in statements.enumerated() {
-            let inlined = SQLValueInliner.inline(stmt.sql, params: stmt.params)
+            let inlined = try SQLValueInliner.inline(stmt.sql, params: stmt.params)
             // Marker first (so we know which result-set follows even
             // if a query returns zero rows — sqlite3 -json prints
             // nothing for empty result sets, which would otherwise

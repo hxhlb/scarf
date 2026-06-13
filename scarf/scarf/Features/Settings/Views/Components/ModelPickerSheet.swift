@@ -408,13 +408,17 @@ struct ModelPickerSheet: View {
         }
     }
 
+    private static let fetchedAtFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+
     private var nousFetchedAtTooltip: String {
         guard let date = nousFetchedAt else {
             return "Fetch the latest model list from Nous."
         }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return "Last refreshed \(formatter.localizedString(for: date, relativeTo: Date()))"
+        return "Last refreshed \(Self.fetchedAtFormatter.localizedString(for: date, relativeTo: Date()))"
     }
 
     /// Right-column detail for overlay-only providers (Nous Portal, OpenAI

@@ -391,14 +391,24 @@ struct KanbanCardView: View {
         }
     }
 
+    // Two cached parsers (fractional + plain) so relativeShort never
+    // allocates/mutates an ISO8601DateFormatter per card per render. (t-aud10)
+    private static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
     private func relativeShort(from iso: String) -> String? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: iso) {
+        if let date = Self.isoFractional.date(from: iso) {
             return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
         }
-        formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: iso) {
+        if let date = Self.isoPlain.date(from: iso) {
             return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
         }
         return nil

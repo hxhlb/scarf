@@ -19,6 +19,8 @@ struct SessionsView: View {
     @State private var quickFilter: QuickFilter = .all
     @Environment(AppCoordinator.self) private var coordinator
     @Environment(HermesFileWatcher.self) private var fileWatcher
+    /// Focus binding for the search field so ⌘F can focus it. (t-aud18)
+    @FocusState private var searchFocused: Bool
 
     init(context: ServerContext) {
         _viewModel = State(initialValue: SessionsViewModel(context: context))
@@ -55,6 +57,20 @@ struct SessionsView: View {
         }
         .background(ScarfColor.backgroundPrimary)
         .navigationTitle("Sessions")
+        .loadingOverlay(
+            viewModel.isLoading,
+            label: "Loading sessions…",
+            isEmpty: viewModel.sessions.isEmpty
+        )
+        .background {
+            // ⌘F focuses the sessions search field — standard macOS Find
+            // affordance. Hidden control that just owns the shortcut for
+            // the active window. (t-aud18)
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
         .task {
             await viewModel.load()
             if let id = coordinator.selectedSessionId {
@@ -258,6 +274,7 @@ struct SessionsView: View {
             TextField("Search sessions…", text: $viewModel.searchText)
                 .textFieldStyle(.plain)
                 .scarfStyle(.caption)
+                .focused($searchFocused)
                 .onSubmit { Task { await viewModel.search() } }
                 .onChange(of: viewModel.searchText) {
                     if viewModel.searchText.isEmpty {
@@ -599,11 +616,15 @@ private struct SessionTableRow: View {
         return "$0.00"
     }
 
-    private var updatedLabel: String {
-        guard let date = session.startedAt else { return "—" }
+    private static let updatedFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
-        return f.localizedString(for: date, relativeTo: Date())
+        return f
+    }()
+
+    private var updatedLabel: String {
+        guard let date = session.startedAt else { return "—" }
+        return Self.updatedFormatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

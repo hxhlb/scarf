@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import ScarfCore
 
-/// Pure unit tests on `SQLValueInliner.inline(_:params:)` and
+/// Pure unit tests on `try SQLValueInliner.inline(_:params:)` and
 /// `SQLValueInliner.encode(_:)`. No backend, no transport, no actor —
 /// these are the lexical-substitution rules that drive the remote
 /// SQLite backend's `?` → literal pipeline.
@@ -61,8 +61,8 @@ import Foundation
 
     // MARK: - inline(_:params:) substitution rules
 
-    @Test func inlineSubstitutesPlaceholdersInOrder() {
-        let out = SQLValueInliner.inline(
+    @Test func inlineSubstitutesPlaceholdersInOrder() throws {
+        let out = try SQLValueInliner.inline(
             "INSERT INTO t VALUES (?, ?, ?)",
             params: [.integer(1), .text("two"), .real(3.0)]
         )
@@ -75,73 +75,88 @@ import Foundation
         #expect(out.contains(real3))
     }
 
-    @Test func inlineSkipsPlaceholderInsideStringLiteral() {
+    @Test func inlineSkipsPlaceholderInsideStringLiteral() throws {
         // The `?` inside `'?'` is part of a string and must not be bound.
         // Only the trailing `?` (outside the quotes) consumes the param.
-        let out = SQLValueInliner.inline(
+        let out = try SQLValueInliner.inline(
             "WHERE name = '?' AND id = ?",
             params: [.integer(7)]
         )
         #expect(out == "WHERE name = '?' AND id = 7")
     }
 
-    @Test func inlineSkipsPlaceholderInsideDoubleQuotedIdentifier() {
+    @Test func inlineSkipsPlaceholderInsideDoubleQuotedIdentifier() throws {
         // Double-quoted identifiers (column / table names with special chars)
         // are also a quoted region — `?` inside them is literal.
-        let out = SQLValueInliner.inline(
+        let out = try SQLValueInliner.inline(
             "SELECT \"col?\" FROM t WHERE x = ?",
             params: [.integer(1)]
         )
         #expect(out == "SELECT \"col?\" FROM t WHERE x = 1")
     }
 
-    @Test func inlineHandlesDoubledSingleQuoteEscapeInString() {
+    @Test func inlineHandlesDoubledSingleQuoteEscapeInString() throws {
         // `'it''s ?'` is a single SQL string literal containing `it's ?`.
         // The doubled single-quote is the SQL escape for an embedded
         // apostrophe — the scanner must NOT toggle out of string state
         // at the doubled quote, and the trailing `?` is inside the string.
         // No params consumed.
-        let out = SQLValueInliner.inline(
+        let out = try SQLValueInliner.inline(
             "WHERE x = 'it''s ?'",
             params: []
         )
         #expect(out == "WHERE x = 'it''s ?'")
     }
 
-    @Test func inlineSelectShapeMatchesDataServicePattern() {
+    @Test func inlineSelectShapeMatchesDataServicePattern() throws {
         // Sanity check: the SELECT shape `HermesDataService.fetchSessions`
         // generates inlines cleanly for the typical `[.integer(100)]`
         // limit param.
         let sql = "SELECT id, source FROM sessions WHERE parent_session_id IS NULL ORDER BY started_at DESC LIMIT ?"
-        let out = SQLValueInliner.inline(sql, params: [.integer(100)])
+        let out = try SQLValueInliner.inline(sql, params: [.integer(100)])
         #expect(out == "SELECT id, source FROM sessions WHERE parent_session_id IS NULL ORDER BY started_at DESC LIMIT 100")
     }
 
-    @Test func inlineWithNoPlaceholdersReturnsInputUnchanged() {
+    @Test func inlineWithNoPlaceholdersReturnsInputUnchanged() throws {
         let sql = "SELECT COUNT(*) FROM messages"
-        #expect(SQLValueInliner.inline(sql, params: []) == sql)
+        #expect(try SQLValueInliner.inline(sql, params: []) == sql)
     }
 
-    @Test func inlinePreservesAllOtherCharacters() {
+    @Test func inlinePreservesAllOtherCharacters() throws {
         // Make sure we're not mangling whitespace, semicolons, parens.
         let sql = "  SELECT  *\n  FROM   t  WHERE id = ?  ;  "
-        let out = SQLValueInliner.inline(sql, params: [.integer(5)])
+        let out = try SQLValueInliner.inline(sql, params: [.integer(5)])
         #expect(out == "  SELECT  *\n  FROM   t  WHERE id = 5  ;  ")
     }
 
-    @Test func inlineSubstitutesNullPlaceholder() {
-        let out = SQLValueInliner.inline(
+    @Test func inlineSubstitutesNullPlaceholder() throws {
+        let out = try SQLValueInliner.inline(
             "UPDATE t SET col = ? WHERE id = ?",
             params: [.null, .integer(1)]
         )
         #expect(out == "UPDATE t SET col = NULL WHERE id = 1")
     }
 
-    @Test func inlineSubstitutesBlobPlaceholder() {
-        let out = SQLValueInliner.inline(
+    @Test func inlineSubstitutesBlobPlaceholder() throws {
+        let out = try SQLValueInliner.inline(
             "INSERT INTO t (data) VALUES (?)",
             params: [.blob(Data([0x01, 0x02, 0x03]))]
         )
         #expect(out == "INSERT INTO t (data) VALUES (X'010203')")
+    }
+
+    // MARK: - inline(_:params:) error path (t-aud08)
+
+    @Test func inlineThrowsWhenMorePlaceholdersThanParams() {
+        // Was a fatalError (whole-app crash); now a recoverable throw.
+        #expect(throws: SQLValueInliner.InlineError.self) {
+            _ = try SQLValueInliner.inline("WHERE a = ? AND b = ?", params: [.integer(1)])
+        }
+    }
+
+    @Test func inlineThrowsWhenFewerPlaceholdersThanParams() {
+        #expect(throws: SQLValueInliner.InlineError.self) {
+            _ = try SQLValueInliner.inline("WHERE a = ?", params: [.integer(1), .integer(2)])
+        }
     }
 }

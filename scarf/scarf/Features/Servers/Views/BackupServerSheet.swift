@@ -33,6 +33,9 @@ struct BackupServerSheet: View {
                 await viewModel.start()
             }
         }
+        // Cancel the in-flight remote backup if the sheet is dismissed
+        // mid-run so the remote `tar`/SSH work doesn't keep going. (t-aud17)
+        .onDisappear { viewModel.cancel() }
     }
 
     private var header: some View {

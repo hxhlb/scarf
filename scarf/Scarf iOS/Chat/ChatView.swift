@@ -2887,6 +2887,15 @@ private struct PermissionSheet: View {
             }
             .navigationTitle("Agent permission")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // Explicit dismissal affordance (HIG consistency with
+                // ProjectPickerSheet / IOSModelPreflightSheet) — swipe-to-
+                // dismiss already worked but wasn't discoverable. Dismisses
+                // without responding, same as the drag indicator. (t-aud14)
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
         }
     }
 }

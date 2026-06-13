@@ -6,6 +6,16 @@ import ScarfDesign
 /// Owns the `OnboardingViewModel` and renders the current step.
 /// Each step gets its own small view; the view switch is driven by
 /// `vm.step`.
+///
+/// **Navigation is intentionally linear (t-aud19).** There is no per-step
+/// "Previous" affordance: the flow generates/imports an SSH key and writes
+/// config as it advances, so arbitrary back-stepping could strand the user
+/// in an inconsistent, half-provisioned state. Forward is driven by each
+/// step's primary action; the only backward path is
+/// `OnboardingViewModel.goBackToServerDetails()`, wired solely for
+/// connection-test-failure recovery. `Cancel` (when `canCancel`) abandons
+/// the run and returns to the server list — restart to change an earlier
+/// step. This is a deliberate design choice, not a missing affordance.
 struct OnboardingRootView: View {
     /// ServerID under which this onboarding run writes the key +
     /// config. M9: the ServerListView reserves a fresh ID when the

@@ -40,6 +40,11 @@ import os
 /// remote-watch fallback. Everything else (readFile, writeFile,
 /// listDirectory, runProcess, snapshotSQLite) has a full Citadel-
 /// backed implementation.
+///
+/// `@unchecked Sendable`: all stored properties are immutable `let`s
+/// (contextID, isRemote, config, displayName, the `@Sendable` keyProvider)
+/// and the only mutable state lives behind the `ConnectionHolder` actor,
+/// so the type is safe to share across actor boundaries. (t-aud15)
 public final class CitadelServerTransport: ServerTransport, @unchecked Sendable {
     #if canImport(os)
     private static let logger = Logger(subsystem: "com.scarf", category: "CitadelServerTransport")

@@ -122,8 +122,8 @@ struct MCPServerPresetPickerView: View {
                 if !preset.requiredEnvKeys.isEmpty || !preset.optionalEnvKeys.isEmpty {
                     envFields(preset: preset)
                 }
-                if !preset.docsURL.isEmpty {
-                    Link(destination: URL(string: preset.docsURL) ?? URL(string: "https://modelcontextprotocol.io")!) {
+                if !preset.docsURL.isEmpty, let docsURL = URL(string: preset.docsURL) {
+                    Link(destination: docsURL) {
                         Label("Docs", systemImage: "book")
                             .font(.caption)
                     }

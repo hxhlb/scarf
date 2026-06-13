@@ -205,6 +205,19 @@ struct ScarfApp: App {
         // smaller than a section's minimum render.
         .windowResizability(.contentMinSize)
         .commands {
+            // Standard ⌘, Settings. Scarf has no separate `Settings`
+            // scene — settings is an in-window sidebar section — so route
+            // the command to the focused window's coordinator via
+            // `@FocusedValue`. (t-aud06)
+            CommandGroup(replacing: .appSettings) {
+                OpenSettingsCommand()
+            }
+            // Standard Help menu → docs (was absent). (t-aud18)
+            CommandGroup(replacing: .help) {
+                if let url = URL(string: "https://hermes-agent.nousresearch.com/docs") {
+                    Link("Scarf & Hermes Documentation", destination: url)
+                }
+            }
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { updater.checkForUpdates() }
             }
@@ -281,6 +294,37 @@ private struct OpenServerCommands: View {
     }
 }
 
+/// Carries the focused window's `AppCoordinator` up to the app-level
+/// `.commands` block so menu commands (⌘, Settings) can drive the
+/// in-window sidebar navigation of whichever window is frontmost. Scarf
+/// has no separate `Settings` scene — settings is a sidebar section — so
+/// the standard ⌘, must route through here. (t-aud06)
+private struct AppCoordinatorFocusedValueKey: FocusedValueKey {
+    typealias Value = AppCoordinator
+}
+
+extension FocusedValues {
+    var appCoordinator: AppCoordinator? {
+        get { self[AppCoordinatorFocusedValueKey.self] }
+        set { self[AppCoordinatorFocusedValueKey.self] = newValue }
+    }
+}
+
+/// App-menu "Settings…" command (⌘,) that opens the in-window Settings
+/// sidebar section of the focused window. Disabled when no Scarf window
+/// is focused (e.g. only a MissingServerView window is open). (t-aud06)
+private struct OpenSettingsCommand: View {
+    @FocusedValue(\.appCoordinator) private var coordinator
+
+    var body: some View {
+        Button("Settings…") {
+            coordinator?.selectedSection = .settings
+        }
+        .keyboardShortcut(",", modifiers: .command)
+        .disabled(coordinator == nil)
+    }
+}
+
 /// Wrapper View whose lifetime is scoped to one `ServerContext`. All
 /// per-server `@State` — file watcher, coordinator, chat — lives here so
 /// that the enclosing `.id(context.id)` modifier in `ScarfApp` cleanly
@@ -309,6 +353,10 @@ private struct ContextBoundRoot: View {
     var body: some View {
         ContentView()
             .environment(coordinator)
+            // Publish this window's coordinator to the app-level
+            // `.commands` block so ⌘, (Settings) can drive the focused
+            // window's sidebar navigation. (t-aud06)
+            .focusedValue(\.appCoordinator, coordinator)
             .environment(fileWatcher)
             .environment(chatViewModel)
             .environment(capabilities)
@@ -353,6 +401,12 @@ final class ServerLiveStatus: Identifiable {
     var hermesRunning = false
     var gatewayRunning = false
 
+    /// When true (app not frontmost), the poll cadence is floored at 60s
+    /// to cut background CPU + SSH round-trips against remotes (gh#102),
+    /// while still keeping the menu-bar status reasonably fresh. Set by
+    /// `ServerLiveStatusRegistry` on app activate/resign. (t-aud05)
+    var lowPowerMode = false
+
     var id: ServerID { context.id }
 
     init(context: ServerContext) {
@@ -374,14 +428,18 @@ final class ServerLiveStatus: Identifiable {
                 let ok = await self?.pollOnce() ?? false
                 if Task.isCancelled { return }
                 consecutiveFailures = ok ? 0 : consecutiveFailures + 1
-                let delaySec: UInt64
+                let base: UInt64
                 switch consecutiveFailures {
-                case 0:  delaySec = 10
-                case 1:  delaySec = 30
-                case 2:  delaySec = 60
-                case 3:  delaySec = 120
-                default: delaySec = 300
+                case 0:  base = 10
+                case 1:  base = 30
+                case 2:  base = 60
+                case 3:  base = 120
+                default: base = 300
                 }
+                // Floor the cadence at 60s while the app is backgrounded so
+                // an idle/connected Scarf stops the 10s SSH-poll storm that
+                // drove gh#102. Exponential backoff still applies on top.
+                let delaySec = (self?.lowPowerMode ?? false) ? max(base, 60) : base
                 try? await Task.sleep(nanoseconds: delaySec * 1_000_000_000)
             }
         }
@@ -390,6 +448,18 @@ final class ServerLiveStatus: Identifiable {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+    }
+
+    /// Set by the registry on app activate/resign — floors the poll
+    /// cadence at 60s while backgrounded (gh#102). (t-aud05)
+    func setLowPowerMode(_ on: Bool) {
+        lowPowerMode = on
+    }
+
+    /// Fire a single immediate probe — used on app-activate so the menu
+    /// bar refreshes promptly instead of waiting out the background sleep.
+    func pollNow() {
+        refresh()
     }
 
     func startHermes() {
@@ -482,10 +552,41 @@ final class ServerLiveStatus: Identifiable {
 final class ServerLiveStatusRegistry {
     private(set) var statuses: [ServerLiveStatus] = []
     private let registry: ServerRegistry
-
+    /// True while the app is not frontmost — propagated to every status so
+    /// polling drops to a low-power cadence (gh#102). (t-aud05)
+    private var lowPowerMode = false
     init(registry: ServerRegistry) {
         self.registry = registry
         rebuild()
+        observeAppLifecycle()
+    }
+
+    /// Slow down (not stop) polling when the app loses focus and restore
+    /// it — with an immediate refresh — when it returns. The poll loop
+    /// keeps running at a 60s+ cadence in the background so the menu-bar
+    /// status stays reasonably fresh, while the idle 10s SSH-poll storm
+    /// that drove gh#102 goes away. App-lifetime registry, so the observer
+    /// blocks aren't tracked for removal (NotificationCenter retains them
+    /// for the process lifetime). (t-aud05)
+    private func observeAppLifecycle() {
+        let nc = NotificationCenter.default
+        // queue: .main → the block runs on the main thread, so
+        // MainActor.assumeIsolated is safe and avoids a Task hop.
+        _ = nc.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setLowPowerMode(true) }
+        }
+        _ = nc.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setLowPowerMode(false) }
+        }
+    }
+
+    private func setLowPowerMode(_ on: Bool) {
+        guard on != lowPowerMode else { return }
+        lowPowerMode = on
+        for s in statuses { s.setLowPowerMode(on) }
+        // On returning to the foreground, refresh immediately so the menu
+        // bar doesn't wait out the (possibly 60s+) background sleep.
+        if !on { for s in statuses { s.pollNow() } }
     }
 
     /// Recompute the status list from the source registry. Re-uses any
@@ -499,6 +600,7 @@ final class ServerLiveStatusRegistry {
                 newStatuses.append(existing)
             } else {
                 let status = ServerLiveStatus(context: ctx)
+                status.setLowPowerMode(lowPowerMode)
                 status.startPolling()
                 newStatuses.append(status)
             }

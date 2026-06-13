@@ -23,6 +23,9 @@ final class CronViewModel {
     var showCreateSheet = false
     var editingJob: HermesCronJob?
     var isLoading = false
+    /// True when `jobs.json` exists but failed to decode — the Cron view
+    /// warns instead of silently showing an empty board. (t-aud09)
+    var loadDecodeFailed = false
 
     /// Classified hint for the selected job's `lastError`, computed via
     /// `ACPErrorHint.classify` so cron rows surface the same OAuth-revoked
@@ -43,7 +46,9 @@ final class CronViewModel {
             // v2.8: instrumented so we can see how many SSH RTTs the
             // Cron tab actually costs in captures.
             await ScarfMon.measureAsync(.diskIO, "cron.load") {
-                let jobs = svc.loadCronJobs()
+                let outcome = svc.loadCronJobsOutcome()
+                let jobs = outcome.jobs
+                let decodeFailed = outcome.decodeFailed
                 let skills = svc.loadSkills().flatMap { $0.skills.map(\.id) }.sorted()
                 let refreshed = selectedID.flatMap { id in jobs.first(where: { $0.id == id }) }
                 let output = refreshed.flatMap { svc.loadCronOutput(jobId: $0.id) }
@@ -51,6 +56,7 @@ final class CronViewModel {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.jobs = jobs
+                    self.loadDecodeFailed = decodeFailed
                     self.availableSkills = skills
                     if let refreshed { self.selectedJob = refreshed }
                     if output != nil { self.jobOutput = output }

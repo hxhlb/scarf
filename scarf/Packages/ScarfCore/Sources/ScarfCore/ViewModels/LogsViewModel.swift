@@ -12,6 +12,9 @@ public final class LogsViewModel {
     }
 
     public var entries: [LogEntry] = []
+    /// True during initial load + log-file switch so the view can show a
+    /// `.loadingOverlay` (the 2s tail poll does NOT toggle this). (t-aud07)
+    public var isLoading = false
     public var selectedLogFile: LogFile = .agent
     public var filterLevel: LogEntry.LogLevel?
     public var selectedComponent: LogComponent = .all
@@ -92,18 +95,22 @@ public final class LogsViewModel {
     }
 
     public func load() async {
+        isLoading = true
         await logService.openLog(path: path(for: selectedLogFile))
         entries = await logService.readLastLines(count: 500)
         await logService.seekToEnd()
         startPolling()
+        isLoading = false
     }
 
     public func switchLogFile(_ file: LogFile) async {
+        isLoading = true
         selectedLogFile = file
         entries = []
         await logService.openLog(path: path(for: file))
         entries = await logService.readLastLines(count: 500)
         await logService.seekToEnd()
+        isLoading = false
     }
 
     public func startPolling() {

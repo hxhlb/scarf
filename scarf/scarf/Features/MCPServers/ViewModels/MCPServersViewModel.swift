@@ -93,9 +93,10 @@ final class MCPServersViewModel {
 
     func deleteServer(name: String) {
         let fileService = self.fileService
-        Task.detached {
+        Task.detached { [weak self] in
             let result = fileService.removeMCPServer(name: name)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 if result.exitCode == 0 {
                     self.flashStatus("Removed \(name)")
                     if self.selectedServerName == name {
@@ -115,9 +116,10 @@ final class MCPServersViewModel {
         guard let server = servers.first(where: { $0.name == name }) else { return }
         let newValue = !server.enabled
         let fileService = self.fileService
-        Task.detached {
+        Task.detached { [weak self] in
             let ok = fileService.toggleMCPServerEnabled(name: name, enabled: newValue)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 if ok {
                     self.flashStatus(newValue ? "Enabled \(name)" : "Disabled \(name)")
                     self.load()
@@ -133,9 +135,10 @@ final class MCPServersViewModel {
         guard !testingNames.contains(name) else { return }
         testingNames.insert(name)
         let fileService = self.fileService
-        Task.detached {
+        Task.detached { [weak self] in
             let result = await fileService.testMCPServer(name: name)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.testingNames.remove(name)
                 self.testResults[name] = result
             }
@@ -145,10 +148,11 @@ final class MCPServersViewModel {
     func testAll() {
         let targets = servers.map(\.name)
         let fileService = self.fileService
-        Task.detached {
+        Task.detached { [weak self] in
             for name in targets {
                 let result = await fileService.testMCPServer(name: name)
-                await MainActor.run {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
                     self.testResults[name] = result
                 }
             }
@@ -162,7 +166,7 @@ final class MCPServersViewModel {
             if let pathArg, !pathArg.isEmpty { base.append(pathArg) }
             return base
         }()
-        Task.detached {
+        Task.detached { [weak self] in
             let addResult: (exitCode: Int32, output: String)
             switch preset.transport {
             case .stdio:
@@ -184,15 +188,16 @@ final class MCPServersViewModel {
                 addResult = (exitCode: 1, output: "SSE-transport presets are not supported.")
             }
             guard addResult.exitCode == 0 else {
-                await MainActor.run {
-                    self.activeError = "Add failed: \(addResult.output)"
+                await MainActor.run { [weak self] in
+                    self?.activeError = "Add failed: \(addResult.output)"
                 }
                 return
             }
             if !envValues.isEmpty {
                 _ = fileService.setMCPServerEnv(name: name, env: envValues)
             }
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.flashStatus("Added \(name)")
                 self.load()
                 self.selectedServerName = name
@@ -204,7 +209,7 @@ final class MCPServersViewModel {
 
     func addCustom(name: String, transport: MCPTransport, command: String, args: [String], url: String, auth: String?) {
         let fileService = self.fileService
-        Task.detached {
+        Task.detached { [weak self] in
             let result: (exitCode: Int32, output: String)
             switch transport {
             case .stdio:
@@ -217,7 +222,8 @@ final class MCPServersViewModel {
                 // but kept so the switch is exhaustive without `@unknown default`.
                 result = (exitCode: 1, output: "SSE servers must be added via addCustomSSE.")
             }
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 if result.exitCode == 0 {
                     self.flashStatus("Added \(name)")
                     self.load()
@@ -237,9 +243,10 @@ final class MCPServersViewModel {
     /// from the UI on pre-v0.13 hosts.
     func addCustomSSE(name: String, url: String, sseReadTimeout: Int?) {
         let fileService = self.fileService
-        Task.detached {
+        Task.detached { [weak self] in
             let result = fileService.addMCPServerSSE(name: name, url: url, sseReadTimeout: sseReadTimeout)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 if result.exitCode == 0 {
                     self.flashStatus("Added \(name)")
                     self.load()
@@ -262,12 +269,13 @@ final class MCPServersViewModel {
         isLoadingCatalog = true
         catalogText = ""
         let fileService = self.fileService
-        Task.detached {
+        Task.detached { [weak self] in
             let result = fileService.runHermesCLI(args: ["mcp", "catalog"], timeout: 45)
             let text = result.output.isEmpty
                 ? "No catalog output. Requires Hermes v0.15+ — check that `hermes mcp catalog` runs on this host."
                 : result.output
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.catalogText = text
                 self.isLoadingCatalog = false
             }
@@ -276,9 +284,10 @@ final class MCPServersViewModel {
 
     func restartGateway() {
         let fileService = self.fileService
-        Task.detached {
+        Task.detached { [weak self] in
             let result = fileService.restartGateway()
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 if result.exitCode == 0 {
                     self.flashStatus("Gateway restarted")
                     self.showRestartBanner = false

@@ -59,8 +59,8 @@ struct ChatQueueIndicator: View {
             ScarfDivider()
             ScrollView {
                 VStack(alignment: .leading, spacing: ScarfSpace.s2) {
-                    ForEach(Array(queuedPrompts.enumerated()), id: \.element.id) { index, prompt in
-                        queueRow(prompt, position: index + 1)
+                    ForEach(queuedPrompts.indices, id: \.self) { index in
+                        queueRow(queuedPrompts[index], position: index + 1)
                     }
                 }
                 .padding(.vertical, 2)

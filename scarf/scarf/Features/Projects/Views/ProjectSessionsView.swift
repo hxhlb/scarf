@@ -178,15 +178,19 @@ private struct ProjectSessionRow: View {
         return "Untitled session"
     }
 
+    private static let startFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        return f
+    }()
+
     private var formattedStart: String? {
         // `startedAt` is `Date?` — the DB column can be null for
         // sessions in unusual states. Locale-aware short form keeps
         // us consistent with Insights + Activity.
         guard let date = session.startedAt else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return Self.startFormatter.string(from: date)
     }
 
     private func iconForSource(_ source: String) -> String {

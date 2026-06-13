@@ -2,6 +2,7 @@ import SwiftUI
 import ScarfCore
 import ScarfDesign
 import WebKit
+import os
 
 struct WebviewWidgetView: View {
     let widget: DashboardWidget
@@ -107,12 +108,14 @@ private struct WebViewRepresentable: NSViewRepresentable {
     }
 
     class Coordinator: NSObject, WKNavigationDelegate {
+        private let logger = Logger(subsystem: "com.scarf", category: "WebviewWidgetView")
+
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            print("[Scarf] WebView navigation failed: \(error.localizedDescription)")
+            logger.warning("WebView navigation failed: \(error.localizedDescription, privacy: .public)")
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            print("[Scarf] WebView failed to load: \(error.localizedDescription)")
+            logger.warning("WebView failed to load: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

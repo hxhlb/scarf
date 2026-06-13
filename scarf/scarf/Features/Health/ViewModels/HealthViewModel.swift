@@ -132,6 +132,10 @@ final class HealthViewModel {
     /// Background polling loop; started in `startDashboardMonitoring()` and
     /// cancelled on view disappear.
     private var dashboardProbeTask: Task<Void, Never>?
+    /// In-flight `load()` task, stored so navigating away mid-load cancels
+    /// the remaining SSH round-trips instead of letting all 4-5 complete
+    /// against an unreachable remote. (t-aud11)
+    private var loadTask: Task<Void, Never>?
 
     func load() {
         isLoading = true
@@ -140,14 +144,21 @@ final class HealthViewModel {
         let subSvc = subscriptionService
         // Health runs four sync transport-mediated commands plus a process
         // probe — that's 4-5 ssh round-trips on remote, easily 1-2s. Detach
-        // the whole load.
-        Task.detached { [weak self] in
+        // the whole load, store the handle, and bail between round-trips if
+        // the user navigates away (cancelLoad()).
+        loadTask?.cancel()
+        loadTask = Task.detached { [weak self] in
             let pid = svc.hermesPID()
+            if Task.isCancelled { return }
             let versionOutput = ctx.runHermes(["version"]).output
+            if Task.isCancelled { return }
             let statusOutput = ctx.runHermes(["status"]).output
+            if Task.isCancelled { return }
             let doctorOutput = ctx.runHermes(["doctor"]).output
+            if Task.isCancelled { return }
             let subscription = subSvc.loadState()
             let config = svc.loadConfig()
+            if Task.isCancelled { return }
 
             let lines = versionOutput.components(separatedBy: "\n")
             let version = lines.first ?? ""
@@ -174,6 +185,15 @@ final class HealthViewModel {
                 self.isLoading = false
             }
         }
+    }
+
+    /// Cancel an in-flight `load()` (called on view disappear) so a slow
+    /// remote's remaining SSH round-trips stop instead of running to
+    /// completion behind the user's back. (t-aud11)
+    func cancelLoad() {
+        loadTask?.cancel()
+        loadTask = nil
+        isLoading = false
     }
 
     /// Synthesize a Tool Gateway health section from the subscription state +

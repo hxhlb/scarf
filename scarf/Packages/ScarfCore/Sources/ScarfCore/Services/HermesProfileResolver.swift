@@ -34,7 +34,7 @@ public enum HermesProfileResolver {
     public static var cacheTTL: TimeInterval = 5
 
     private static let lock = OSAllocatedUnfairLock(initialState: CacheState())
-    private static let logger = Logger(subsystem: "com.scarf.app", category: "HermesProfileResolver")
+    private static let logger = Logger(subsystem: "com.scarf", category: "HermesProfileResolver")
 
     private static let profileNameRegex: NSRegularExpression = {
         // Mirrors Hermes's own validation in hermes_cli/profiles.py.

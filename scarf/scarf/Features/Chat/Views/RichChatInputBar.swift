@@ -532,20 +532,24 @@ struct RichChatInputBar: View {
     }
 
     private func encode(data: Data, filename: String?) {
-        Task.detached(priority: .userInitiated) {
+        // `Task {}` inherits this View's @MainActor isolation, so the
+        // @State mutations stay on main; only the CPU-bound image encode
+        // hops off via an inner `Task.detached` that captures just the
+        // Sendable `data` / `filename`. This View is a struct, so the
+        // audit's `[weak self]` suggestion doesn't apply — the fix is to
+        // stop capturing self across the isolation boundary at all. (t-aud02)
+        Task {
             do {
-                let attachment = try ImageEncoder().encode(rawBytes: data, sourceFilename: filename)
-                await MainActor.run {
-                    isEncodingAttachment = false
-                    attachments.append(attachment)
-                }
+                let attachment = try await Task.detached(priority: .userInitiated) {
+                    try ImageEncoder().encode(rawBytes: data, sourceFilename: filename)
+                }.value
+                isEncodingAttachment = false
+                attachments.append(attachment)
             } catch {
-                await MainActor.run {
-                    isEncodingAttachment = false
-                    attachmentError = (error as? LocalizedError)?.errorDescription ?? "Couldn't encode image"
-                    Self.logger.warning("ImageEncoder failed: \(error.localizedDescription, privacy: .public)")
-                    scheduleAttachmentErrorClear()
-                }
+                isEncodingAttachment = false
+                attachmentError = (error as? LocalizedError)?.errorDescription ?? "Couldn't encode image"
+                Self.logger.warning("ImageEncoder failed: \(error.localizedDescription, privacy: .public)")
+                scheduleAttachmentErrorClear()
             }
         }
     }
@@ -571,9 +575,16 @@ struct RichChatInputBar: View {
         let urls = Array(panel.urls.prefix(Self.maxAttachments - attachments.count))
         guard !urls.isEmpty else { return }
         isEncodingAttachment = true
-        Task.detached(priority: .userInitiated) {
+        // Read each picked file off-main (disk I/O), then hand to `encode`
+        // on main (it dispatches the CPU-bound encode itself). `Task {}`
+        // inherits @MainActor; the inner detached read captures only the
+        // Sendable `url`. (t-aud02)
+        Task {
             for url in urls {
-                guard let data = try? Data(contentsOf: url) else { continue }
+                let data = await Task.detached(priority: .userInitiated) {
+                    try? Data(contentsOf: url)
+                }.value
+                guard let data else { continue }
                 encode(data: data, filename: url.lastPathComponent)
             }
         }

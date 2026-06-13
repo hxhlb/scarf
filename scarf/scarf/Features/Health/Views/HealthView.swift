@@ -125,7 +125,10 @@ struct HealthView: View {
             viewModel.load()
             viewModel.startDashboardMonitoring()
         }
-        .onDisappear { viewModel.stopDashboardMonitoring() }
+        .onDisappear {
+            viewModel.cancelLoad()
+            viewModel.stopDashboardMonitoring()
+        }
         .confirmationDialog("Upload debug report?", isPresented: $showShareConfirm) {
             Button("Upload", role: .destructive) {
                 viewModel.runDebugShare()

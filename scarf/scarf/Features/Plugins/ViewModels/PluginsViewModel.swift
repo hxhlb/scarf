@@ -107,9 +107,10 @@ final class PluginsViewModel {
     func install(_ identifier: String) {
         isLoading = true
         message = "Installing \(identifier)…"
-        Task.detached { [fileService] in
+        Task.detached { [weak self, fileService] in
             let result = fileService.runHermesCLI(args: ["plugins", "install", identifier], timeout: 180)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.isLoading = false
                 self.message = result.exitCode == 0 ? "Installed" : "Install failed"
                 self.load()
@@ -137,9 +138,10 @@ final class PluginsViewModel {
     }
 
     private func runAndReload(_ args: [String], success: String) {
-        Task.detached { [fileService] in
+        Task.detached { [weak self, fileService] in
             let result = fileService.runHermesCLI(args: args, timeout: 60)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.message = result.exitCode == 0 ? success : "Failed"
                 self.load()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in

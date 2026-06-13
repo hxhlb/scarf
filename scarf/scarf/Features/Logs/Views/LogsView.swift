@@ -23,6 +23,11 @@ struct LogsView: View {
         .background(ScarfColor.backgroundPrimary)
         .navigationTitle("Logs")
         .searchable(text: $viewModel.searchText, prompt: "Filter logs…")
+        .loadingOverlay(
+            viewModel.isLoading,
+            label: "Loading logs…",
+            isEmpty: viewModel.filteredEntries.isEmpty
+        )
         .task { await viewModel.load() }
         .onDisappear { Task { await viewModel.cleanup() } }
     }

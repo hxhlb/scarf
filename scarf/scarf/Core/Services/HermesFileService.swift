@@ -590,14 +590,23 @@ struct HermesFileService: Sendable {
     // MARK: - Cron
 
     nonisolated func loadCronJobs() -> [HermesCronJob] {
+        loadCronJobsOutcome().jobs
+    }
+
+    /// Like `loadCronJobs()` but distinguishes "no jobs file / empty" from
+    /// "file present but undecodable" so the Cron UI can warn about a
+    /// corrupt `jobs.json` instead of silently showing an empty board. (t-aud09)
+    nonisolated func loadCronJobsOutcome() -> (jobs: [HermesCronJob], decodeFailed: Bool) {
         ScarfMon.measure(.diskIO, "loadCronJobs") {
-            guard let data = readFileData(context.paths.cronJobsJSON) else { return [] }
+            guard let data = readFileData(context.paths.cronJobsJSON) else {
+                return (jobs: [], decodeFailed: false)
+            }
             do {
                 let file = try JSONDecoder().decode(CronJobsFile.self, from: data)
-                return file.jobs
+                return (jobs: file.jobs, decodeFailed: false)
             } catch {
-                print("[Scarf] Failed to decode cron jobs: \(error.localizedDescription)")
-                return []
+                Self.logger.warning("Failed to decode cron jobs: \(error.localizedDescription, privacy: .public)")
+                return (jobs: [], decodeFailed: true)
             }
         }
     }
@@ -643,24 +652,9 @@ struct HermesFileService: Sendable {
     nonisolated func loadSkills() -> [HermesSkillCategory] {
         SkillsScanner.scan(context: context, transport: transport)
     }
-
-    nonisolated func loadSkillContent(path: String) -> String {
-        guard isValidSkillPath(path) else { return "" }
-        return readFile(path) ?? ""
-    }
-
-    nonisolated func saveSkillContent(path: String, content: String) {
-        guard isValidSkillPath(path) else { return }
-        writeFile(path, content: content)
-    }
-
-    nonisolated private func isValidSkillPath(_ path: String) -> Bool {
-        guard !path.contains(".."), path.hasPrefix(context.paths.skillsDir) else {
-            print("[Scarf] Rejected skill path outside skills directory: \(path)")
-            return false
-        }
-        return true
-    }
+    // (t-aud15) Removed dead `loadSkillContent`/`saveSkillContent`/
+    // `isValidSkillPath` — zero callers; SkillsViewModel owns the live
+    // copies of these in ScarfCore.
 
     // MARK: - MCP Servers
 
@@ -2003,7 +1997,7 @@ struct HermesFileService: Sendable {
         do {
             try transport.writeFile(path, data: data)
         } catch {
-            print("[Scarf] Failed to write \(path): \(error.localizedDescription)")
+            Self.logger.warning("Failed to write \(path, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 }

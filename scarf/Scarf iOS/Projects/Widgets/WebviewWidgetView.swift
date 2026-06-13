@@ -2,6 +2,7 @@ import SwiftUI
 import ScarfCore
 import ScarfDesign
 import WebKit
+import os
 
 /// iOS twin of Mac's `WebviewWidgetView`. Same two modes (inline card
 /// + full-canvas Site tab); the only platform-specific bit is the
@@ -113,12 +114,14 @@ private struct WebViewRepresentable: UIViewRepresentable {
     }
 
     class Coordinator: NSObject, WKNavigationDelegate {
+        private let logger = Logger(subsystem: "com.scarf", category: "WebviewWidgetView")
+
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            print("[Scarf] WebView navigation failed: \(error.localizedDescription)")
+            logger.warning("WebView navigation failed: \(error.localizedDescription, privacy: .public)")
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            print("[Scarf] WebView failed to load: \(error.localizedDescription)")
+            logger.warning("WebView failed to load: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

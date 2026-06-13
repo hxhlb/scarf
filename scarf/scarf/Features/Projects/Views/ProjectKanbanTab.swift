@@ -56,13 +56,28 @@ struct ProjectKanbanTab: View {
 
     private func resolveTenant() {
         let resolver = KanbanTenantResolver(context: serverContext)
+        let project = self.project
         // Always-mint behaviour: even if the project board is empty
         // and the user hasn't created a task yet, the tenant is
         // pre-allocated so AGENTS.md surfaces it on the next chat.
-        do {
-            resolvedTenant = try resolver.resolveOrMint(for: project)
-        } catch {
-            resolveError = error.localizedDescription
+        //
+        // `resolveOrMint` does synchronous FileManager I/O (it walks
+        // every project's manifest to mint/read the tenant), so run it
+        // off-main — calling it inline on a Kanban tab switch blocked
+        // the main thread. `Task {}` inherits this View's @MainActor so
+        // the @State writes stay on main; the inner `Task.detached`
+        // captures only the Sendable `resolver`/`project` and reports
+        // back via a Sendable `Result<String, String>`. The view shows
+        // its ProgressView branch until `resolvedTenant` lands. (t-aud03)
+        Task {
+            do {
+                let tenant = try await Task.detached(priority: .userInitiated) {
+                    try resolver.resolveOrMint(for: project)
+                }.value
+                resolvedTenant = tenant
+            } catch {
+                resolveError = error.localizedDescription
+            }
         }
     }
 }

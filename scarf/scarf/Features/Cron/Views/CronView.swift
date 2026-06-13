@@ -242,12 +242,21 @@ struct CronView: View {
 
     private var emptyJobs: some View {
         VStack(spacing: ScarfSpace.s2) {
-            Image(systemName: "clock.arrow.2.circlepath")
+            Image(systemName: viewModel.loadDecodeFailed ? "exclamationmark.triangle" : "clock.arrow.2.circlepath")
                 .font(.system(size: 24))
-                .foregroundStyle(ScarfColor.foregroundFaint)
-            Text("No cron jobs yet")
+                .foregroundStyle(viewModel.loadDecodeFailed ? ScarfColor.warning : ScarfColor.foregroundFaint)
+            Text(viewModel.loadDecodeFailed ? "Couldn't read cron jobs" : "No cron jobs yet")
                 .scarfStyle(.body)
                 .foregroundStyle(ScarfColor.foregroundMuted)
+            if viewModel.loadDecodeFailed {
+                // t-aud09: corrupt jobs.json used to render as a silent
+                // empty board — surface it so the user knows jobs exist
+                // but couldn't be parsed.
+                Text("Its `jobs.json` couldn't be parsed and may be corrupt.")
+                    .scarfStyle(.caption)
+                    .foregroundStyle(ScarfColor.foregroundMuted)
+                    .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(ScarfSpace.s8)

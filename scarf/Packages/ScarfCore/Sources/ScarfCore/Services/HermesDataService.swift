@@ -169,27 +169,34 @@ public actor HermesDataService {
 
     /// Skeleton column set for the v2.8 two-phase chat loader. Returns
     /// EVERYTHING needed to render a user-or-assistant bubble — id,
-    /// role, content, timestamp, token_count, finish_reason — but
-    /// hard-NULLs the heavy content-bearing columns (`tool_calls`,
-    /// `reasoning`, `reasoning_content`) at the SQL level so the wire
-    /// payload is bounded by the conversational text alone. A
-    /// 30-message session with multi-page tool result blobs that
-    /// previously timed out the 30s SSH budget reduces here to a few
-    /// KB. The chat appears in seconds; tool details fill in via
-    /// `hydrateAssistantToolCalls(...)` and `hydrateToolResults(...)`
-    /// in the background.
+    /// role, content, timestamp, token_count, finish_reason, plus the
+    /// small `reasoning` channel — while hard-NULLing `tool_calls` and
+    /// EXCLUDING `reasoning_content` (the heavy 20+ KB-per-message
+    /// chain-of-thought blob) so the wire payload stays bounded by the
+    /// conversational text. A 30-message session with multi-page tool
+    /// result blobs that previously timed out the 30s SSH budget
+    /// reduces here to a few KB. The chat appears in seconds; tool
+    /// details fill in via `hydrateAssistantToolCalls(...)` and
+    /// `hydrateToolResults(...)` in the background.
     ///
-    /// The schema-shape match against `messageFromRow` is exact —
-    /// same column ordering as `messageColumnsLight`. The literal
-    /// NULLs let messageFromRow's defaulting paths fill empty
-    /// arrays / nils without any callee changes.
+    /// `reasoning` is SELECTED (not NULLed) so the REASONING disclosure
+    /// renders on resume — matching `messageColumnsLight`, which every
+    /// other history path already uses. NULLing it here (pre-fix,
+    /// t-aud01) left resumed thinking-model chats with no visible
+    /// reasoning at all. The richer `reasoning_content` stays excluded
+    /// and lazy-loads per-message via `fetchReasoningContent(for:)`.
+    ///
+    /// The schema-shape match against `messageFromRow` is exact — same
+    /// column ordering as `messageColumnsLight`. `messageFromRow` reads
+    /// `reasoning` at index 10 and defaults `reasoning_content` to nil
+    /// via the bounds-safe `Row` subscript when the column is absent.
     private var messageColumnsSkeleton: String {
         var cols = """
             id, session_id, role, content, tool_call_id, NULL AS tool_calls,
             tool_name, timestamp, token_count, finish_reason
             """
         if hasV07Schema {
-            cols += ", NULL AS reasoning"
+            cols += ", reasoning"
         }
         return cols
     }

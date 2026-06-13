@@ -37,6 +37,11 @@ struct InsightsView: View {
         }
         .background(ScarfColor.backgroundPrimary)
         .navigationTitle("Insights")
+        .loadingOverlay(
+            viewModel.isLoading,
+            label: "Loading insights…",
+            isEmpty: viewModel.sessions.isEmpty
+        )
         .task { await viewModel.load() }
         .onChange(of: viewModel.period) {
             Task { await viewModel.load() }

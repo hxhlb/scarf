@@ -7,6 +7,8 @@
 
 - [ ] Edit existing remote server connections (id: t-edit-srv) (source: gh#105 part 2) (added: 2026-06-02)
 - [ ] iOS Settings: route `~/.hermes/config.yaml` reads through `hermes config get` so Docker-hosted Hermes setups (config dir inside the container, not on the SSH host) populate Settings instead of erroring "config.yaml not found on <host>". Mirror the save path's wrapper shape. (id: t-ios-cfg-get) (source: gh#112 failure 2) (added: 2026-06-06)
+- [ ] Add a permission toggle for each chat, for auto or yolo (or supported Hermes verbs) to help with tool dialogs. (added: 2026-06-06)
+- [ ] New chat session from project (or working in a project) isn't linked to the project and doesn't show up in sessions for that project. Harden the project to chat logic. (added: 2026-06-06)
 
 ## Doing
 
@@ -23,3 +25,6 @@
 - [x] P2 — Slash menu: pre-session shows the full agent-command set greyed-out with tooltip "Available once a chat is open" instead of collapsing to just `/new`. `disabledSlashCommandNames` gained `hasActiveSession`; `availableCommands` no longer filters `/steer` on session presence. 36 SlashMenuLogicTests pass including 2 new pre-session cases. (completed: 2026-05-29)
 - [x] P3 — New-project wizard hand-off: structured `SKILL:` / `PROJECT_PATH:` kickoff prompt that agents recognize as an invocation marker (vs. the old polite "use the skill" sentence); `SkillBootstrapService.ensureBundledSkillsInstalled()` preflight in `NewProjectViewModel.commit()` guarantees the bundled skill is on disk before `session/new` so Hermes loads it on session start. (completed: 2026-05-29)
 - [x] P4 — AGENTS.md `scarf-project` block: appended a "Scarf platform reference" section covering dashboard widget vocabulary, project-scoped slash commands, Kanban tenant convention, model presets, typed config schema, cron jobs, skill loading, and template export — so the agent knows what Scarf can do beyond bare Hermes. `ProjectTemplateInstaller` now also refreshes the block on install (previously only chat-start did). 13 ProjectAgentContextServiceTests pass including secret-safety + byte-idempotency; 7 ProjectTemplateInstallerTests pass. (completed: 2026-05-29)
+
+## Archived
+

@@ -305,12 +305,6 @@ struct ProfilesView: View {
             Toggle("Clone config, .env, SOUL.md from active profile", isOn: $createCloneConfig)
                 .disabled(createCloneAll)
             Toggle("Full copy of active profile (all state)", isOn: $createCloneAll)
-            // TODO(WS-7-Q8): Decision H — disable --no-skills when --clone-all
-            // is on. A full clone copies skills wholesale; --no-skills would
-            // be a contradiction. Verify Hermes's behaviour with both flags
-            // (argparse mutual exclusion vs. last-flag-wins vs. clone-but-
-            // skip-skills) and relax the disabled state if Hermes does
-            // something useful with the combination.
             if capabilitiesStore?.capabilities.hasProfileNoSkills ?? false {
                 Toggle("Empty profile (no skills)", isOn: $createNoSkills)
                     .disabled(createCloneAll)

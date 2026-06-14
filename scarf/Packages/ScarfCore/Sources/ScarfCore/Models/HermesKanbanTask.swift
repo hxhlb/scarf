@@ -83,6 +83,15 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
     /// --json` — still decoded tolerantly so it's `nil` from list rows.
     public let modelOverride: String?
 
+    // v0.16 (v2026.6.5) goal-mode fields.
+    /// Whether the task runs as a Ralph-style persistent goal loop instead
+    /// of a one-shot execution. `nil` for non-goal tasks and on pre-v0.16
+    /// hosts (no `goal_mode` key on the wire).
+    public let goalMode: Bool?
+    /// Optional per-task turn budget for a goal-mode loop. `nil` when
+    /// unbounded, for non-goal tasks, and on pre-v0.16 hosts.
+    public let goalMaxTurns: Int?
+
     public init(
         id: String,
         title: String,
@@ -111,7 +120,9 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         branchName: String? = nil,
         workflowTemplateId: String? = nil,
         currentStepKey: String? = nil,
-        modelOverride: String? = nil
+        modelOverride: String? = nil,
+        goalMode: Bool? = nil,
+        goalMaxTurns: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -141,6 +152,8 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         self.workflowTemplateId = workflowTemplateId
         self.currentStepKey = currentStepKey
         self.modelOverride = modelOverride
+        self.goalMode = goalMode
+        self.goalMaxTurns = goalMaxTurns
     }
 
     enum CodingKeys: String, CodingKey {
@@ -165,6 +178,8 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         case workflowTemplateId = "workflow_template_id"
         case currentStepKey = "current_step_key"
         case modelOverride = "model_override"
+        case goalMode = "goal_mode"
+        case goalMaxTurns = "goal_max_turns"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -214,6 +229,10 @@ public struct HermesKanbanTask: Sendable, Equatable, Identifiable, Codable {
         self.workflowTemplateId = try c.decodeIfPresent(String.self, forKey: .workflowTemplateId)
         self.currentStepKey = try c.decodeIfPresent(String.self, forKey: .currentStepKey)
         self.modelOverride = try c.decodeIfPresent(String.self, forKey: .modelOverride)
+        // v0.16 goal-mode fields — `decodeIfPresent` so pre-v0.16 task rows
+        // (no `goal_mode` / `goal_max_turns` keys) decode with both nil.
+        self.goalMode = try c.decodeIfPresent(Bool.self, forKey: .goalMode)
+        self.goalMaxTurns = try c.decodeIfPresent(Int.self, forKey: .goalMaxTurns)
     }
 
     /// Decode a timestamp that may arrive as a Unix integer or an

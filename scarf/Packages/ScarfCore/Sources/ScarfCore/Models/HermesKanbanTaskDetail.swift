@@ -16,9 +16,6 @@ public struct HermesKanbanTaskDetail: Sendable, Equatable, Codable {
     /// inside it). Defensive — Hermes v0.13's wire shape may attach
     /// diagnostics to the task itself OR to the envelope.
     /// `allDiagnostics` dedupes both sources by `(kind, detected_at)`.
-    // TODO(WS-3-Q2): Confirm against live `hermes kanban show --json`
-    // whether diagnostics live on the task envelope, the inner task, or
-    // both. Current decode is tolerant of either.
     public let envelopeDiagnostics: [HermesKanbanDiagnostic]?
 
     public init(

@@ -458,6 +458,13 @@ private struct ChatSessionRow: View {
                         Label("\(session.toolCallCount)", systemImage: "wrench")
                             .scarfStyle(.caption)
                     }
+                    // v0.16: rewind indicator — how many times the session
+                    // was rewound. 0 on pre-v0.16 hosts (column absent).
+                    if session.rewindCount > 0 {
+                        Label("\(session.rewindCount)", systemImage: "arrow.counterclockwise")
+                            .scarfStyle(.caption)
+                            .help("Rewound \(session.rewindCount) time\(session.rewindCount == 1 ? "" : "s")")
+                    }
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(ScarfColor.foregroundMuted)

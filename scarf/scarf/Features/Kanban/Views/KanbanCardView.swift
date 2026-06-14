@@ -39,6 +39,9 @@ struct KanbanCardView: View {
     /// v0.15+ gate for the Promote / Schedule / Delete context actions.
     /// Pre-v0.15 hosts get no context menu beyond what older builds had.
     let supportsKanbanV015: Bool
+    /// v0.16+ gate for the goal-mode badge. Pre-v0.16 hosts never see the
+    /// "Goal" pill even if a future `goal_mode` field somehow appears.
+    let supportsKanbanGoalMode: Bool
     /// Context-menu callbacks. The board wires these to the VM's
     /// `promote` / `schedule` / `purge` (delete-permanently after a
     /// confirm). Each shown conditionally by `task.status`.
@@ -51,6 +54,7 @@ struct KanbanCardView: View {
         supportsKanbanDiagnostics: Bool = false,
         effectiveHallucinationGate: @escaping (HermesKanbanTask) -> KanbanHallucinationGate? = { _ in nil },
         supportsKanbanV015: Bool = false,
+        supportsKanbanGoalMode: Bool = false,
         onPromote: @escaping () -> Void = {},
         onSchedule: @escaping () -> Void = {},
         onDeletePermanently: @escaping () -> Void = {},
@@ -60,6 +64,7 @@ struct KanbanCardView: View {
         self.supportsKanbanDiagnostics = supportsKanbanDiagnostics
         self.effectiveHallucinationGate = effectiveHallucinationGate
         self.supportsKanbanV015 = supportsKanbanV015
+        self.supportsKanbanGoalMode = supportsKanbanGoalMode
         self.onPromote = onPromote
         self.onSchedule = onSchedule
         self.onDeletePermanently = onDeletePermanently
@@ -221,8 +226,15 @@ struct KanbanCardView: View {
         }
     }
 
+    /// v0.16: render the goal-mode pill only on v0.16+ hosts when the task
+    /// is actually flagged as a goal loop. Pre-v0.16 hosts always have
+    /// `task.goalMode == nil`, so this stays false.
+    private var showsGoalBadge: Bool {
+        supportsKanbanGoalMode && task.goalMode == true
+    }
+
     private var hasMetaRow1: Bool {
-        task.assignee?.isEmpty == false || task.workspaceKind != nil
+        task.assignee?.isEmpty == false || task.workspaceKind != nil || showsGoalBadge
     }
 
     private var metaRow1: some View {
@@ -234,6 +246,14 @@ struct KanbanCardView: View {
             }
             if let workspace = task.workspaceKind {
                 ScarfBadge(workspace, kind: .neutral)
+            }
+            // v0.16 goal-mode pill — shows the turn budget when one is set.
+            if showsGoalBadge {
+                if let turns = task.goalMaxTurns {
+                    ScarfBadge("Goal · \(turns)", kind: .info)
+                } else {
+                    ScarfBadge("Goal", kind: .info)
+                }
             }
             Spacer(minLength: 0)
         }

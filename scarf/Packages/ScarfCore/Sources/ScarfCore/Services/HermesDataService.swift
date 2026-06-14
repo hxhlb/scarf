@@ -39,6 +39,7 @@ public actor HermesDataService {
     private var hasV07Schema = false
     private var hasV011Schema = false
     private var hasMessagesActiveColumn = false
+    private var hasRewindCountColumn = false
 
     /// Last error from `open()` / `refresh()`, user-presentable. `nil`
     /// means the last attempt succeeded. Views surface this when their
@@ -75,6 +76,7 @@ public actor HermesDataService {
         hasV07Schema = await backend.hasV07Schema
         hasV011Schema = await backend.hasV011Schema
         hasMessagesActiveColumn = await backend.hasMessagesActiveColumn
+        hasRewindCountColumn = await backend.hasRewindCountColumn
         lastOpenError = await backend.lastOpenError
         return ok
     }
@@ -85,6 +87,7 @@ public actor HermesDataService {
         hasV07Schema = await backend.hasV07Schema
         hasV011Schema = await backend.hasV011Schema
         hasMessagesActiveColumn = await backend.hasMessagesActiveColumn
+        hasRewindCountColumn = await backend.hasRewindCountColumn
         lastOpenError = await backend.lastOpenError
         return ok
     }
@@ -127,6 +130,12 @@ public actor HermesDataService {
         }
         if hasV011Schema {
             cols += ", api_call_count"
+        }
+        // v0.16: appended last so its row index depends on the v0.7/v0.11
+        // blocks above — sessionFromRow reads it by column name, not a
+        // hardcoded position, to stay correct across those combinations.
+        if hasRewindCountColumn {
+            cols += ", rewind_count"
         }
         return cols
     }
@@ -1150,6 +1159,18 @@ public actor HermesDataService {
         // never reach this code path because hasV011Schema gates the
         // SELECT shape.
         let apiCallCount: Int = hasV011Schema ? row.int(at: 20) : 0
+        // v0.16 `rewind_count` is appended LAST in sessionColumns, so its
+        // positional index shifts with the v0.7 (+4 cols) and v0.11 (+1
+        // col) blocks. Resolve the position by column name via the
+        // backend-populated `Row.columnIndex` map rather than hardcoding a
+        // conditional offset, then read it with the usual positional
+        // accessor. `int(at:)` is bounds-safe and yields 0 if the lookup
+        // somehow misses.
+        let rewindCount: Int = {
+            guard hasRewindCountColumn,
+                  let idx = row.columnIndex["rewind_count"] else { return 0 }
+            return row.int(at: idx)
+        }()
         return HermesSession(
             id: row.string(at: 0),
             source: row.string(at: 1),
@@ -1171,7 +1192,8 @@ public actor HermesDataService {
             actualCostUSD: hasV07Schema ? row.optionalDouble(at: 17) : nil,
             costStatus: hasV07Schema ? row.optionalString(at: 18) : nil,
             billingProvider: hasV07Schema ? row.optionalString(at: 19) : nil,
-            apiCallCount: apiCallCount
+            apiCallCount: apiCallCount,
+            rewindCount: rewindCount
         )
     }
 

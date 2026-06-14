@@ -586,6 +586,13 @@ private struct SessionTableRow: View {
                 .foregroundStyle(ScarfColor.foregroundPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
+            // v0.16: rewind indicator. 0 on pre-v0.16 hosts (column absent).
+            if session.rewindCount > 0 {
+                Label("\(session.rewindCount)", systemImage: "arrow.counterclockwise")
+                    .scarfStyle(.caption)
+                    .foregroundStyle(ScarfColor.foregroundFaint)
+                    .help("Rewound \(session.rewindCount) time\(session.rewindCount == 1 ? "" : "s")")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

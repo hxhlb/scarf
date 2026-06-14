@@ -629,6 +629,10 @@ struct SessionRow: View {
                     Label("\(session.apiCallCount)", systemImage: "network")
                         .help("API calls (Hermes v2026.4.23+)")
                 }
+                if session.rewindCount > 0 {
+                    Label("\(session.rewindCount)", systemImage: "arrow.counterclockwise")
+                        .help("Rewound \(session.rewindCount) time\(session.rewindCount == 1 ? "" : "s") (Hermes v0.16+)")
+                }
                 if let cost = session.displayCostUSD, cost > 0 {
                     Label(cost.formatted(.currency(code: "USD").precision(.fractionLength(4))), systemImage: "dollarsign.circle")
                 }

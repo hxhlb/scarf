@@ -1613,8 +1613,6 @@ final class ChatController {
             }
             scheduleTransientHintClear(snapshot: vm.transientHint)
         case "queue":
-            // TODO(WS-2-Q5): verify the verbatim wire shape on a
-            // real v0.13 ACP host.
             let queuedText = parsedSlash.args.trimmingCharacters(in: .whitespacesAndNewlines)
             if !queuedText.isEmpty {
                 vm.recordQueuedPrompt(text: queuedText)

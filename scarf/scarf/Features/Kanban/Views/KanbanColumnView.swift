@@ -27,6 +27,8 @@ struct KanbanColumnView: View {
     let effectiveHallucinationGate: (HermesKanbanTask) -> KanbanHallucinationGate?
     /// v0.15+ gate forwarded to each card's context menu.
     let supportsKanbanV015: Bool
+    /// v0.16+ gate forwarded to each card's goal-mode badge.
+    let supportsKanbanGoalMode: Bool
     /// v0.15 context-menu callbacks, keyed by the acted-on task.
     let onPromote: (HermesKanbanTask) -> Void
     let onSchedule: (HermesKanbanTask) -> Void
@@ -44,6 +46,7 @@ struct KanbanColumnView: View {
         supportsKanbanDiagnostics: Bool = false,
         effectiveHallucinationGate: @escaping (HermesKanbanTask) -> KanbanHallucinationGate? = { _ in nil },
         supportsKanbanV015: Bool = false,
+        supportsKanbanGoalMode: Bool = false,
         onPromote: @escaping (HermesKanbanTask) -> Void = { _ in },
         onSchedule: @escaping (HermesKanbanTask) -> Void = { _ in },
         onDeletePermanently: @escaping (HermesKanbanTask) -> Void = { _ in }
@@ -59,6 +62,7 @@ struct KanbanColumnView: View {
         self.supportsKanbanDiagnostics = supportsKanbanDiagnostics
         self.effectiveHallucinationGate = effectiveHallucinationGate
         self.supportsKanbanV015 = supportsKanbanV015
+        self.supportsKanbanGoalMode = supportsKanbanGoalMode
         self.onPromote = onPromote
         self.onSchedule = onSchedule
         self.onDeletePermanently = onDeletePermanently
@@ -87,6 +91,7 @@ struct KanbanColumnView: View {
                                 supportsKanbanDiagnostics: supportsKanbanDiagnostics,
                                 effectiveHallucinationGate: effectiveHallucinationGate,
                                 supportsKanbanV015: supportsKanbanV015,
+                                supportsKanbanGoalMode: supportsKanbanGoalMode,
                                 onPromote: { onPromote(task) },
                                 onSchedule: { onSchedule(task) },
                                 onDeletePermanently: { onDeletePermanently(task) }

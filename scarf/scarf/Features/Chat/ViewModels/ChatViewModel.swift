@@ -735,10 +735,6 @@ final class ChatViewModel {
             }
             scheduleHintClear()
         case "queue":
-            // TODO(WS-2-Q5): verify against a real v0.13 ACP host
-            // that the verbatim "/queue <text>" wire shape is what
-            // Hermes accepts (versus a structured arg shape). The
-            // optimistic mirror logic below assumes verbatim text.
             let queuedText = parsed.args.trimmingCharacters(in: .whitespacesAndNewlines)
             if !queuedText.isEmpty {
                 richChatViewModel.recordQueuedPrompt(text: queuedText)

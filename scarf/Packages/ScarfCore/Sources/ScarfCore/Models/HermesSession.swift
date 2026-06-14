@@ -27,6 +27,10 @@ public struct HermesSession: Identifiable, Sendable {
     /// but each agent reasoning step also costs an API call. `0` on
     /// older Hermes hosts that don't have the column.
     public let apiCallCount: Int
+    /// Number of times this session was rewound (Hermes v0.16+; populated
+    /// from `sessions.rewind_count`). `0` on older Hermes hosts that don't
+    /// have the column.
+    public let rewindCount: Int
 
 
     public init(
@@ -50,7 +54,8 @@ public struct HermesSession: Identifiable, Sendable {
         actualCostUSD: Double?,
         costStatus: String?,
         billingProvider: String?,
-        apiCallCount: Int = 0
+        apiCallCount: Int = 0,
+        rewindCount: Int = 0
     ) {
         self.id = id
         self.source = source
@@ -73,6 +78,7 @@ public struct HermesSession: Identifiable, Sendable {
         self.costStatus = costStatus
         self.billingProvider = billingProvider
         self.apiCallCount = apiCallCount
+        self.rewindCount = rewindCount
     }
     public var isSubagent: Bool { parentSessionId != nil }
 
@@ -105,7 +111,8 @@ public struct HermesSession: Identifiable, Sendable {
             cacheReadTokens: cacheReadTokens, cacheWriteTokens: cacheWriteTokens,
             estimatedCostUSD: estimatedCostUSD, reasoningTokens: reasoningTokens,
             actualCostUSD: actualCostUSD, costStatus: costStatus,
-            billingProvider: billingProvider
+            billingProvider: billingProvider, apiCallCount: apiCallCount,
+            rewindCount: rewindCount
         )
     }
 }

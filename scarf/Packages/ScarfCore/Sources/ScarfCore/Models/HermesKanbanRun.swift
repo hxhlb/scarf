@@ -33,8 +33,6 @@ public struct HermesKanbanRun: Sendable, Equatable, Identifiable, Codable {
     /// Server-side unified failure counter (renamed from three separate
     /// spawn / timeout / crash counters in v0.13). Optional — when nil,
     /// callers fall back to counting failed runs in the runs array.
-    // TODO(WS-3-Q4): Verify whether v0.13 exposes this field on the per-run
-    // shape OR only at the task level. Tolerant decode handles either.
     public let failureCount: Int?
 
     public init(

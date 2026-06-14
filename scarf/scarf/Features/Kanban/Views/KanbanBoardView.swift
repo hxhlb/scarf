@@ -54,6 +54,12 @@ struct KanbanBoardView: View {
         capabilitiesStore?.capabilities.hasKanbanV015 ?? false
     }
 
+    /// v0.16+ gate for the goal-mode badge on each card. Pre-v0.16 hosts
+    /// never see the "Goal" pill. Missing store treated as "off" (Previews).
+    private var supportsKanbanGoalMode: Bool {
+        capabilitiesStore?.capabilities.hasKanbanGoalMode ?? false
+    }
+
     @State private var inspectorTaskId: String?
     @State private var showingCreateSheet = false
     /// Pending permanent-delete (archived-card context action). Drives
@@ -349,6 +355,7 @@ struct KanbanBoardView: View {
                         supportsKanbanDiagnostics: supportsKanbanDiagnostics,
                         effectiveHallucinationGate: { viewModel.effectiveHallucinationGate($0) },
                         supportsKanbanV015: supportsKanbanV015,
+                        supportsKanbanGoalMode: supportsKanbanGoalMode,
                         onPromote: { viewModel.promote($0.id) },
                         onSchedule: { viewModel.schedule($0.id) },
                         onDeletePermanently: { pendingPurge = $0 }

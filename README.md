@@ -19,6 +19,20 @@
   <a href="https://www.buymeacoffee.com/awizemann"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="28"></a>
 </p>
 
+## What's New in 2.10.3
+
+A reliability and polish release on top of v2.10.1/v2.10.2, headlined by a fix for the **100% single-core CPU spin** on large `state.db` files, plus a broad performance + correctness sweep from a full code audit.
+
+- **100% CPU fix (gh#102)** — the Dashboard no longer closes + reopens the SQLite handle on every file-change tick; on a large `state.db` + uncheckpointed WAL that close+reopen was the whole cost. The read-only handle now stays open and sees Hermes's writes transparently.
+- **Menu-bar stopped flashing every 10s (gh#105)** — `ServerLiveStatus` only republishes `@Observable` state when the value actually changes, so unchanging healthy polls no longer re-render the status chrome.
+- **Reasoning visible again on resumed thinking-model chats** — the REASONING disclosure reappears on resume (including the newest models that store only `reasoning_content`) and lazy-loads the chain-of-thought on open, keeping the fast two-phase loader's speed.
+- **Snappier sidebar navigation** — switching sections no longer re-runs each feature's remote `load()` over SSH; panes keep their data + state across switches and refresh only on real file changes or Reload.
+- **Self-diagnostic Docker config errors (gh#112)** — a failed `hermes config set` now surfaces the wrapper's real exit code + stderr instead of a generic "Couldn't save."
+- Plus loading overlays on more panes, standard menu commands (⌘, Settings, Help menu, ⌘F search), a backgrounded-poll throttle, cron-corruption warnings, and chat-streaming polish.
+- **Under the hood:** zero compiler warnings across the macOS app, iOS app, and ScarfCore package (full Swift 6 strict-concurrency cleanup); a parallel-safe 613-test suite that no longer touches your real `~/.hermes`; and a Sparkle release-key safeguard.
+
+This release also carries v2.10.2's ACP permission-prompt fix ("Allow Once" / "Allow For Session" now reach Hermes correctly). See the full [v2.10.3 release notes](https://github.com/awizemann/scarf/releases/tag/v2.10.3).
+
 ## What's New in 2.10.1
 
 A "projects fundamentals" maintenance release on top of v2.10.0. Six interlocking fixes from user feedback:

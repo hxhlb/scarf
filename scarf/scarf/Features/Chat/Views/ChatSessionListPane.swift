@@ -46,11 +46,13 @@ struct ChatSessionListPane: View {
                             onSelect: { chatViewModel.resumeSession(session.id) }
                         )
                         .contextMenu {
-                            Button("Rename…") {
-                                renameText = chatViewModel.previewFor(session)
-                                renameTarget = session
+                            if chatViewModel.capabilitiesStore?.capabilities.hasSessionsRename ?? false {
+                                Button("Rename…") {
+                                    renameText = chatViewModel.previewFor(session)
+                                    renameTarget = session
+                                }
+                                Divider()
                             }
-                            Divider()
                             Button("Delete…", role: .destructive) {
                                 deleteTarget = session
                             }

@@ -154,6 +154,7 @@ public enum ACPEvent: @unchecked Sendable {
     case permissionRequest(sessionId: String, requestId: Int, request: ACPPermissionRequestEvent)
     case promptComplete(sessionId: String, response: ACPPromptResult)
     case availableCommands(sessionId: String, commands: [[String: Any]])
+    case sessionInfoUpdate(sessionId: String, title: String?, updatedAt: String?)
     case connectionLost(reason: String)
     case unknown(sessionId: String, type: String)
 
@@ -169,6 +170,7 @@ public enum ACPEvent: @unchecked Sendable {
              let .toolCallUpdate(sid, _),
              let .promptComplete(sid, _),
              let .availableCommands(sid, _),
+             let .sessionInfoUpdate(sid, _, _),
              let .unknown(sid, _):
             return sid
         case let .permissionRequest(sid, _, _):
@@ -347,6 +349,11 @@ public enum ACPEventParser {
         case "available_commands_update":
             let commands = update["availableCommands"] as? [[String: Any]] ?? []
             return .availableCommands(sessionId: sessionId, commands: commands)
+
+        case "session_info_update":
+            let title = update["title"] as? String
+            let updatedAt = update["updatedAt"] as? String
+            return .sessionInfoUpdate(sessionId: sessionId, title: title, updatedAt: updatedAt)
 
         default:
             return .unknown(sessionId: sessionId, type: updateType)

@@ -33,6 +33,7 @@ public actor LocalSQLiteBackend: HermesQueryBackend {
     private var openedAtPath: String?
     private(set) public var hasV07Schema = false
     private(set) public var hasV011Schema = false
+    private(set) public var hasMessagesActiveColumn = false
     private(set) public var lastOpenError: String?
 
     private let context: ServerContext
@@ -149,6 +150,19 @@ public actor LocalSQLiteBackend: HermesQueryBackend {
             }
             if !sawReasoningContent {
                 hasV011Schema = false
+            }
+        }
+
+        // Check for v0.16+ `messages.active` column.
+        var msgActiveStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "PRAGMA table_info(messages)", -1, &msgActiveStmt, nil) == SQLITE_OK {
+            defer { sqlite3_finalize(msgActiveStmt) }
+            while sqlite3_step(msgActiveStmt) == SQLITE_ROW {
+                if let name = sqlite3_column_text(msgActiveStmt, 1),
+                   String(cString: name) == "active" {
+                    hasMessagesActiveColumn = true
+                    break
+                }
             }
         }
     }

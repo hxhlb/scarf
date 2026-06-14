@@ -454,6 +454,106 @@ import Foundation
         let log = await mock.queryLog
         #expect(log.count == 1)
     }
+
+    // MARK: - messages.active filtering (v0.16)
+
+    @Test func fetchMessagesOutcomeWithActiveColumnIncludesActiveFilter() async {
+        // v0.16+ DBs have the active column; queries must add "AND active = 1".
+        let mock = MockHermesQueryBackend()
+        await mock.setHasMessagesActiveColumn(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchMessagesOutcome(sessionId: "s1", limit: 25, before: nil)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("AND active = 1"))
+    }
+
+    @Test func fetchMessagesOutcomeWithoutActiveColumnOmitsFilter() async {
+        // Pre-v0.16 DBs lack the active column; queries must NOT reference it.
+        let mock = MockHermesQueryBackend()
+        await mock.setHasMessagesActiveColumn(false)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchMessagesOutcome(sessionId: "s1", limit: 25, before: nil)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(!sql.contains("AND active = 1"))
+    }
+
+    @Test func fetchSkeletonMessagesWithActiveColumnIncludesFilter() async {
+        let mock = MockHermesQueryBackend()
+        await mock.setHasMessagesActiveColumn(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchSkeletonMessages(sessionId: "s1", limit: 200)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("AND active = 1"))
+    }
+
+    @Test func fetchToolResultsInRangeWithActiveColumnIncludesFilter() async {
+        let mock = MockHermesQueryBackend()
+        await mock.setHasMessagesActiveColumn(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchToolResultsInRange(sessionId: "s1", minId: 1, maxId: 100)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("AND active = 1"))
+    }
+
+    @Test func fetchRecentToolCallSkeletonWithActiveColumnIncludesFilter() async {
+        let mock = MockHermesQueryBackend()
+        await mock.setHasMessagesActiveColumn(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchRecentToolCallSkeleton(limit: 50)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("AND active = 1"))
+    }
+
+    @Test func searchMessagesWithActiveColumnIncludesFilter() async {
+        let mock = MockHermesQueryBackend()
+        await mock.setHasMessagesActiveColumn(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.searchMessages(query: "test")
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("AND m.active = 1"))
+    }
+
+    @Test func searchMessagesWithoutActiveColumnOmitsFilter() async {
+        let mock = MockHermesQueryBackend()
+        await mock.setHasMessagesActiveColumn(false)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.searchMessages(query: "test")
+
+        let sql = await mock.queryLog[0].sql
+        #expect(!sql.contains("AND m.active = 1"))
+    }
+
+    @Test func fetchRecentToolCallsOutcomeWithActiveColumnIncludesFilter() async {
+        let mock = MockHermesQueryBackend()
+        await mock.setHasMessagesActiveColumn(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+
+        _ = await service.fetchRecentToolCallsOutcome(limit: 50)
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("AND active = 1"))
+    }
 }
 
 #endif // canImport(SQLite3)

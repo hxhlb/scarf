@@ -36,6 +36,7 @@ public actor RemoteSQLiteBackend: HermesQueryBackend {
     private let transport: any ServerTransport
     private(set) public var hasV07Schema = false
     private(set) public var hasV011Schema = false
+    private(set) public var hasMessagesActiveColumn = false
     private(set) public var lastOpenError: String?
     private var isOpen = false
     /// Captured `sqlite3 --version` line from the most recent preflight.
@@ -303,6 +304,8 @@ public actor RemoteSQLiteBackend: HermesQueryBackend {
         let sessionsHasV011 = sessionsTable.contains("api_call_count")
         let messagesHasV011 = messagesTable.contains("reasoning_content")
         hasV011Schema = sessionsHasV011 && messagesHasV011
+        // v0.16: messages has `active` column for soft-delete support.
+        hasMessagesActiveColumn = messagesTable.contains("active")
     }
 
     /// Extract column names from a `PRAGMA table_info(...)` result set.

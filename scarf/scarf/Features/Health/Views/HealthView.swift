@@ -66,6 +66,23 @@ struct HealthView: View {
                     .disabled(viewModel.isRunningAudit)
                     .help("Runs `hermes audit` to check installed packages against the OSV.dev advisory database.")
                 }
+                if capabilitiesStore?.capabilities.hasSessionsOptimize == true {
+                    Button {
+                        viewModel.runSessionsOptimize()
+                    } label: {
+                        if viewModel.isRunningSessionsOptimize {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Optimizing…")
+                            }
+                        } else {
+                            Text("Optimize sessions database")
+                        }
+                    }
+                    .buttonStyle(ScarfGhostButton())
+                    .disabled(viewModel.isRunningSessionsOptimize)
+                    .help("Runs `hermes sessions optimize` to compact the FTS index and VACUUM the sessions database.")
+                }
                 Button("Run Dump") {
                     viewModel.runDump()
                     showDiagnostics = true
@@ -88,6 +105,15 @@ struct HealthView: View {
                     .padding(.bottom, ScarfSpace.s2)
             }
             if let msg = viewModel.auditMessage {
+                Text(msg)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(ScarfColor.foregroundMuted)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, ScarfSpace.s6)
+                    .padding(.bottom, ScarfSpace.s2)
+            }
+            if let msg = viewModel.sessionsOptimizeMessage {
                 Text(msg)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(ScarfColor.foregroundMuted)

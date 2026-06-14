@@ -81,6 +81,17 @@ final class HealthViewModel {
     /// success summary or the tail of the advisory list / stderr on failure.
     var auditMessage: String?
 
+    // MARK: - Sessions database optimize (`hermes sessions optimize`, v0.16)
+
+    /// True while `hermes sessions optimize` is shelling out so the header
+    /// button can show a spinner. Compacting the FTS index + VACUUM can take
+    /// a few seconds, so this runs off MainActor and never blocks the UI.
+    var isRunningSessionsOptimize = false
+    /// Inline result strip for the last optimize run. Nil before the first run.
+    /// Mirrors the audit-message pattern — success summary or the tail of
+    /// stderr on failure.
+    var sessionsOptimizeMessage: String?
+
     // MARK: - xAI retired-model migration (`hermes migrate xai`, v0.15)
 
     /// The configured model+provider, refreshed from `loadConfig()` whenever
@@ -569,6 +580,32 @@ final class HealthViewModel {
                 } else {
                     let tail = trimmed.split(separator: "\n").suffix(4).joined(separator: " · ")
                     self.auditMessage = "Audit failed (exit \(result.exitCode)). \(tail)"
+                }
+            }
+        }
+    }
+
+    /// Run `hermes sessions optimize` (v0.16) off MainActor. Compacts the FTS
+    /// index and VACUUMs the sessions database. Non-destructive maintenance verb.
+    /// On success we surface a one-line summary; on failure we surface the tail
+    /// of stderr so the user can see what tripped without leaving the view.
+    func runSessionsOptimize() {
+        guard !isRunningSessionsOptimize else { return }
+        isRunningSessionsOptimize = true
+        sessionsOptimizeMessage = "Optimizing sessions database…"
+        Task.detached { [fileService] in
+            let result = fileService.runHermesCLI(args: ["sessions", "optimize"], timeout: 120)
+            await MainActor.run {
+                self.isRunningSessionsOptimize = false
+                let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if result.exitCode == 0 {
+                    // Prefer a concise tail of the output (the summary line)
+                    // over the full report — the panel-less inline strip is short.
+                    let tail = trimmed.split(separator: "\n").suffix(2).joined(separator: " · ")
+                    self.sessionsOptimizeMessage = tail.isEmpty ? "Sessions database optimized." : tail
+                } else {
+                    let tail = trimmed.split(separator: "\n").suffix(4).joined(separator: " · ")
+                    self.sessionsOptimizeMessage = "Optimize failed (exit \(result.exitCode)). \(tail)"
                 }
             }
         }

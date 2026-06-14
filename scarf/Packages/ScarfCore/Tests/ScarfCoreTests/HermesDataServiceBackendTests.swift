@@ -131,6 +131,32 @@ import Foundation
         #expect(sql.contains("api_call_count"))
     }
 
+    @Test func fetchSessionsWithRewindCountColumnIncludesRewindCount() async {
+        // v0.16+ DBs have the sessions.rewind_count column; the SELECT
+        // must append it so sessionFromRow can read it.
+        let mock = MockHermesQueryBackend()
+        await mock.setHasRewindCountColumn(true)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+        _ = await service.fetchSessions()
+
+        let sql = await mock.queryLog[0].sql
+        #expect(sql.contains("rewind_count"))
+    }
+
+    @Test func fetchSessionsWithoutRewindCountColumnOmitsRewindCount() async {
+        // Pre-v0.16 DBs lack the column; the SELECT must NOT reference it
+        // or the query fails with "no such column".
+        let mock = MockHermesQueryBackend()
+        await mock.setHasRewindCountColumn(false)
+        let service = HermesDataService(context: context, backend: mock)
+        _ = await service.open()
+        _ = await service.fetchSessions()
+
+        let sql = await mock.queryLog[0].sql
+        #expect(!sql.contains("rewind_count"))
+    }
+
     // MARK: - fetchSession(id:)
 
     @Test func fetchSessionByIdBindsTextParam() async {

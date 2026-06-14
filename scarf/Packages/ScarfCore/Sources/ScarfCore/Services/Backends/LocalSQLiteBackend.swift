@@ -34,6 +34,7 @@ public actor LocalSQLiteBackend: HermesQueryBackend {
     private(set) public var hasV07Schema = false
     private(set) public var hasV011Schema = false
     private(set) public var hasMessagesActiveColumn = false
+    private(set) public var hasRewindCountColumn = false
     private(set) public var lastOpenError: String?
 
     private let context: ServerContext
@@ -127,6 +128,10 @@ public actor LocalSQLiteBackend: HermesQueryBackend {
                     }
                     if column == "api_call_count" {
                         hasV011Schema = true
+                    }
+                    // v0.16+ `sessions.rewind_count` column.
+                    if column == "rewind_count" {
+                        hasRewindCountColumn = true
                     }
                 }
             }

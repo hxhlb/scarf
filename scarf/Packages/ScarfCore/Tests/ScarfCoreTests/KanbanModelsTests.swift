@@ -84,6 +84,35 @@ import Foundation
         #expect(task.modelOverride == nil)
     }
 
+    @Test func decodeV016GoalModeFields() throws {
+        // v0.16 `list --json` / `show --json` expose goal_mode + the
+        // optional goal_max_turns turn budget for Ralph-style goal loops.
+        let json = """
+        {
+          "id": "t_v016",
+          "title": "goal-mode task",
+          "status": "running",
+          "goal_mode": true,
+          "goal_max_turns": 5
+        }
+        """
+        let task = try JSONDecoder().decode(HermesKanbanTask.self, from: Data(json.utf8))
+        #expect(task.goalMode == true)
+        #expect(task.goalMaxTurns == 5)
+    }
+
+    @Test func decodeV016GoalModeFieldsAbsentBecomesNil() throws {
+        // A row missing the v0.16 goal fields (pre-v0.16 host, or a
+        // one-shot task) decodes with both nil — pins the tolerant-decode
+        // contract so a v0.15 user upgrading Scarf doesn't break the board.
+        let json = """
+        {"id": "t_legacy16", "title": "no v0.16 fields", "status": "ready"}
+        """
+        let task = try JSONDecoder().decode(HermesKanbanTask.self, from: Data(json.utf8))
+        #expect(task.goalMode == nil)
+        #expect(task.goalMaxTurns == nil)
+    }
+
     @Test func decodeSessionId() throws {
         // v0.15 stamps the originating ACP session id on tasks created
         // inside an agent loop; `hermes kanban list --json` exposes it.

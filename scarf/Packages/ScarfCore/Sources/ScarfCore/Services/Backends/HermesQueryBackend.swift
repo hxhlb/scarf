@@ -45,6 +45,13 @@ public protocol HermesQueryBackend: Sendable {
     /// to avoid "no such column" errors.
     var hasMessagesActiveColumn: Bool { get async }
 
+    /// True iff the connected DB has the v0.16 `sessions.rewind_count`
+    /// column (count of how many times a session was rewound). Detected
+    /// one-time at `open()` — the column only exists in v0.16+, so older
+    /// DBs get false and the column is omitted from the SELECT to avoid
+    /// "no such column" errors.
+    var hasRewindCountColumn: Bool { get async }
+
     /// User-presentable error from the most recent `open()` (or the
     /// most recent failed query for the remote backend's
     /// connectivity-loss codepath). `nil` means everything is healthy.

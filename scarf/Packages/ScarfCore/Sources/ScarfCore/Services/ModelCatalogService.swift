@@ -684,6 +684,17 @@ public struct ModelCatalogService: Sendable {
             subscriptionGated: false,
             docURL: nil
         ),
+        // -- v0.16 additions ---------------------------------------------
+        // Hermes v0.16 added AWS Bedrock as overlay-only provider (not in
+        // models.dev). Wire ID `bedrock` matches HERMES_OVERLAYS verbatim.
+        // Uses AWS SDK for auth; no baseURL needed at Scarf level.
+        "bedrock": HermesProviderOverlay(
+            displayName: "AWS Bedrock",
+            baseURL: nil,
+            authType: .apiKey,
+            subscriptionGated: false,
+            docURL: nil
+        ),
     ]
 
     /// Display-name overrides applied at `loadProviders()` time. Used

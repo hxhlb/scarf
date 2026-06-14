@@ -1224,6 +1224,15 @@ final class ChatViewModel {
             for await event in eventStream {
                 guard !Task.isCancelled else { break }
                 ScarfMon.event(.chatStream, "mac.acpEvent", count: 1)
+                // Intercept session title updates: Hermes v0.16+ emits a
+                // `session_info_update` whenever it (re)generates a session
+                // title. The rich transcript VM has no title affordance, so
+                // apply the new title to the sidebar caches here — the same
+                // in-place mutation `renameSession` performs, minus the CLI
+                // call (Hermes already persisted the change).
+                if case let .sessionInfoUpdate(sessionId, title, _) = event {
+                    self?.applySessionTitleUpdate(sessionId: sessionId, title: title)
+                }
                 ScarfMon.measure(.chatStream, "mac.handleACPEvent") {
                     self?.richChatViewModel.handleACPEvent(event)
                 }
@@ -1557,6 +1566,21 @@ final class ChatViewModel {
         guard !trimmed.isEmpty else { return }
         let result = context.runHermes(["sessions", "rename", sessionId, trimmed])
         guard result.exitCode == 0 else { return }
+        if let idx = recentSessions.firstIndex(where: { $0.id == sessionId }) {
+            recentSessions[idx] = recentSessions[idx].withTitle(trimmed)
+        }
+        sessionPreviews[sessionId] = trimmed
+    }
+
+    /// Apply a session title from an ACP `session_info_update` event
+    /// (Hermes v0.16+). Mirrors `renameSession`'s in-place cache mutation
+    /// so the sidebar reflects the new title immediately, but skips the
+    /// `hermes sessions rename` CLI call — Hermes generated and persisted
+    /// the title itself, so re-issuing the command would be redundant.
+    /// Guards a nil/empty title so a "clear title" update is a no-op.
+    private func applySessionTitleUpdate(sessionId: String, title: String?) {
+        guard let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return }
         if let idx = recentSessions.firstIndex(where: { $0.id == sessionId }) {
             recentSessions[idx] = recentSessions[idx].withTitle(trimmed)
         }

@@ -9,6 +9,10 @@ struct PluginsView: View {
     @State private var installIdentifier = ""
     @State private var showInstall = false
     @State private var pendingRemove: HermesPlugin?
+    /// v0.16 Spotify sign-in sheet state. Only rendered when the spotify
+    /// plugin is present and isV016OrLater is true.
+    @State private var showSpotifySignIn = false
+    @Environment(\.hermesCapabilities) private var capabilitiesStore
 
     init(viewModel: PluginsViewModel) {
         self.viewModel = viewModel
@@ -35,6 +39,13 @@ struct PluginsView: View {
         )
         .onAppear { viewModel.load() }
         .sheet(isPresented: $showInstall) { installSheet }
+        .sheet(isPresented: $showSpotifySignIn) {
+            SpotifySignInSheet(onSignedIn: {
+                // No state to refresh in this view yet — chat picks
+                // up the new token on next session start. Keep the
+                // hook so a future "auth status" indicator can rebind.
+            })
+        }
         .confirmationDialog(
             pendingRemove.map { "Remove \($0.name)?" } ?? "",
             isPresented: Binding(get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } })
@@ -98,6 +109,15 @@ struct PluginsView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 1) {
+                // v0.16 Spotify sign-in affordance: surface when the
+                // spotify plugin is present and we're on v0.16+. Reuses
+                // the same SpotifySignInSheet and SpotifyAuthFlow as the
+                // SkillsView placement (pre-v0.16 only).
+                if capabilitiesStore?.capabilities.isV016OrLater == true,
+                   viewModel.plugins.contains(where: { $0.name == "spotify" }) {
+                    spotifyAuthRow
+                        .padding()
+                }
                 ForEach(viewModel.plugins) { plugin in
                     row(plugin)
                 }
@@ -147,6 +167,31 @@ struct PluginsView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.quaternary.opacity(0.3))
+    }
+
+    /// Renders the v0.16 Spotify auth row in the plugins list when the
+    /// spotify plugin is discovered. Tapping opens `SpotifySignInSheet`
+    /// which drives `hermes auth spotify` end-to-end in-app.
+    private var spotifyAuthRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "music.note")
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Sign in to Spotify")
+                    .font(.callout.weight(.medium))
+                Text("Authorise Hermes to control playback, search, and library actions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Sign In") { showSpotifySignIn = true }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.green.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var installSheet: some View {

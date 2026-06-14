@@ -38,6 +38,7 @@ public actor HermesDataService {
     /// on every call.
     private var hasV07Schema = false
     private var hasV011Schema = false
+    private var hasMessagesActiveColumn = false
 
     /// Last error from `open()` / `refresh()`, user-presentable. `nil`
     /// means the last attempt succeeded. Views surface this when their
@@ -73,6 +74,7 @@ public actor HermesDataService {
         // for them would force every fetch into a multi-await pattern.
         hasV07Schema = await backend.hasV07Schema
         hasV011Schema = await backend.hasV011Schema
+        hasMessagesActiveColumn = await backend.hasMessagesActiveColumn
         lastOpenError = await backend.lastOpenError
         return ok
     }
@@ -82,6 +84,7 @@ public actor HermesDataService {
         let ok = await backend.refresh(forceFresh: forceFresh)
         hasV07Schema = await backend.hasV07Schema
         hasV011Schema = await backend.hasV011Schema
+        hasMessagesActiveColumn = await backend.hasMessagesActiveColumn
         lastOpenError = await backend.lastOpenError
         return ok
     }
@@ -286,11 +289,12 @@ public actor HermesDataService {
             // user opens a message's disclosure.
             let sql: String
             let params: [SQLValue]
+            let activeClause = hasMessagesActiveColumn ? " AND active = 1" : ""
             if let before {
-                sql = "SELECT \(messageColumnsLight) FROM messages WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?"
+                sql = "SELECT \(messageColumnsLight) FROM messages WHERE session_id = ? AND id < ?\(activeClause) ORDER BY id DESC LIMIT ?"
                 params = [.text(sessionId), .integer(Int64(before)), .integer(Int64(limit))]
             } else {
-                sql = "SELECT \(messageColumnsLight) FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?"
+                sql = "SELECT \(messageColumnsLight) FROM messages WHERE session_id = ?\(activeClause) ORDER BY id DESC LIMIT ?"
                 params = [.text(sessionId), .integer(Int64(limit))]
             }
             do {
@@ -335,11 +339,12 @@ public actor HermesDataService {
         await ScarfMon.measureAsync(.sessionLoad, "mac.fetchSkeletonMessages") {
             let sql: String
             let params: [SQLValue]
+            let activeClause = hasMessagesActiveColumn ? " AND active = 1" : ""
             if let before {
-                sql = "SELECT \(messageColumnsSkeleton) FROM messages WHERE session_id = ? AND role IN ('user','assistant') AND id < ? ORDER BY id DESC LIMIT ?"
+                sql = "SELECT \(messageColumnsSkeleton) FROM messages WHERE session_id = ? AND role IN ('user','assistant') AND id < ? \(activeClause) ORDER BY id DESC LIMIT ?"
                 params = [.text(sessionId), .integer(Int64(before)), .integer(Int64(limit))]
             } else {
-                sql = "SELECT \(messageColumnsSkeleton) FROM messages WHERE session_id = ? AND role IN ('user','assistant') ORDER BY id DESC LIMIT ?"
+                sql = "SELECT \(messageColumnsSkeleton) FROM messages WHERE session_id = ? AND role IN ('user','assistant') \(activeClause) ORDER BY id DESC LIMIT ?"
                 params = [.text(sessionId), .integer(Int64(limit))]
             }
             do {
@@ -487,7 +492,8 @@ public actor HermesDataService {
         limit: Int = 50
     ) async -> [HermesMessage] {
         await ScarfMon.measureAsync(.sessionLoad, "mac.hydrateToolResults") {
-            let sql = "SELECT \(messageColumnsLight) FROM messages WHERE session_id = ? AND role = 'tool' AND id >= ? AND id <= ? ORDER BY id DESC LIMIT ?"
+            let activeClause = hasMessagesActiveColumn ? " AND active = 1" : ""
+            let sql = "SELECT \(messageColumnsLight) FROM messages WHERE session_id = ? AND role = 'tool' AND id >= ? AND id <= ? \(activeClause) ORDER BY id DESC LIMIT ?"
             let params: [SQLValue] = [
                 .text(sessionId),
                 .integer(Int64(minId)),
@@ -545,11 +551,12 @@ public actor HermesDataService {
         var msgCols = "m.id, m.session_id, m.role, m.content, m.tool_call_id, m.tool_calls, m.tool_name, m.timestamp, m.token_count, m.finish_reason"
         if hasV07Schema { msgCols += ", m.reasoning" }
         if hasV011Schema { msgCols += ", m.reasoning_content" }
+        let activeClause = hasMessagesActiveColumn ? " AND m.active = 1" : ""
         let sql = """
             SELECT \(msgCols)
             FROM messages_fts fts
             JOIN messages m ON m.id = fts.rowid
-            WHERE messages_fts MATCH ?
+            WHERE messages_fts MATCH ? \(activeClause)
             ORDER BY rank
             LIMIT ?
             """
@@ -604,10 +611,11 @@ public actor HermesDataService {
             } else {
                 cols = "id, session_id, role, NULL AS content, NULL AS tool_call_id, NULL AS tool_calls, NULL AS tool_name, timestamp, NULL AS token_count, NULL AS finish_reason"
             }
+            let activeClause = hasMessagesActiveColumn ? " AND active = 1" : ""
             let sql = """
                 SELECT \(cols)
                 FROM messages
-                WHERE tool_calls IS NOT NULL AND tool_calls != '[]' AND tool_calls != ''
+                WHERE tool_calls IS NOT NULL AND tool_calls != '[]' AND tool_calls != '' \(activeClause)
                 ORDER BY timestamp DESC
                 LIMIT ?
                 """
@@ -634,10 +642,11 @@ public actor HermesDataService {
         limit: Int = QueryDefaults.toolCallLimit
     ) async -> MessageFetchOutcome {
         await ScarfMon.measureAsync(.sessionLoad, "mac.fetchRecentToolCalls") {
+            let activeClause = hasMessagesActiveColumn ? " AND active = 1" : ""
             let sql = """
                 SELECT \(messageColumnsLight)
                 FROM messages
-                WHERE tool_calls IS NOT NULL AND tool_calls != '[]' AND tool_calls != ''
+                WHERE tool_calls IS NOT NULL AND tool_calls != '[]' AND tool_calls != '' \(activeClause)
                 ORDER BY timestamp DESC
                 LIMIT ?
                 """

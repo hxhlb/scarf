@@ -1337,7 +1337,7 @@ public final class RichChatViewModel {
                 ScarfMon.event(.chatStream, "mac.handleACPEvent.preEngagementDropped", count: 1)
                 return
             case .permissionRequest, .connectionLost,
-                 .availableCommands, .unknown:
+                 .availableCommands, .sessionInfoUpdate, .unknown:
                 break
             }
         }
@@ -1363,6 +1363,13 @@ public final class RichChatViewModel {
             handleConnectionLost(reason: reason)
         case .availableCommands(_, let commands):
             acpCommands = parseACPCommands(commands)
+        case .sessionInfoUpdate:
+            // The sidebar title mutation is owned by the platform chat VM
+            // (ChatViewModel on Mac / ChatView on iOS), which intercepts
+            // this event in its ACP event loop and updates recentSessions /
+            // sessionPreviews in place. Nothing to do at the rich-transcript
+            // level — the live transcript has no title affordance.
+            break
         case .unknown:
             break
         }

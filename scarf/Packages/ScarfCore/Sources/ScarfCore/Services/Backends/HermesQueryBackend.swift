@@ -38,6 +38,13 @@ public protocol HermesQueryBackend: Sendable {
     /// column" failures).
     var hasV011Schema: Bool { get async }
 
+    /// True iff the connected DB has the v0.16 `messages.active`
+    /// column (soft-delete marker for rewound/undone messages).
+    /// Detection is one-time at `open()` — the column only exists in
+    /// v0.16+, so older DBs get false and bypass the active=1 filter
+    /// to avoid "no such column" errors.
+    var hasMessagesActiveColumn: Bool { get async }
+
     /// User-presentable error from the most recent `open()` (or the
     /// most recent failed query for the remote backend's
     /// connectivity-loss codepath). `nil` means everything is healthy.

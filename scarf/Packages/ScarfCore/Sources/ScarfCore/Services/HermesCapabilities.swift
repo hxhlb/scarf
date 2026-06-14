@@ -12,9 +12,15 @@ import os
 /// Kanban diagnostics + recovery UX, Curator archive/prune, Google Chat (20th
 /// platform), cross-platform allowlists, MCP SSE transport, Cron `no_agent`
 /// mode, Web Tools per-capability backends, Profiles `--no-skills`, and a
-/// handful of UX additions. UI that branches on these surfaces calls the
-/// boolean accessors here so older Hermes installs degrade silently instead
-/// of throwing on an unknown CLI subcommand.
+/// handful of UX additions; v0.14 launched Windows beta + PyPI, OpenAI-compatible
+/// local proxy, two new platforms (LINE + SimpleX), two new providers (xAI OAuth +
+/// NovitaAI), new search backends, and /subgoal + YOLO mode; v0.15 added chat-scoped
+/// Kanban, Kanban maturation, ntfy platform, xAI web search + TTS tags, Azure Entra
+/// auth, Bitwarden secrets, hermes audit, skill bundles, and MCP mTLS; v0.16 adds
+/// sessions rename/optimize, kanban goal-mode, insights analytics, and dashboard
+/// web-UI. UI that branches on these surfaces calls the boolean accessors here so
+/// older Hermes installs degrade silently instead of throwing on an unknown CLI
+/// subcommand.
 ///
 /// Pure value type — no side effects. The async detection lives in
 /// `HermesCapabilitiesStore`.
@@ -440,6 +446,32 @@ public struct HermesCapabilities: Sendable, Equatable {
     /// `session/new`'s `modes`). Sensitive paths always still prompt.
     public var hasSessionEditAutoApproval: Bool { atLeastSemver(0, 15, 0) }
 
+    // MARK: v0.16 (v2026.6.5) flags
+
+    /// `hermes sessions rename <id> <title>` — rename an existing session
+    /// (v0.16+). Surfaced in the session browser context menu.
+    public var hasSessionsRename: Bool { atLeastSemver(0, 16, 0) }
+
+    /// `hermes sessions optimize` — compact the FTS index and VACUUM the
+    /// sessions database (v0.16+). Exposed in the Health / Maintenance view.
+    public var hasSessionsOptimize: Bool { atLeastSemver(0, 16, 0) }
+
+    /// Kanban tasks carry `goal_mode` (boolean) and `goal_max_turns` (optional
+    /// integer) columns for Ralph-style goal loops (v0.16+). Lets the kanban
+    /// surface allow users to dispatch a task as a persistent goal-seeking
+    /// worker with a turn budget instead of a one-shot execution.
+    public var hasKanbanGoalMode: Bool { atLeastSemver(0, 16, 0) }
+
+    /// `hermes insights` — on-demand analytics verb showing agent usage
+    /// statistics across all sessions and projects (v0.16+). Surfaced in a
+    /// dedicated sidebar destination alongside existing reports.
+    public var hasInsightsCommand: Bool { atLeastSemver(0, 16, 0) }
+
+    /// `hermes dashboard` — web-UI backend verb for the desktop dashboard
+    /// application (v0.16+). Scarf doesn't directly invoke this; it documents
+    /// the version boundary for dashboard-aware installs.
+    public var hasDashboardCommand: Bool { atLeastSemver(0, 16, 0) }
+
     // MARK: Convenience predicates
 
     /// Whether the connected host is on the v0.13 line or newer. Convenience
@@ -460,6 +492,11 @@ public struct HermesCapabilities: Sendable, Equatable {
     /// for UI copy that toggles on the v0.14 → v0.15 boundary without
     /// proxying through a feature-specific flag.
     public var isV015OrLater: Bool { atLeastSemver(0, 15, 0) }
+
+    /// Whether the connected host is on the v0.16 line or newer. Convenience
+    /// for UI copy that toggles on the v0.15 → v0.16 boundary without
+    /// proxying through a feature-specific flag.
+    public var isV016OrLater: Bool { atLeastSemver(0, 16, 0) }
 
     private func atLeastSemver(_ major: Int, _ minor: Int, _ patch: Int) -> Bool {
         guard let s = semver else { return false }

@@ -91,9 +91,6 @@ public actor CuratorService {
     // MARK: - Writes (legacy v0.12 verbs; service form)
 
     public func runNow(synchronous: Bool, timeout: TimeInterval) async throws {
-        // TODO(WS-4-Q4): default 600s for v0.13 sync runs. No Cancel
-        // button in v2.8 (transport.cancel parity not guaranteed across
-        // LocalTransport / SSHTransport).
         let resolvedTimeout = synchronous ? timeout : 30
         let (code, stdout, stderr) = await runHermes(args: ["curator", "run"], timeout: resolvedTimeout)
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "run")
@@ -142,10 +139,6 @@ public actor CuratorService {
     /// archived list is empty after a successful destructive prune.
     @discardableResult
     public func prune(dryRun: Bool) async throws -> CuratorPruneSummary {
-        // TODO(WS-4-Q1): confirm v0.13 ships `--dry-run`. If not, fall
-        // back to enumerating via `list-archived` and treat any prune
-        // call as destructive. The retry-without-flag path below covers
-        // the "unrecognized argument" case automatically.
         var args = ["curator", "prune"]
         if dryRun { args.append("--dry-run") }
         // `--json` requested for the dry-run path so we can parse the

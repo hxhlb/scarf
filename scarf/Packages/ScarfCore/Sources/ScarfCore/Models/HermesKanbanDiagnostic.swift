@@ -96,12 +96,6 @@ public struct HermesKanbanDiagnostic: Sendable, Equatable, Identifiable, Codable
 /// `unknown` is the fallback for any kind a future Hermes adds that
 /// Scarf doesn't recognize. Views render the raw string verbatim in
 /// that case so the user still sees what Hermes flagged.
-// TODO(WS-3-Q5): The exact `kind` string for darwin-zombie detection is
-// inferred from the v0.13 release notes ("Detect darwin zombie workers");
-// confirm against live `hermes kanban show --json` output during
-// integration. Same for `worker_exit_no_complete` and the heartbeat-stalled
-// kinds — typed mirror falls through to `.unknown` if the wire string
-// drifts, and the raw string is still rendered.
 public enum KanbanDiagnosticKind: String, Sendable, CaseIterable {
     case heartbeatStalled = "heartbeat_stalled"
     case toolErrorLoop = "tool_error_loop"

@@ -85,11 +85,6 @@ struct WebToolsTab: View {
                 .foregroundStyle(ScarfColor.foregroundMuted)
                 .padding(.horizontal, ScarfSpace.s4)
         } else {
-            // TODO(WS-7-Q7): Pre-v0.13 hosts fall back to the legacy single
-            // backend. v0.13 may or may not honour `web_tools.backend` as a
-            // fallback when the split keys are absent — verify with Hermes
-            // and consider a one-time migration prompt in a follow-up if
-            // upgrading from v0.12 silently resets the user's backend.
             SettingsSection(title: "Web Tools", icon: "globe.americas") {
                 PickerRow(
                     label: "Backend",

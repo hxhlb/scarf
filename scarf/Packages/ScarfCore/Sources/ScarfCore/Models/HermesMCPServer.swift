@@ -4,8 +4,6 @@ public enum MCPTransport: String, Sendable, Equatable, CaseIterable, Identifiabl
     case stdio
     case http
     /// Server-Sent Events transport. Hermes v0.13+ only.
-    // TODO(WS-7-Q1): Verify Hermes uses the literal `sse` transport name
-    // (vs. `streamable-http`/`http-sse`/etc.) once a v0.13 host is on hand.
     case sse
 
     public var id: String { rawValue }
@@ -41,8 +39,6 @@ public struct HermesMCPServer: Identifiable, Sendable, Equatable {
     /// Hermes-side keepalive interval (seconds) for SSE transport. `nil`
     /// when the YAML doesn't specify `sse_read_timeout` (Hermes default
     /// applies). Pre-v0.13 hosts always have this as `nil`.
-    // TODO(WS-7-Q2): Default is assumed to be 300s per WS-7 plan; placeholder
-    // copy uses that. Verify against `~/.hermes/hermes-agent/hermes_cli/mcp.py`.
     public let sseReadTimeout: Int?
     /// Hermes v0.14+ — when `true`, the agent batches concurrent tool
     /// calls to this MCP server instead of serializing them. `nil`

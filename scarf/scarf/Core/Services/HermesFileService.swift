@@ -1010,8 +1010,6 @@ struct HermesFileService: Sendable {
             // entries fall back to .http (v0.12 shape) and command-bearing entries
             // to .stdio. This preserves byte-for-byte round-trip on existing files
             // — pre-v0.13 entries have no `transport:` key so they parse identically.
-            // TODO(WS-7-Q1): Verify Hermes v0.13 actually emits `transport: sse`
-            // (vs. inferring from the schema/url shape) once a v0.13 host is on hand.
             let transport: MCPTransport = {
                 if fields["transport"]?.lowercased() == "sse" { return .sse }
                 if fields["url"] != nil { return .http }

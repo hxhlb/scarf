@@ -13,7 +13,8 @@ import Foundation
         #expect(GatewayAllowlistKind.kind(for: "telegram")   == .chats)
         #expect(GatewayAllowlistKind.kind(for: "whatsapp")   == .chats)
         #expect(GatewayAllowlistKind.kind(for: "matrix")     == .rooms)
-        #expect(GatewayAllowlistKind.kind(for: "dingtalk")   == .rooms)
+        // v0.16: Hermes reads `dingtalk.allowed_chats`, not allowed_rooms.
+        #expect(GatewayAllowlistKind.kind(for: "dingtalk")   == .chats)
     }
 
     @Test func acceptsBothGoogleChatSpellings() {

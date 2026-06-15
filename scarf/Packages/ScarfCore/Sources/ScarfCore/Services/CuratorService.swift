@@ -45,46 +45,18 @@ public actor CuratorService {
         }.value
     }
 
-    /// `hermes curator list-archived [--json]`. Prefers JSON; falls back
-    /// to a defensive text parser. Empty / "no archived skills" sentinel
-    /// folds to `[]`.
+    /// `hermes curator list-archived`. Hermes has no `--json` flag on
+    /// this verb (re-verified against v0.16 — it prints text), so we
+    /// parse the text output directly. Empty / "no archived skills"
+    /// sentinel folds to `[]`.
     public func listArchived() async throws -> [HermesCuratorArchivedSkill] {
-        // TODO(WS-4-Q2): confirm `--json` is supported on v0.13
-        // `list-archived`. If not, drop the flag and rely on the text
-        // parser path. Until then we pass `--json` and parse the output
-        // tolerantly.
-        let args = ["curator", "list-archived", "--json"]
-        let (code, stdout, stderr) = await runHermes(args: args, timeout: 30)
-
-        // If --json isn't recognized, the CLI typically emits
-        // "unrecognized arguments: --json" or similar to stderr and
-        // exits non-zero. Retry without the flag and parse text.
-        if code != 0 {
-            let lower = (stderr + stdout).lowercased()
-            if lower.contains("unrecognized") || lower.contains("unknown") || lower.contains("no such option") {
-                let (c2, out2, err2) = await runHermes(args: ["curator", "list-archived"], timeout: 30)
-                try ensureSuccess(code: c2, stdout: out2, stderr: err2, verb: "list-archived")
-                return Self.parseListArchivedText(out2)
-            }
-            try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "list-archived")
-        }
+        let (code, stdout, stderr) = await runHermes(args: ["curator", "list-archived"], timeout: 30)
+        try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "list-archived")
 
         let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || trimmed.lowercased().contains("no archived skills") {
             return []
         }
-        // Try JSON first — may also be a text dump if Hermes ignored `--json`.
-        if let data = trimmed.data(using: .utf8),
-           let arr = try? JSONDecoder().decode([HermesCuratorArchivedSkill].self, from: data) {
-            return arr
-        }
-        // Some builds wrap in `{"archived": [...]}` envelope.
-        struct Wrapper: Decodable { let archived: [HermesCuratorArchivedSkill] }
-        if let data = trimmed.data(using: .utf8),
-           let wrapped = try? JSONDecoder().decode(Wrapper.self, from: data) {
-            return wrapped.archived
-        }
-        // Text fallback — defensive parse.
         return Self.parseListArchivedText(stdout)
     }
 

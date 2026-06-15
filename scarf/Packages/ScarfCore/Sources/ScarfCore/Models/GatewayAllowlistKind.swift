@@ -5,8 +5,8 @@ import Foundation
 /// depending on the platform's primary noun for "addressable destination":
 ///
 /// - **`allowed_channels`** — Slack, Mattermost, Google Chat
-/// - **`allowed_chats`** — Telegram, WhatsApp
-/// - **`allowed_rooms`** — Matrix, DingTalk
+/// - **`allowed_chats`** — Telegram, WhatsApp, DingTalk
+/// - **`allowed_rooms`** — Matrix
 ///
 /// `GatewayAllowlistKind` encodes the (platform → key) mapping plus a few
 /// presentation hints (placeholder strings, singular noun) so the allowlist
@@ -17,7 +17,7 @@ public enum GatewayAllowlistKind: String, Sendable, Equatable {
     case chats      // -> allowed_chats
     case rooms      // -> allowed_rooms
 
-    /// YAML scalar key segment under `gateway.platforms.<platform>.<key>`.
+    /// YAML scalar key segment under top-level `<platform>.<key>`.
     public var yamlKey: String {
         switch self {
         case .channels: return "allowed_channels"
@@ -68,8 +68,8 @@ public enum GatewayAllowlistKind: String, Sendable, Equatable {
     public static func kind(for platform: String) -> GatewayAllowlistKind? {
         switch platform {
         case "slack", "mattermost", "google-chat", "googlechat": return .channels
-        case "telegram", "whatsapp":                              return .chats
-        case "matrix", "dingtalk":                                return .rooms
+        case "telegram", "whatsapp", "dingtalk":                  return .chats
+        case "matrix":                                            return .rooms
         default: return nil
         }
     }

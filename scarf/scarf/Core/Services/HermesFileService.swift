@@ -302,8 +302,7 @@ struct HermesFileService: Sendable {
         // `ScarfCore/Parsing/HermesConfig+YAML.swift`. Behaviour parity
         // matters: both parsers must populate `gatewayPlatforms` the same
         // way so iOS and Mac surfaces stay in lockstep.
-        // TODO(WS-5-Q2): YAML key path unverified — see the comment in the
-        // ScarfCore extractor for the resolution path.
+        // Allowlists live at top-level `<platform>.allowed_*` (verified v0.16).
         let gatewayAllowlistPlatforms = [
             "slack", "mattermost", "google-chat",
             "telegram", "whatsapp",
@@ -311,7 +310,7 @@ struct HermesFileService: Sendable {
         ]
         var gatewayPlatforms: [String: GatewayPlatformSettings] = [:]
         for platform in gatewayAllowlistPlatforms {
-            let prefix = "gateway.platforms.\(platform)."
+            let prefix = "\(platform)."
             let allowedChannels = lists[prefix + "allowed_channels"] ?? []
             let allowedChats    = lists[prefix + "allowed_chats"]    ?? []
             let allowedRooms    = lists[prefix + "allowed_rooms"]    ?? []

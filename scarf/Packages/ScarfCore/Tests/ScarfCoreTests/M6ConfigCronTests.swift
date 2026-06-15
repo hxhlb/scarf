@@ -286,7 +286,7 @@ import Foundation
         #expect(c.timezone == "America/New_York")
     }
 
-    // MARK: - v0.13 gateway.platforms.<platform> block
+    // MARK: - v0.16 top-level <platform>.allowed_* allowlists
 
     @Test func gatewayPlatformsEmptyByDefault() {
         let c = HermesConfig(yaml: "")
@@ -294,16 +294,15 @@ import Foundation
     }
 
     @Test func parsesGatewayAllowlistsForSlack() {
+        // v0.16: allowlists live at top-level `slack.allowed_*`.
         let yaml = """
-        gateway:
-          platforms:
-            slack:
-              allowed_channels:
-                - C01
-                - C02
-              busy_ack_enabled: false
-              gateway_restart_notification: true
-              slash_command_notice_ttl_seconds: 120
+        slack:
+          allowed_channels:
+            - C01
+            - C02
+          busy_ack_enabled: false
+          gateway_restart_notification: true
+          slash_command_notice_ttl_seconds: 120
         """
         let cfg = HermesConfig(yaml: yaml)
         let block = cfg.gatewayPlatforms["slack"]
@@ -315,51 +314,57 @@ import Foundation
 
     @Test func parsesGatewayAllowlistsForTelegramAndMatrix() {
         let yaml = """
-        gateway:
-          platforms:
-            telegram:
-              allowed_chats:
-                - '@alice'
-                - '12345'
-            matrix:
-              allowed_rooms:
-                - '!room:matrix.org'
+        telegram:
+          allowed_chats:
+            - '@alice'
+            - '12345'
+        matrix:
+          allowed_rooms:
+            - '!room:matrix.org'
         """
         let cfg = HermesConfig(yaml: yaml)
         #expect(cfg.gatewayPlatforms["telegram"]?.allowedChats == ["@alice", "12345"])
         #expect(cfg.gatewayPlatforms["matrix"]?.allowedRooms == ["!room:matrix.org"])
     }
 
-    @Test func gatewayBlockCoexistsWithLegacyPlatformBlocks() {
-        // Regression: legacy `platforms.slack.reply_to_mode` and
-        // `matrix.require_mention` must keep parsing when the new
-        // `gateway:` block is also present — no key collisions.
+    @Test func parsesGatewayAllowlistForDingtalkAsChats() {
+        // v0.16: Hermes reads `dingtalk.allowed_chats` (NOT allowed_rooms).
         let yaml = """
-        platforms:
-          slack:
-            reply_to_mode: all
+        dingtalk:
+          allowed_chats:
+            - cidABC123
+        """
+        let cfg = HermesConfig(yaml: yaml)
+        #expect(cfg.gatewayPlatforms["dingtalk"]?.allowedChats == ["cidABC123"])
+    }
+
+    @Test func gatewayAllowlistCoexistsWithLegacyPlatformKeys() {
+        // Regression: the legacy `slack.reply_to_mode` /
+        // `matrix.require_mention` keys live in the SAME top-level section as
+        // the v0.16 allowlist keys — both must keep parsing, no collisions.
+        let yaml = """
+        slack:
+          reply_to_mode: all
+          allowed_channels:
+            - C01
         matrix:
           require_mention: false
-        gateway:
-          platforms:
-            slack:
-              allowed_channels:
-                - C01
+          allowed_rooms:
+            - '!room:matrix.org'
         """
         let cfg = HermesConfig(yaml: yaml)
         #expect(cfg.slack.replyToMode == "all")
         #expect(cfg.matrix.requireMention == false)
         #expect(cfg.gatewayPlatforms["slack"]?.allowedChannels == ["C01"])
+        #expect(cfg.gatewayPlatforms["matrix"]?.allowedRooms == ["!room:matrix.org"])
     }
 
-    @Test func gatewayPlatformsSkipsPlatformsWithoutV013Keys() {
-        // The `gateway:` block exists but only Slack has a v0.13 key —
-        // platforms without keys must NOT appear in `gatewayPlatforms`.
+    @Test func gatewayPlatformsSkipsPlatformsWithoutGatewayKeys() {
+        // Only Slack carries a gateway key — platforms without one must NOT
+        // appear in `gatewayPlatforms`.
         let yaml = """
-        gateway:
-          platforms:
-            slack:
-              busy_ack_enabled: true
+        slack:
+          busy_ack_enabled: true
         """
         let cfg = HermesConfig(yaml: yaml)
         #expect(cfg.gatewayPlatforms["slack"] != nil)

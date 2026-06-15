@@ -264,19 +264,15 @@ public extension HermesConfig {
         )
 
         // -- v0.13: per-platform Messaging Gateway settings --------------
-        // Read `gateway.platforms.<platform>.{allowed_channels|allowed_chats|
-        // allowed_rooms|busy_ack_enabled|gateway_restart_notification|
-        // slash_command_notice_ttl_seconds}` and bundle each platform that
-        // has at least one v0.13 key present in the file. Platforms without
-        // an explicit block don't appear in the dictionary, so the
-        // editor's `?? .empty` fallback hands the user the v0.13 defaults
-        // without leaving stale keys littered across the YAML.
-        //
-        // TODO(WS-5-Q2): the `gateway.platforms.*` path is unverified —
-        // Hermes v0.13 may emit allowlists under `platforms.<platform>.*`
-        // (sibling to existing `platforms.slack.reply_to_mode`) instead.
-        // If so, swap the `prefix` line below to `"platforms.\(platform)."`
-        // and update `GatewayConfigWriter` in lockstep.
+        // Allowlists live at top-level `<platform>.allowed_*` (verified
+        // v0.16): `slack.allowed_channels`, `telegram.allowed_chats`,
+        // `matrix.allowed_rooms`, `dingtalk.allowed_chats`, plus the
+        // top-level `<platform>.gateway_restart_notification` toggle.
+        // `busy_ack_enabled` / `slash_command_notice_ttl_seconds` are
+        // no-ops in v0.16 but kept for round-trip. Platforms without an
+        // explicit block don't appear in the dictionary, so the editor's
+        // `?? .empty` fallback hands the user the defaults without leaving
+        // stale keys littered across the YAML.
         let gatewayAllowlistPlatforms = [
             "slack", "mattermost", "google-chat",
             "telegram", "whatsapp",
@@ -284,7 +280,7 @@ public extension HermesConfig {
         ]
         var gatewayPlatforms: [String: GatewayPlatformSettings] = [:]
         for platform in gatewayAllowlistPlatforms {
-            let prefix = "gateway.platforms.\(platform)."
+            let prefix = "\(platform)."
             let allowedChannels = lists[prefix + "allowed_channels"] ?? []
             let allowedChats    = lists[prefix + "allowed_chats"]    ?? []
             let allowedRooms    = lists[prefix + "allowed_rooms"]    ?? []

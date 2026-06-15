@@ -373,16 +373,17 @@ public extension HermesConfig {
             runtimeMetadataFooter: bool("agent.runtime_metadata_footer", default: false),
             gatewayPlatforms: gatewayPlatforms,
             // -- v0.13 additions -------------------------------------
-            // TODO(WS-6-Q1): the `openrouter.response_cache.enabled`
-            // key shape is provisional pending verification against a
-            // v0.13 `hermes config check`. If upstream uses a different
-            // path (e.g. `providers.openrouter.response_cache_enabled`
-            // or nested under `prompt_caching`), update this single
-            // line + the matching `setSetting` key in
-            // `SettingsViewModel.setOpenRouterResponseCache`. Default
-            // is `false` per WS-6-plan §Open Questions #2.
+            // Hermes v0.16: `openrouter.response_cache` is a SCALAR bool
+            // directly under `openrouter:` (default `true` in Hermes).
+            // Read it as the scalar. A legacy nested value
+            // (`openrouter.response_cache.enabled: …`) flattens to a
+            // different dotted key, so it has no scalar entry here and
+            // decodes to the default `false` — the next save writes the
+            // scalar, healing the shape. Keep in lockstep with the
+            // matching `setSetting` key in
+            // `SettingsViewModel.setOpenRouterResponseCache`.
             imageGenModel: str("image_gen.model", default: ""),
-            openrouterResponseCacheEnabled: bool("openrouter.response_cache.enabled", default: false),
+            openrouterResponseCacheEnabled: bool("openrouter.response_cache", default: false),
             // Pre-v0.13 hosts wrote a single `web_tools.backend`. v0.13 split
             // it into per-capability keys. Read all three so the round-trip
             // never loses a value the user already set; the WebTools tab

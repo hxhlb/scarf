@@ -268,14 +268,15 @@ final class SettingsViewModel {
     /// invoke this setter.
     func setImageGenModel(_ value: String) { setSetting("image_gen.model", value: value) }
 
-    /// `openrouter.response_cache.enabled` — toggles OpenRouter
-    /// response caching for repeat prompts (Hermes v0.13+).
-    /// Capability-gated in `AuxiliaryTab` so pre-v0.13 hosts never
-    /// invoke this setter.
-    // TODO(WS-6-Q1): the YAML key path is provisional — keep in lockstep
-    // with `HermesConfig+YAML.swift`'s parser line.
+    /// `openrouter.response_cache` — toggles OpenRouter response caching
+    /// for repeat prompts. Hermes v0.16 reads this as a SCALAR bool
+    /// directly under `openrouter:` (writing the nested `.enabled` shape
+    /// would be read as a truthy dict, so disabling it would silently
+    /// stay on). Capability-gated in `AuxiliaryTab` so pre-v0.13 hosts
+    /// never invoke this setter. Keep in lockstep with the parser line in
+    /// `HermesConfig+YAML.swift`.
     func setOpenRouterResponseCache(_ value: Bool) {
-        setSetting("openrouter.response_cache.enabled", value: value ? "true" : "false")
+        setSetting("openrouter.response_cache", value: value ? "true" : "false")
     }
 
     // MARK: - Security / Privacy

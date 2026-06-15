@@ -99,20 +99,41 @@ import Foundation
     }
 
     @Test func parsesImageGenAndOpenRouterCache() {
-        // WS-6: round-trip the two new top-level v0.13 keys. If the
-        // OpenRouter key shape changes upstream (see TODO(WS-6-Q1)),
-        // this test is the single touchpoint that pins the parser
-        // line + setter key + UI binding to a single shape.
+        // WS-6 / v0.16: round-trip the two new top-level keys. Hermes
+        // v0.16 reads `openrouter.response_cache` as a SCALAR bool
+        // directly under `openrouter:`. This test pins the parser line +
+        // setter key + UI binding to that single shape.
         let yaml = """
         image_gen:
           model: openai/gpt-image-1
         openrouter:
-          response_cache:
-            enabled: true
+          response_cache: true
         """
         let c = HermesConfig(yaml: yaml)
         #expect(c.imageGenModel == "openai/gpt-image-1")
         #expect(c.openrouterResponseCacheEnabled == true)
+    }
+
+    @Test func openRouterResponseCacheScalarFalseDecodes() {
+        // The scalar `false` round-trips honestly (the v0.16 bug was that
+        // a disable wrote a nested dict that Hermes read as truthy).
+        let c = HermesConfig(yaml: """
+        openrouter:
+          response_cache: false
+        """)
+        #expect(c.openrouterResponseCacheEnabled == false)
+    }
+
+    @Test func openRouterResponseCacheLegacyNestedDecodesToFalse() {
+        // Defensive read: a legacy nested value flattens to a different
+        // dotted key, so the scalar lookup misses and we fall to the
+        // `false` default. The next save writes the scalar, healing it.
+        let c = HermesConfig(yaml: """
+        openrouter:
+          response_cache:
+            enabled: true
+        """)
+        #expect(c.openrouterResponseCacheEnabled == false)
     }
 
     @Test func parsesBitwardenSecretsBlock() {

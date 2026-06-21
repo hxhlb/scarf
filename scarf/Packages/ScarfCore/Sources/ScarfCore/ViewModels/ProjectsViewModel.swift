@@ -2,6 +2,7 @@ import Observation
 import os
 
 @Observable
+@MainActor
 public final class ProjectsViewModel {
     private let logger = Logger(subsystem: "com.scarf", category: "ProjectsViewModel")
     public let context: ServerContext
@@ -18,16 +19,42 @@ public final class ProjectsViewModel {
     public var dashboard: ProjectDashboard?
     public var dashboardError: String?
     public var isLoading = false
+    @ObservationIgnored private var reloadTask: Task<Void, Never>?
 
+    /// Synchronous registry load — used by tests and one-shot call sites that
+    /// read `projects` immediately afterward. A synchronous load on a remote
+    /// context does blocking scp/SSH, so do NOT call this from a repeated /
+    /// hot path (e.g. the file-watcher `.onChange`) — use `reload()` there.
     public func load() {
-        let registry = service.loadRegistry()
+        apply(registry: service.loadRegistry())
+        if let selected = selectedProject { loadDashboard(for: selected) }
+    }
+
+    /// Off-main registry (+ selected dashboard) refresh for hot paths like the
+    /// file-watcher `.onChange`. Reads through the transport on a detached
+    /// task, then commits to observable state back on the main actor — so a
+    /// watcher tick never blocks the UI thread on a remote context (gh#102).
+    public func reload() async {
+        reloadTask?.cancel()
+        let ctx = context
+        let task = Task { [weak self] in
+            // Cancel-prior + is-cancelled guard so an older tick's slower read
+            // can't land after a newer one and clobber `projects` with stale
+            // data (the synchronous `load()` this replaced couldn't interleave).
+            let registry = await Task.detached { ProjectDashboardService(context: ctx).loadRegistry() }.value
+            guard let self, !Task.isCancelled else { return }
+            self.apply(registry: registry)
+            if let selected = self.selectedProject { await self.reloadDashboard(for: selected) }
+        }
+        reloadTask = task
+        await task.value
+    }
+
+    private func apply(registry: ProjectRegistry) {
         projects = registry.projects
         if let selected = selectedProject, !projects.contains(where: { $0.name == selected.name }) {
             selectedProject = nil
             dashboard = nil
-        }
-        if let selected = selectedProject {
-            loadDashboard(for: selected)
         }
     }
 
@@ -187,5 +214,23 @@ public final class ProjectsViewModel {
             dashboard = nil
             dashboardError = "Failed to parse dashboard JSON"
         }
+    }
+
+    /// Off-main variant of `loadDashboard(for:)` for `reload()`. Does the
+    /// `dashboardExists` + `loadDashboard` transport reads on a detached task,
+    /// then commits the result back on the main actor.
+    private func reloadDashboard(for project: ProjectEntry) async {
+        let ctx = context
+        let outcome: (dashboard: ProjectDashboard?, error: String?) = await Task.detached {
+            let svc = ProjectDashboardService(context: ctx)
+            guard svc.dashboardExists(for: project) else {
+                return (nil, "No dashboard found at \(project.dashboardPath)")
+            }
+            if let loaded = svc.loadDashboard(for: project) { return (loaded, nil) }
+            return (nil, "Failed to parse dashboard JSON")
+        }.value
+        if Task.isCancelled { return }
+        dashboardError = outcome.error
+        dashboard = outcome.dashboard
     }
 }

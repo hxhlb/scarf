@@ -347,6 +347,8 @@ public extension HermesConfig {
             approvalTimeout: int("approvals.timeout", default: 60),
             fileReadMaxChars: int("file_read_max_chars", default: 100_000),
             cronWrapResponse: bool("cron.wrap_response", default: true),
+            curatorConsolidate: bool("curator.consolidate", default: false),
+            maxConcurrentSessions: int("max_concurrent_sessions", default: 0),
             prefillMessagesFile: str("prefill_messages_file"),
             skillsExternalDirs: lists["skills.external_dirs"] ?? [],
             platformToolsets: platformToolsets,

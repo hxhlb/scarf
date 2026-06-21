@@ -337,6 +337,12 @@ final class SettingsViewModel {
     func setDelegationMaxIterations(_ value: Int) { setSetting("delegation.max_iterations", value: String(value)) }
     func setCronWrapResponse(_ value: Bool) { setSetting("cron.wrap_response", value: value ? "true" : "false") }
 
+    // MARK: - v0.17 config surfaces
+    /// v0.17 — curator LLM consolidation pass (opt-in; deterministic pruning stays on).
+    func setCuratorConsolidate(_ value: Bool) { setSetting("curator.consolidate", value: value ? "true" : "false") }
+    /// v0.17 — cap on simultaneously-active chat sessions (0 = unbounded).
+    func setMaxConcurrentSessions(_ value: Int) { setSetting("max_concurrent_sessions", value: String(value)) }
+
     // MARK: - Config diagnostics
 
     func runConfigCheck() -> String {

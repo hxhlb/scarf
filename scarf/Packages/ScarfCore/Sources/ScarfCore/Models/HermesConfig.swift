@@ -814,6 +814,12 @@ public struct HermesConfig: Sendable {
     public var approvalTimeout: Int
     public var fileReadMaxChars: Int
     public var cronWrapResponse: Bool
+    /// v0.17 — `curator.consolidate`: the LLM skill-consolidation pass is
+    /// opt-in (deterministic pruning stays on regardless). Absent key → `false`.
+    public var curatorConsolidate: Bool
+    /// v0.17 — `max_concurrent_sessions`: cap on simultaneously-active chat
+    /// sessions. `0` = unbounded (matches an absent/None key in Hermes).
+    public var maxConcurrentSessions: Int
     public var prefillMessagesFile: String
     public var skillsExternalDirs: [String]
 
@@ -947,6 +953,8 @@ public struct HermesConfig: Sendable {
         approvalTimeout: Int,
         fileReadMaxChars: Int,
         cronWrapResponse: Bool,
+        curatorConsolidate: Bool = false,
+        maxConcurrentSessions: Int = 0,
         prefillMessagesFile: String,
         skillsExternalDirs: [String],
         platformToolsets: [String: [String]],
@@ -1025,6 +1033,8 @@ public struct HermesConfig: Sendable {
         self.approvalTimeout = approvalTimeout
         self.fileReadMaxChars = fileReadMaxChars
         self.cronWrapResponse = cronWrapResponse
+        self.curatorConsolidate = curatorConsolidate
+        self.maxConcurrentSessions = maxConcurrentSessions
         self.prefillMessagesFile = prefillMessagesFile
         self.skillsExternalDirs = skillsExternalDirs
         self.platformToolsets = platformToolsets

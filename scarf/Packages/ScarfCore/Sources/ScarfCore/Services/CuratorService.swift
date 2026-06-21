@@ -103,41 +103,20 @@ public actor CuratorService {
         try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "archive")
     }
 
-    /// `hermes curator prune [--dry-run]`. Destructive when `dryRun`
-    /// is `false` — removes everything currently archived from disk.
-    /// Returns a `CuratorPruneSummary` describing what was (or would be)
-    /// removed. On `dryRun=false`, the wire shape may not include the
-    /// `would_remove` list — the caller should not depend on it; the
-    /// archived list is empty after a successful destructive prune.
+    /// `hermes curator prune [--days N]` — **bulk-archives** agent-created
+    /// skills idle for ≥ `days` (default 90). This is NOT a disk deletion:
+    /// archived skills move out of the active set and stay restorable. Pinned
+    /// and already-archived skills are skipped. `--dry-run` previews the
+    /// candidate list; the live run passes `-y` so it doesn't block on the
+    /// CLI's interactive `[y/N]` confirm — Scarf gates on its own confirm
+    /// sheet instead. (Hermes has no `--json` for this verb; we parse text.)
     @discardableResult
-    public func prune(dryRun: Bool) async throws -> CuratorPruneSummary {
-        var args = ["curator", "prune"]
-        if dryRun { args.append("--dry-run") }
-        // `--json` requested for the dry-run path so we can parse the
-        // would-remove list. Destructive mode runs without --json since
-        // we only need the exit code.
-        if dryRun { args.append("--json") }
-
+    public func prune(days: Int = 90, dryRun: Bool) async throws -> CuratorPruneSummary {
+        var args = ["curator", "prune", "--days", String(days)]
+        args.append(dryRun ? "--dry-run" : "-y")
         let (code, stdout, stderr) = await runHermes(args: args, timeout: 60)
-
-        // Detect "unrecognized --dry-run" / "unknown --json" gracefully.
-        if code != 0 {
-            let lower = (stderr + stdout).lowercased()
-            let unrecognized = lower.contains("unrecognized") || lower.contains("unknown") || lower.contains("no such option")
-            if dryRun && unrecognized {
-                // Q1 fallback: enumerate via list-archived. Caller still
-                // uses this summary for confirm-sheet display.
-                let archived = try await listArchived()
-                let total = archived.compactMap { $0.sizeBytes }.reduce(0, +)
-                return CuratorPruneSummary(wouldRemove: archived, totalBytes: total)
-            }
-            try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "prune")
-        }
-
-        if dryRun {
-            return Self.parsePruneDryRun(stdout)
-        }
-        return CuratorPruneSummary(wouldRemove: [], totalBytes: 0)
+        try ensureSuccess(code: code, stdout: stdout, stderr: stderr, verb: "prune")
+        return Self.parsePrune(stdout, days: days)
     }
 
     // MARK: - Pure parsers (nonisolated; safe to call from VMs without awaits)
@@ -241,27 +220,35 @@ public actor CuratorService {
         return rows
     }
 
-    /// Parse a `prune --dry-run --json` payload. Tolerates an empty
-    /// payload (returns a zero summary) and the `{would_remove: [],
-    /// total_bytes: N}` shape.
-    public nonisolated static func parsePruneDryRun(_ stdout: String) -> CuratorPruneSummary {
-        let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return CuratorPruneSummary(wouldRemove: [], totalBytes: 0)
+    /// Parse `hermes curator prune [--days N] [--dry-run]` text output into the
+    /// idle skills it (would) archive. The CLI prints:
+    ///
+    ///     curator: 3 skill(s) idle >= 90d:
+    ///       old-helper       idle 412d
+    ///       scratch-pad      idle 120d
+    ///     (dry run — no changes made)
+    ///
+    /// and `curator: nothing to prune (...)` when nothing is idle. Candidate
+    /// rows are indented (`  <name> … idle <N>d`); the column-0 header/footer
+    /// lines ("curator: …", "(dry run …)", "curator: archived N/M") are
+    /// ignored. `days` is the request threshold, threaded through unchanged.
+    public nonisolated static func parsePrune(_ stdout: String, days: Int) -> CuratorPruneSummary {
+        var candidates: [CuratorPruneCandidate] = []
+        for raw in stdout.split(separator: "\n", omittingEmptySubsequences: false) {
+            // Candidate rows are indented; headers/footers start at column 0.
+            guard let first = raw.first, first == " " || first == "\t" else { continue }
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            // Shape: "<name>   idle <N>d" — split on the last " idle " token so
+            // a name is never confused for the idle suffix.
+            guard let r = trimmed.range(of: " idle ", options: .backwards) else { continue }
+            let name = String(trimmed[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
+            var idlePart = String(trimmed[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+            if idlePart.hasSuffix("d") { idlePart.removeLast() }
+            guard !name.isEmpty, let idle = Int(idlePart) else { continue }
+            candidates.append(CuratorPruneCandidate(name: name, idleDays: idle))
         }
-        if let data = trimmed.data(using: .utf8),
-           let summary = try? JSONDecoder().decode(CuratorPruneSummary.self, from: data) {
-            return summary
-        }
-        // Tolerate a bare-array fallback (some Hermes builds may print
-        // just the would-remove list when --json is missing the wrapper).
-        if let data = trimmed.data(using: .utf8),
-           let arr = try? JSONDecoder().decode([HermesCuratorArchivedSkill].self, from: data) {
-            let total = arr.compactMap { $0.sizeBytes }.reduce(0, +)
-            return CuratorPruneSummary(wouldRemove: arr, totalBytes: total)
-        }
-        // Last-resort text parse for "would remove N skills (X bytes)".
-        return CuratorPruneSummary(wouldRemove: [], totalBytes: 0)
+        return CuratorPruneSummary(candidates: candidates, days: days)
     }
 
     // MARK: - CLI invocation

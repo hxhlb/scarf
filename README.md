@@ -19,6 +19,20 @@
   <a href="https://www.buymeacoffee.com/awizemann"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="28"></a>
 </p>
 
+## What's New in 2.11.0
+
+A coordinated catch-up to **Hermes v0.16.0 (2026.6.5)**, headlined by a correctness fix for the first `state.db` schema change since v0.11. Every new surface is capability-gated or schema-detected, so pre-v0.16 hosts render byte-identical to v2.10.3.
+
+- **Rewound messages are hidden (the schema change)** — v0.16 soft-deletes messages when you `/undo` a conversation (a new `messages.active` column). Scarf now filters them out on every read path, schema-gated so older hosts don't error, so a rewound chat shows you what the agent actually sees instead of discarded messages.
+- **Live session titles** — Scarf updates a session's name in the Mac sidebar in place when Hermes (re)generates it, via the new ACP `session_info_update` notification.
+- **"Rewound ×N" badge** — sessions schema-detect the new `sessions.rewind_count` column and flag heavily-edited sessions in the sidebar, the Sessions table, and the dashboard.
+- **Spotify sign-in moved to Plugins** — Spotify became a built-in tool/plugin in v0.16, so its sign-in affordance now lives in the Plugins view on v0.16 hosts (kept in Skills for older ones).
+- **Two gateway-config bugs fixed** — platform allowlists were written to the wrong YAML location and silently never applied (now top-level `slack.allowed_channels` etc., DingTalk corrected to `allowed_chats`); and the cross-profile gateway digest, which assumed a non-existent `--json` flag, now parses the text output and shows up again.
+- **v0.16 quick wins** — an "Optimize sessions database" Health action (`hermes sessions optimize`), a Kanban "Goal · N" pill, and capability-gated session rename.
+- **Under the hood:** config-shape corrections verified against the live v0.16 source (OpenRouter response-cache scalar so a *disable* takes effect, MCP SSE add path, dead Kanban `verify` verb removed, ACP `/goal`/`/subgoal` de-advertised as gateway-only); AWS Bedrock registered + new providers/models flow automatically; new v0.16 capability flags + `isV016OrLater`; 628 ScarfCore tests.
+
+See the full [v2.11.0 release notes](https://github.com/awizemann/scarf/releases/tag/v2.11.0).
+
 ## What's New in 2.10.3
 
 A reliability and polish release on top of v2.10.1/v2.10.2, headlined by a fix for the **100% single-core CPU spin** on large `state.db` files, plus a broad performance + correctness sweep from a full code audit.

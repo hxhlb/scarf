@@ -104,8 +104,16 @@ final class SettingsViewModel {
             }
         } else {
             logger.warning("hermes config set \(key) failed (exit \(result.exitCode)): \(result.output)")
-            saveMessage = "Failed to save \(key)"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            // Surface the CLI's reason instead of a generic failure — e.g.
+            // "Cannot set '<key>': it is managed by your administrator" when the
+            // key is pinned under managed scope (/etc/hermes), so the user
+            // understands why the control snapped back. Verbatim CLI tail.
+            let reason = result.output
+                .split(separator: "\n")
+                .last
+                .map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+            saveMessage = reason.isEmpty ? "Failed to save \(key)" : "Couldn’t save \(key): \(reason)"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
                 self?.saveMessage = nil
             }
         }

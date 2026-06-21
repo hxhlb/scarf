@@ -559,7 +559,9 @@ final class HealthViewModel {
         }
     }
 
-    /// Run `hermes audit` (v0.15 OSV.dev supply-chain scan) off MainActor.
+    /// Run `hermes security audit` (v0.15 OSV.dev supply-chain scan) off
+    /// MainActor. NB the verb is `security audit`; bare `hermes audit` is not a
+    /// CLI verb and routes to an agent chat turn instead of running the scan.
     /// Non-destructive read-only verb. On success we surface a one-line summary;
     /// on failure we surface the tail of the advisory list / stderr so the user
     /// can see which packages tripped the scan without leaving the view.
@@ -568,7 +570,7 @@ final class HealthViewModel {
         isRunningAudit = true
         auditMessage = "Running supply-chain audit…"
         Task.detached { [fileService] in
-            let result = fileService.runHermesCLI(args: ["audit"], timeout: 180)
+            let result = fileService.runHermesCLI(args: ["security", "audit"], timeout: 180)
             await MainActor.run {
                 self.isRunningAudit = false
                 let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -611,16 +613,19 @@ final class HealthViewModel {
         }
     }
 
-    /// Run `hermes migrate xai` (v0.15) off MainActor to move a retired xAI
-    /// model selection onto its successor. After completion we re-read config
-    /// via `loadConfig()` so the retired-model warning clears when the model
-    /// flips. Non-destructive; errors surface inline.
+    /// Run `hermes migrate xai --apply` (v0.15) off MainActor to move a retired
+    /// xAI model selection onto its successor. `--apply` is REQUIRED — bare
+    /// `migrate xai` is dry-run only (prints the plan, writes nothing), so
+    /// without it the rewrite never lands while we'd still report success.
+    /// Hermes writes a timestamped config.yaml backup before rewriting. After
+    /// completion we re-read config via `loadConfig()` so the retired-model
+    /// warning clears when the model flips. Errors surface inline.
     func migrateXAI() {
         guard !isMigratingXAI else { return }
         isMigratingXAI = true
         migrateXAIMessage = "Migrating xAI model…"
         Task.detached { [fileService] in
-            let result = fileService.runHermesCLI(args: ["migrate", "xai"], timeout: 120)
+            let result = fileService.runHermesCLI(args: ["migrate", "xai", "--apply"], timeout: 120)
             let config = fileService.loadConfig()
             await MainActor.run {
                 self.isMigratingXAI = false

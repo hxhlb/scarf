@@ -5,7 +5,7 @@ import Foundation
 /// depending on the platform's primary noun for "addressable destination":
 ///
 /// - **`allowed_channels`** — Slack, Mattermost, Google Chat
-/// - **`allowed_chats`** — Telegram, WhatsApp, DingTalk
+/// - **`allowed_chats`** — Telegram, DingTalk
 /// - **`allowed_rooms`** — Matrix
 ///
 /// `GatewayAllowlistKind` encodes the (platform → key) mapping plus a few
@@ -59,17 +59,25 @@ public enum GatewayAllowlistKind: String, Sendable, Equatable {
     }
 
     /// Map a Hermes platform identifier to the allowlist kind it supports.
-    /// Returns `nil` for platforms without v0.13 allowlist support
+    /// Returns `nil` for platforms without a chat/channel/room allowlist
     /// (`cli`, `signal`, `email`, `imessage`, `homeassistant`, `webhook`,
-    /// `yuanbao`, `microsoft-teams`, `feishu`, `discord`).
+    /// `yuanbao`, `microsoft-teams`, `feishu`, `discord`, `whatsapp`).
+    ///
+    /// `whatsapp` is intentionally excluded: it gates *senders* via
+    /// `allow_from` / `group_allow_from` (active only under
+    /// `dm_policy: allowlist` / `group_policy: allowlist`), not an
+    /// `allowed_chats` list. Writing `whatsapp.allowed_chats` is a silent
+    /// no-op — Hermes never reads it (verified against v0.17
+    /// `gateway/platforms/whatsapp.py`). Proper `allow_from` support belongs in
+    /// the WhatsApp setup form, not this generic chat-id editor.
     ///
     /// `googlechat` and `google-chat` both map to `.channels` so we round-trip
     /// regardless of which spelling Hermes lands on. // TODO(WS-5-Q1)
     public static func kind(for platform: String) -> GatewayAllowlistKind? {
         switch platform {
         case "slack", "mattermost", "google-chat", "googlechat": return .channels
-        case "telegram", "whatsapp", "dingtalk":                  return .chats
-        case "matrix":                                            return .rooms
+        case "telegram", "dingtalk":                             return .chats
+        case "matrix":                                           return .rooms
         default: return nil
         }
     }

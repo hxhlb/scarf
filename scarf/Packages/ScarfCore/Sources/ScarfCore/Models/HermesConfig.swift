@@ -707,6 +707,47 @@ public struct NtfySettings: Sendable, Equatable {
     public nonisolated static let empty = NtfySettings(topic: "", server: "https://ntfy.sh", publishTopic: "", token: "", markdown: false)
 }
 
+/// WhatsApp Business Cloud API settings under `platforms.whatsapp_cloud.extra.*`
+/// (Hermes v0.17, 25th platform — Meta's hosted webhook path, distinct from the
+/// older `whatsapp` web-bridge). All keys live in config.yaml; `accessToken`,
+/// `appSecret`, and `verifyToken` are secrets (the Cloud API stores creds in the
+/// YAML `extra` block, not `.env`). `dmPolicy` gates direct messages — set it to
+/// `allowlist` for `allowFrom` to take effect.
+public struct WhatsAppCloudSettings: Sendable, Equatable {
+    public var phoneNumberID: String
+    public var accessToken: String
+    public var verifyToken: String
+    public var appSecret: String
+    public var appID: String
+    public var wabaID: String
+    public var apiVersion: String
+    public var dmPolicy: String        // "open" | "allowlist"
+    public var allowFrom: String       // CSV sender IDs (active when dmPolicy = allowlist)
+
+    public init(
+        phoneNumberID: String,
+        accessToken: String,
+        verifyToken: String,
+        appSecret: String,
+        appID: String,
+        wabaID: String,
+        apiVersion: String,
+        dmPolicy: String,
+        allowFrom: String
+    ) {
+        self.phoneNumberID = phoneNumberID
+        self.accessToken = accessToken
+        self.verifyToken = verifyToken
+        self.appSecret = appSecret
+        self.appID = appID
+        self.wabaID = wabaID
+        self.apiVersion = apiVersion
+        self.dmPolicy = dmPolicy
+        self.allowFrom = allowFrom
+    }
+    public nonisolated static let empty = WhatsAppCloudSettings(phoneNumberID: "", accessToken: "", verifyToken: "", appSecret: "", appID: "", wabaID: "", apiVersion: "v20.0", dmPolicy: "open", allowFrom: "")
+}
+
 /// Home Assistant filters under `platforms.homeassistant.extra`. Hermes ignores
 /// every state change by default; users must opt-in via at least one filter.
 public struct HomeAssistantSettings: Sendable, Equatable {
@@ -923,6 +964,9 @@ public struct HermesConfig: Sendable {
     public var homeAssistant: HomeAssistantSettings
     /// Hermes v0.15 — ntfy (23rd platform). See `NtfySettings`.
     public var ntfy: NtfySettings
+    /// Hermes v0.17 — WhatsApp Business Cloud API (25th platform). See
+    /// `WhatsAppCloudSettings`.
+    public var whatsappCloud: WhatsAppCloudSettings
     /// Hermes v0.15 — Signal group-only `require_mention`. See `SignalSettings`.
     public var signal: SignalSettings
     /// Hermes v0.15 — Bitwarden Secrets Manager bootstrap. See `BitwardenSettings`.
@@ -998,6 +1042,7 @@ public struct HermesConfig: Sendable {
         webToolsSearchBackend: String = "duckduckgo",
         webToolsExtractBackend: String = "reader",
         ntfy: NtfySettings = .empty,
+        whatsappCloud: WhatsAppCloudSettings = .empty,
         signal: SignalSettings = .empty,
         bitwarden: BitwardenSettings = .empty
     ) {
@@ -1069,6 +1114,7 @@ public struct HermesConfig: Sendable {
         self.whatsapp = whatsapp
         self.homeAssistant = homeAssistant
         self.ntfy = ntfy
+        self.whatsappCloud = whatsappCloud
         self.signal = signal
         self.bitwarden = bitwarden
     }

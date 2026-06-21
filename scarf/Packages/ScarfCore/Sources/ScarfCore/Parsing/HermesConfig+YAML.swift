@@ -207,6 +207,21 @@ public extension HermesConfig {
             markdown: bool("platforms.ntfy.extra.markdown", default: false)
         )
 
+        // -- v0.17: WhatsApp Business Cloud API (`platforms.whatsapp_cloud.extra.*`).
+        // Meta's hosted webhook path; creds + verify/app secrets live in the YAML
+        // extra block (not .env). dm_policy gates DMs (allowlist activates allow_from).
+        let whatsappCloud = WhatsAppCloudSettings(
+            phoneNumberID: str("platforms.whatsapp_cloud.extra.phone_number_id"),
+            accessToken: str("platforms.whatsapp_cloud.extra.access_token"),
+            verifyToken: str("platforms.whatsapp_cloud.extra.verify_token"),
+            appSecret: str("platforms.whatsapp_cloud.extra.app_secret"),
+            appID: str("platforms.whatsapp_cloud.extra.app_id"),
+            wabaID: str("platforms.whatsapp_cloud.extra.waba_id"),
+            apiVersion: str("platforms.whatsapp_cloud.extra.api_version", default: "v20.0"),
+            dmPolicy: str("platforms.whatsapp_cloud.extra.dm_policy", default: "open"),
+            allowFrom: str("platforms.whatsapp_cloud.extra.allow_from")
+        )
+
         // -- v0.15: Bitwarden Secrets Manager bootstrap (`secrets.bitwarden.*`).
         // The access token VALUE lives in `~/.hermes/.env` under the env var
         // named here; only its NAME (+ the routing knobs) round-trips through
@@ -397,6 +412,7 @@ public extension HermesConfig {
             webToolsExtractBackend: str("web_tools.extract.backend", default: "reader"),
             // -- v0.15 additions -------------------------------------
             ntfy: ntfy,
+            whatsappCloud: whatsappCloud,
             signal: signal,
             bitwarden: bitwarden
         )

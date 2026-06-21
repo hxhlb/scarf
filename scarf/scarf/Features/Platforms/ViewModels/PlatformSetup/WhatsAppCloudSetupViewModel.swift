@@ -47,7 +47,15 @@ final class WhatsAppCloudSetupViewModel {
     }
 
     func save() {
+        // whatsapp_cloud is a BUILT-IN platform (not a plugin), so the gateway
+        // parses it as disabled (`enabled` defaults false) unless config.yaml
+        // says otherwise — writing the `extra.*` creds alone leaves a
+        // configured-but-OFF adapter that never starts. Enable it only when the
+        // required creds are present; disable a half-filled form.
+        let configured = !phoneNumberID.trimmingCharacters(in: .whitespaces).isEmpty
+            && !accessToken.trimmingCharacters(in: .whitespaces).isEmpty
         let configKV: [String: String] = [
+            "platforms.whatsapp_cloud.enabled": configured ? "true" : "false",
             "platforms.whatsapp_cloud.extra.phone_number_id": phoneNumberID,
             "platforms.whatsapp_cloud.extra.access_token": accessToken,
             "platforms.whatsapp_cloud.extra.verify_token": verifyToken,

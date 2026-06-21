@@ -315,6 +315,16 @@ import Foundation
         #expect(summary.candidates.first?.idleDays == 300)
     }
 
+    /// CRLF line endings (defensive — Hermes prints LF today) still parse:
+    /// the trailing CR must not defeat the `idle <N>d` suffix match.
+    @Test func pruneToleratesCRLF() {
+        let out = "curator: 1 skill(s) idle >= 90d:\r\n  crlf-skill                               idle 150d\r\n"
+        let summary = CuratorService.parsePrune(out, days: 90)
+        #expect(summary.count == 1)
+        #expect(summary.candidates.first?.name == "crlf-skill")
+        #expect(summary.candidates.first?.idleDays == 150)
+    }
+
     /// Empty / whitespace stdout → zero summary (no throw).
     @Test func pruneEmptyStaysSafe() {
         let summary = CuratorService.parsePrune("   \n", days: 90)

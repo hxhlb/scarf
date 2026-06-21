@@ -234,7 +234,10 @@ public actor CuratorService {
     /// ignored. `days` is the request threshold, threaded through unchanged.
     public nonisolated static func parsePrune(_ stdout: String, days: Int) -> CuratorPruneSummary {
         var candidates: [CuratorPruneCandidate] = []
-        for raw in stdout.split(separator: "\n", omittingEmptySubsequences: false) {
+        // Split on the newline CHARACTER SET (not just "\n") so a CRLF host's
+        // trailing CR is consumed as a separator and never rides along into the
+        // `idle <N>d` suffix parse below.
+        for raw in stdout.components(separatedBy: .newlines) {
             // Candidate rows are indented; headers/footers start at column 0.
             guard let first = raw.first, first == " " || first == "\t" else { continue }
             let trimmed = raw.trimmingCharacters(in: .whitespaces)

@@ -47,7 +47,7 @@ struct WhatsAppCloudSetupView: View {
 
     private var instructions: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Connect a WhatsApp Business number through Meta's hosted Cloud API (no bridge process). Create an app at Meta for Developers, add the WhatsApp product, then copy the Phone Number ID and a permanent access token. The verify token is any string you also set on the webhook; the app secret signs inbound webhooks.")
+            Text("Connect a WhatsApp Business number through Meta's hosted Cloud API (no bridge process). Create an app at Meta for Developers, add the WhatsApp product, then copy the Phone Number ID and a permanent access token. The verify token is any string you also set on the webhook; the app secret signs inbound webhooks. The DM allowlist restricts direct messages; group chats default to open (the bot replies in any group it's added to) — set `group_policy: allowlist` in config.yaml to restrict.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 12) {

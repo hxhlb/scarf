@@ -633,7 +633,14 @@ final class HealthViewModel {
                 self.configuredProvider = config.provider
                 let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 if result.exitCode == 0 {
-                    self.migrateXAIMessage = "Migrated to \(config.model). You may need to restart the gateway."
+                    // `migrate xai --apply` exits 0 even when there's nothing to
+                    // migrate / no changes were written — don't claim success.
+                    let lower = trimmed.lowercased()
+                    if lower.contains("nothing to migrate") || lower.contains("no changes") {
+                        self.migrateXAIMessage = "No retired xAI model to migrate."
+                    } else {
+                        self.migrateXAIMessage = "Migrated to \(config.model). You may need to restart the gateway."
+                    }
                 } else {
                     let tail = trimmed.split(separator: "\n").suffix(3).joined(separator: " · ")
                     self.migrateXAIMessage = "Migration failed (exit \(result.exitCode)). \(tail)"

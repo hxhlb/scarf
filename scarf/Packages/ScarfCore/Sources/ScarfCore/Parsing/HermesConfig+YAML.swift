@@ -189,7 +189,9 @@ public extension HermesConfig {
             requireMention: bool("telegram.require_mention", default: true),
             reactions: bool("telegram.reactions", default: false),
             disableTopicAutoRename: bool("telegram.disable_topic_auto_rename", default: false),
-            ignoreRootDM: bool("platforms.telegram.extra.ignore_root_dm", default: false)
+            ignoreRootDM: bool("platforms.telegram.extra.ignore_root_dm", default: false),
+            richMessages: bool("platforms.telegram.extra.rich_messages", default: true),
+            statusIndicator: bool("platforms.telegram.extra.status_indicator", default: false)
         )
 
         // -- v0.15: Signal group-only require_mention + ntfy (23rd platform).

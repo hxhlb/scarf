@@ -560,20 +560,32 @@ public struct TelegramSettings: Sendable, Equatable {
     /// true, the agent ignores DMs sent to the root chat. Default
     /// `false`. Pre-v0.15 hosts ignore the key.
     public var ignoreRootDM: Bool
+    /// Hermes v0.17 — `platforms.telegram.extra.rich_messages` (Bot API 10.1
+    /// rich formatting). Default `true` (on by default; toggle off to opt out).
+    /// Pre-v0.17 hosts ignore the key.
+    public var richMessages: Bool
+    /// Hermes v0.17 — `platforms.telegram.extra.status_indicator`. When true,
+    /// the bot advertises an Online/Offline presence label. Default `false`.
+    /// Pre-v0.17 hosts ignore the key.
+    public var statusIndicator: Bool
 
 
     public init(
         requireMention: Bool,
         reactions: Bool,
         disableTopicAutoRename: Bool = false,
-        ignoreRootDM: Bool = false
+        ignoreRootDM: Bool = false,
+        richMessages: Bool = true,
+        statusIndicator: Bool = false
     ) {
         self.requireMention = requireMention
         self.reactions = reactions
         self.disableTopicAutoRename = disableTopicAutoRename
         self.ignoreRootDM = ignoreRootDM
+        self.richMessages = richMessages
+        self.statusIndicator = statusIndicator
     }
-    public nonisolated static let empty = TelegramSettings(requireMention: true, reactions: false, disableTopicAutoRename: false, ignoreRootDM: false)
+    public nonisolated static let empty = TelegramSettings(requireMention: true, reactions: false, disableTopicAutoRename: false, ignoreRootDM: false, richMessages: true, statusIndicator: false)
 }
 
 /// Signal settings. Signal credentials live in `.env` (`SIGNAL_*`); v0.15

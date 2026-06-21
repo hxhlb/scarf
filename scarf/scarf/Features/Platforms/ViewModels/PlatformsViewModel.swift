@@ -144,9 +144,10 @@ final class PlatformsViewModel {
     func restartGateway() {
         restartInProgress = true
         message = "Restarting gateway…"
-        Task.detached { [fileService] in
+        Task.detached { [weak self, fileService] in
             let result = fileService.runHermesCLI(args: ["gateway", "restart"], timeout: 30)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.restartInProgress = false
                 self.message = result.exitCode == 0 ? "Gateway restarted" : "Restart failed"
                 self.load(force: true)

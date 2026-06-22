@@ -19,6 +19,19 @@
   <a href="https://www.buymeacoffee.com/awizemann"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="28"></a>
 </p>
 
+## What's New in 2.12.0
+
+A coordinated catch-up to **Hermes v0.17.0 (2026.6.19)** — the largest Hermes release yet, though Scarf needed only a focused slice — plus a remote-chat performance fix everyone on SSH will feel. Every new v0.17 surface is capability-gated, so pre-v0.17 hosts render byte-identical to v2.11.0; all flag/config/wire shapes were verified against the live v0.17 source.
+
+- **Remote chat is responsive again** — typing into a session on a remote (SSH) host no longer lags or spikes CPU. Watcher-driven reads (credential preflight, sessions list, platforms, projects) that were doing synchronous SSH round-trips on the main thread per message now run off-main with cancel-prior + recency guards. ([#119](https://github.com/awizemann/scarf/issues/119))
+- **Four broken Health/Settings actions fixed** — surfaced by the v0.17 audit: "Run supply-chain audit" (`hermes audit` → `security audit`), xAI model migration (was dry-run only — now `--apply`), browser-tools setup (`--assume-yes` → `--yes`), and the no-op WhatsApp recipient allowlist (removed). Failed config saves now show the real reason.
+- **Curator "Prune" → "Archive idle skills"** — the old action claimed to delete archived skills from disk, but the real verb *archives idle active skills* (reversibly) and Scarf was invoking it wrong (it would hang). Rebuilt to match: a day-threshold picker, an idle-skill preview, and a correctly reversible confirm.
+- **New gateway platforms** — WhatsApp Business **Cloud** API (Meta-hosted, distinct from the QR web bridge) gets a full credential form, and **SimpleX** finally gets a setup form (it had no UI since v0.14).
+- **More v0.17 surfaces** — Telegram rich messages (Bot API 10.1) + online/offline status toggles; a curator-consolidation toggle (v0.17 made the LLM merge pass opt-in); and a max-concurrent-sessions cap.
+- **Under the hood:** v0.17 required **zero** mandatory compatibility changes (schema, ACP, CLI, config, catalog all stable — verified against source), so this is a feature catch-up plus pre-existing-bug fixes; new capability flags + `isV017OrLater`; an adversarial fresh-eyes audit of the branch caught a real bug pre-release; 642 ScarfCore tests.
+
+See the full [v2.12.0 release notes](https://github.com/awizemann/scarf/releases/tag/v2.12.0).
+
 ## What's New in 2.11.0
 
 A coordinated catch-up to **Hermes v0.16.0 (2026.6.5)**, headlined by a correctness fix for the first `state.db` schema change since v0.11. Every new surface is capability-gated or schema-detected, so pre-v0.16 hosts render byte-identical to v2.10.3.
